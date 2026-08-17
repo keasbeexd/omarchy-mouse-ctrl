@@ -14,7 +14,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hskctl"
 PROFILE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hskctl/profiles"
-PLUGIN_ID="io.github.keasbee.hsk"
+PLUGIN_ID="io.github.keasbeexd.hsk"
 PLUGIN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$PLUGIN_ID"
 UDEV_RULE="/etc/udev/rules.d/60-gwolves-hsk.rules"
 

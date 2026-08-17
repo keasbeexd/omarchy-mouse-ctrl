@@ -75,7 +75,7 @@ panel should be one keystroke from wiping the mouse's config.
 ```bash
 tar xzf omarchy-hsk.tar.gz && cd omarchy-hsk
 ./install.sh
-omarchy plugin enable io.github.keasbee.hsk
+omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
 `install.sh` puts `hskctl` in `~/.local/bin`, the profile in
@@ -119,8 +119,8 @@ The panel only renders controls for settings the profile can actually write, so
 it never offers an action that comes back as an error.
 
 ```bash
-omarchy-shell io.github.keasbee.hsk cycleDpi
-omarchy-shell io.github.keasbee.hsk setPollingRate 1000
+omarchy-shell io.github.keasbeexd.hsk cycleDpi
+omarchy-shell io.github.keasbeexd.hsk setPollingRate 1000
 hskctl status --json
 ```
 

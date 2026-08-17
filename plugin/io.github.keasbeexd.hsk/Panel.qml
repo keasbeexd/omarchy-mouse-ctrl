@@ -9,8 +9,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "io.github.keasbee.hsk"
-  ipcTarget: "io.github.keasbee.hsk"
+  moduleName: "io.github.keasbeexd.hsk"
+  ipcTarget: "io.github.keasbeexd.hsk"
   manageIpc: false
 
   property int cursorIndex: 0
