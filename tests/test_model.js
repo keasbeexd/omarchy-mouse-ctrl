@@ -8,7 +8,7 @@ const assert = require("assert");
 
 const src = fs
   .readFileSync(
-    path.join(__dirname, "..", "plugin", "io.github.keasbeexd.hsk", "Model.js"),
+    path.join(__dirname, "..", "Model.js"),
     "utf8"
   )
   .replace(/^\s*\.pragma\s+library\s*$/m, "");

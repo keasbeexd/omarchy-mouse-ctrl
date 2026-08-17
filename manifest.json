@@ -6,7 +6,9 @@
   "author": "Marc (@keasbee)",
   "license": "MIT",
   "description": "Battery, DPI, polling rate and sensor settings for the G-Wolves HSK Pro 4K, in the Omarchy bar.",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
@@ -20,7 +22,7 @@
       "refreshIntervalSec": 60,
       "lowBatteryPercent": 15,
       "showBatteryLabel": true,
-      "hskctlPath": "hskctl"
+      "hskctlPath": ""
     },
     "schema": [
       {
@@ -50,8 +52,8 @@
       {
         "key": "hskctlPath",
         "type": "string",
-        "label": "Path to hskctl",
-        "defaultValue": "hskctl"
+        "label": "Path to hskctl (blank = the copy bundled with this plugin)",
+        "defaultValue": ""
       }
     ]
   }

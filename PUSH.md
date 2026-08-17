@@ -45,16 +45,13 @@ Without this the commits still land, they just may not link to your profile.
 
 ## Installing from the repo afterwards
 
-`omarchy plugin add` expects `manifest.json` at the repo *root*, and here it
-lives in `plugin/io.github.keasbeexd.hsk/` alongside the CLI and the discovery
-tooling. So install with:
+`manifest.json` is at the repo root, so once it is public:
 
 ```bash
-./install.sh
+omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
 omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
-If you later want the one-line `omarchy plugin add <url>` path to work, split
-the plugin directory into its own small repo with the manifest at the root —
-`hskctl` and the tools don't need to travel with it. That is also the layout
-omarchyplugins.com expects if you ever publish it.
+The CLI ships inside the plugin, so there is nothing else to install. The
+optional udev rule lives at `./install.sh --udev` inside the cloned plugin
+directory.

@@ -30,7 +30,17 @@ Item {
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 60, 10, 3600)
   readonly property int lowBatteryPercent: intSetting("lowBatteryPercent", 15, 0, 50)
   readonly property bool showBatteryLabel: setting("showBatteryLabel", true) === true
-  readonly property string hskctl: String(setting("hskctlPath", "hskctl") || "hskctl")
+  // Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, and the CLI
+  // ships inside it, so the widget works with nothing else installed. A
+  // non-empty hskctlPath setting overrides this.
+  readonly property string bundledHskctl: {
+    var url = Qt.resolvedUrl("bin/hskctl").toString()
+    return url.indexOf("file://") === 0 ? url.substring(7) : url
+  }
+  readonly property string hskctl: {
+    var configured = String(setting("hskctlPath", "") || "").trim()
+    return configured !== "" ? configured : bundledHskctl
+  }
 
   readonly property bool busy: statusProcess.running || setProcess.running
   readonly property bool ready: state === "ready"

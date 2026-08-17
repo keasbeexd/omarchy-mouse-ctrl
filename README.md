@@ -73,14 +73,20 @@ panel should be one keystroke from wiping the mouse's config.
 ## Install
 
 ```bash
-tar xzf omarchy-hsk.tar.gz && cd omarchy-hsk
-./install.sh
+omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
 omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
-`install.sh` puts `hskctl` in `~/.local/bin`, the profile in
-`~/.config/hskctl/profiles/`, the plugin in `~/.config/omarchy/plugins/`, and
-offers to write a udev rule (VID `33e4`) so writes don't need sudo.
+That is the whole install. The repo *is* the plugin — `manifest.json` sits at
+the root — and `hskctl` ships inside it, so the widget runs the copy bundled
+beside itself with nothing else to set up.
+
+One optional extra: a udev rule, so changing settings doesn't need sudo.
+
+```bash
+cd ~/.config/omarchy/plugins/io.github.keasbeexd.hsk
+./install.sh --udev     # --link also puts hskctl on your PATH
+```
 
 Python 3.9+, no pip packages — it talks to `/dev/hidraw*` directly.
 
@@ -127,13 +133,17 @@ hskctl status --json
 ## Layout
 
 ```
+manifest.json    the Omarchy plugin manifest -- at the root, so
+Panel.qml        `omarchy plugin add <url>` works directly
+Service.qml
+Model.js
+bin/hskctl       launcher for the bundled CLI
 hskctl/          CLI + hidraw transport + the profile interpreter
   hidraw.py        dependency-free ioctl wrapper, report-descriptor parser
   protocol.py      declarative profile engine (commands, codecs, ack)
   device.py        endpoint ranking, link-flag auto-detection
   cli.py           always-JSON-parseable command line
 profiles/        the decoded protocol -- data, not code
-plugin/          the Omarchy Quattro plugin (manifest, Panel, Service, Model)
 tools/           analyze-driver.py, capture-usbmon.sh, decode-capture.py
 tests/           30 Python tests, 33 JS tests
 docs/            how the protocol was decoded, and how to verify it

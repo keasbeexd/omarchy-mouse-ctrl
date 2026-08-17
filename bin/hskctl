@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Launcher for the copy of hskctl that ships inside this plugin.
+#
+# Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, so the CLI
+# travels with it and the widget works straight after `omarchy plugin add`
+# with nothing else installed.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+exec python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.cli import main; sys.exit(main(sys.argv[2:]))' "$HERE" "$@"
