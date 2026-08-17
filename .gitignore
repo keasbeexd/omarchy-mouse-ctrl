@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+capture.pcapng
+capture.json
+capture.labels
+.hsk-capture.pid

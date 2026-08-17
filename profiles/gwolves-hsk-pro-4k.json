@@ -1,0 +1,117 @@
+{
+  "profileVersion": 2,
+  "model": "G-Wolves HSK Pro 4K",
+  "status": "partial",
+  "_source": [
+    "Extracted from G-Wolves_Software_V1.0.20.07 (2024-03-20), a C++/CLI",
+    "mixed-mode .NET binary using hidapi. The transport and the command table",
+    "are read directly out of the shipped code -- hts_send_cmd's IL and the",
+    "HTS_*_CMD static byte arrays -- so they are observed, not guessed.",
+    "",
+    "What is still unconfirmed is marked with _needsVerification on the field:",
+    "the raw<->friendly value maps (which byte means 4000 Hz), because those",
+    "live in WinForms UI code rather than in the command table. Read them off",
+    "your own mouse with `hskctl get <field>` while the vendor app shows you",
+    "the real value, then fill in `values` and set status to verified.",
+    "",
+    "status: partial means hskctl will talk to the device but you should",
+    "sanity-check every reading before trusting a write."
+  ],
+
+  "match": {
+    "_comment": "VID and PIDs are the constants hts_init matches on. Interface 2 comes from the 'mi_02' device-path fragment in the binary.",
+    "vendorIds": ["33e4"],
+    "productIds": [
+      "5403", "5404", "5407", "5408",
+      "5703", "5704", "5707", "5708",
+      "5803", "5804", "5807", "5808",
+      "5907", "5908"
+    ],
+    "interface": 2,
+    "usagePage": null,
+    "requireFeatureReport": true
+  },
+
+  "transport": {
+    "_comment": "hts_send_cmd: Sleep(60); hid_send_feature_report(h, tx, 65); Sleep(60); hid_get_feature_report(h, rx, 65); accept iff rx[1] == 0xA1. Byte 0 is the hidapi report-id byte and is 0 (unnumbered reports). No checksum anywhere in the command table.",
+    "kind": "feature",
+    "reportId": 0,
+    "packetLength": 65,
+    "readLength": 65,
+    "settleMs": 60,
+    "wirelessFlagOffset": 4,
+    "ack": { "offset": 1, "value": 161 },
+    "checksum": { "kind": "none", "offset": null, "range": null }
+  },
+
+  "commands": {
+    "_comment": "Byte 2 is the payload length, byte 3 the opcode, byte 4 the link flag, byte 5 onwards the value. The read opcode is always the write opcode + 0x80. Commands whose opcode already has the high bit set are read-only.",
+
+    "battery":       { "get": "00 00 02 8f", "responseOffset": 5, "readOnly": true },
+    "connection":    { "get": "00 00 01 90", "responseOffset": 5, "readOnly": true },
+    "version":       { "get": "00 00 04 81", "responseOffset": 5, "readOnly": true },
+
+    "polling":       { "get": "00 00 02 82", "set": "00 00 02 02", "valueOffset": 5, "responseOffset": 5 },
+    "liftOff":       { "get": "00 00 01 86", "set": "00 00 01 06", "valueOffset": 5, "responseOffset": 5 },
+    "angle":         { "get": "00 00 01 87", "set": "00 00 01 07", "valueOffset": 5, "responseOffset": 5 },
+    "motion":        { "get": "00 00 01 91", "set": "00 00 01 11", "valueOffset": 5, "responseOffset": 5 },
+    "debounce":      { "get": "00 00 04 85", "set": "00 00 04 05", "valueOffset": 5, "responseOffset": 5 },
+    "wheelDebounce": { "get": "00 00 02 92", "set": "00 00 02 12", "valueOffset": 5, "responseOffset": 5 },
+    "led":           { "get": "00 00 05 88", "set": "00 00 05 08", "valueOffset": 5, "responseOffset": 5 },
+
+    "_dpiComment": "hts_set_get_dpis_colors writes 7 stages as big-endian u16 pairs from byte 7, with the active stage at byte 5 and the stage count at byte 6, then per-stage colours. Reading it back is safe; writing it rewrites all seven stages at once, so it stays disabled until verified.",
+    "dpi":           { "get": "00 00 39 83", "responseOffset": 5 },
+
+    "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
+    "sleep":         { "get": "00 00 00 02 02 00 87", "set": "00 00 00 02 02 00 07", "valueOffset": 7, "responseOffset": 7 },
+
+    "_resetComment": "HTS_RESET_CMD restores factory defaults. Deliberately not wired to any field -- nothing in the panel should be one keystroke away from wiping the mouse's config."
+  },
+
+  "fields": {
+    "batteryPercent":  { "command": "battery", "encoding": "u8", "min": 0, "max": 100, "readOnly": true },
+    "charging":        { "command": "battery", "offset": 6, "encoding": "u8", "type": "bool", "readOnly": true,
+                         "_needsVerification": "byte 6 of the battery reply is a status byte; confirm 1 means charging" },
+    "connection":      { "command": "connection", "encoding": "u8", "readOnly": true,
+                         "_needsVerification": "confirm which raw value means wired vs dongle",
+                         "values": { "0": "wired", "1": "dongle" } },
+    "firmwareVersion": { "command": "version", "encoding": "u16be", "readOnly": true },
+
+    "pollingRate":     { "command": "polling", "encoding": "u8",
+                         "_needsVerification": "raw<->Hz map is set in WinForms code, not the command table -- confirm against the vendor app before writing",
+                         "values": { "0": 125, "1": 250, "2": 500, "3": 1000, "4": 2000, "5": 4000 } },
+
+    "liftOffDistance": { "command": "liftOff", "encoding": "u8",
+                         "_needsVerification": "confirm 0 is 1mm and 1 is 2mm",
+                         "values": { "0": "1mm", "1": "2mm" } },
+
+    "motionSync":      { "command": "motion", "encoding": "u8", "type": "bool" },
+    "angleSnap":       { "command": "angle", "encoding": "u8", "type": "bool" },
+
+    "debounceMs":      { "command": "debounce", "encoding": "u8", "min": 0, "max": 20,
+                         "_needsVerification": "the vendor app indexes a 4-byte table by this value; confirm it is a plain millisecond count" },
+
+    "sleepMinutes":    { "command": "sleep", "encoding": "u16be", "min": 0, "max": 60 },
+
+    "activeDpiStage":  { "command": "dpi", "offset": 5, "encoding": "u8", "min": 1, "max": 7, "readOnly": true },
+    "dpiStageCount":   { "command": "dpi", "offset": 6, "encoding": "u8", "min": 1, "max": 7, "readOnly": true },
+    "dpiStage1":       { "command": "dpi", "offset": 7,  "encoding": "u16be", "readOnly": true },
+    "dpiStage2":       { "command": "dpi", "offset": 9,  "encoding": "u16be", "readOnly": true },
+    "dpiStage3":       { "command": "dpi", "offset": 11, "encoding": "u16be", "readOnly": true },
+    "dpiStage4":       { "command": "dpi", "offset": 13, "encoding": "u16be", "readOnly": true },
+    "dpiStage5":       { "command": "dpi", "offset": 15, "encoding": "u16be", "readOnly": true },
+    "dpiStage6":       { "command": "dpi", "offset": 17, "encoding": "u16be", "readOnly": true },
+    "dpiStage7":       { "command": "dpi", "offset": 19, "encoding": "u16be", "readOnly": true }
+  },
+
+  "ui": {
+    "dpiStages": ["dpiStage1", "dpiStage2", "dpiStage3", "dpiStage4", "dpiStage5", "dpiStage6", "dpiStage7"],
+    "quickToggles": ["motionSync", "angleSnap"],
+    "sections": [
+      { "title": "DPI", "fields": ["activeDpiStage", "dpiStageCount"] },
+      { "title": "PERFORMANCE", "fields": ["pollingRate", "debounceMs"] },
+      { "title": "SENSOR", "fields": ["motionSync", "liftOffDistance", "angleSnap"] },
+      { "title": "POWER", "fields": ["sleepMinutes"] }
+    ]
+  }
+}
