@@ -25,6 +25,10 @@ Panel {
 
   readonly property var rows: hsk.rows
   readonly property var dpiStages: Model.dpiStages(hsk.effectiveValues)
+  // Delegate count only. Binding the Repeater to the stage *array* rebuilt
+  // every row whenever any value changed -- which destroyed the slider you
+  // were dragging, so `released` never arrived and the knob snapped back.
+  readonly property int stageCount: dpiStages.length
   readonly property bool needsSetup: hsk.state === "undiscovered"
   readonly property bool hasError: hsk.state === "error"
 
@@ -115,6 +119,13 @@ Panel {
     if (!row || row.kind !== "dpiStage") return
     if (!hsk.canWrite("dpiStage" + row.stage + "Color")) return
     hsk.set("dpiStage" + row.stage + "Color", Model.nextStageColor(row.color))
+  }
+
+  // Held while a slider is in use, and released a moment after the last move so
+  // a refresh cannot land between the final drag event and the commit.
+  function beginInteraction() {
+    hsk.suspended = true
+    interactionTimer.restart()
   }
 
   function scrollItemIntoView(item) {
@@ -392,15 +403,11 @@ Panel {
               spacing: Style.space(4)
 
               Repeater {
-                model: root.dpiStages
+                model: root.stageCount
                 StageRow {
-                  required property var modelData
+                  required property int index
                   width: stageColumn.width
-                  stage: modelData.stage
-                  dpi: modelData.dpi
-                  swatch: modelData.color
-                  isActive: modelData.active
-                  split: modelData.split
+                  stage: index + 1
                 }
               }
             }
@@ -538,10 +545,23 @@ Panel {
   component StageRow: CursorSurface {
     id: stageRow
     property int stage: 0
-    property int dpi: 0
-    property string swatch: ""
-    property bool isActive: false
-    property bool split: false
+
+    // Read straight from the service rather than being handed a snapshot, so
+    // the row survives a refresh instead of being torn down and rebuilt.
+    readonly property int dpi: {
+      var v = hsk.value("dpiStage" + stageRow.stage)
+      return v === undefined || v === null ? 0 : v
+    }
+    readonly property int dpiY: {
+      var v = hsk.value("dpiStage" + stageRow.stage + "Y")
+      return v === undefined || v === null ? stageRow.dpi : v
+    }
+    readonly property string swatch: {
+      var v = hsk.value("dpiStage" + stageRow.stage + "Color")
+      return v === undefined || v === null ? "" : String(v)
+    }
+    readonly property bool isActive: hsk.value("activeDpiStage") === stageRow.stage
+    readonly property bool split: stageRow.dpiY !== stageRow.dpi
 
     readonly property bool rowHasCursor: {
       var row = root.currentRow()
@@ -606,10 +626,14 @@ Panel {
         value: stageRow.dpi
         // Commit on release, not on every pixel of travel -- each write is a
         // USB round trip, and the firmware rewrites the whole DPI block.
-        onMoved: function(v) { root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage)) }
+        onMoved: function(v) {
+          root.beginInteraction()
+          root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
+        }
         onReleased: function(v) {
           var wanted = Model.clampDpi(v)
           if (wanted !== stageRow.dpi) hsk.set("dpiStage" + stageRow.stage, wanted)
+          interactionTimer.restart()
         }
       }
 

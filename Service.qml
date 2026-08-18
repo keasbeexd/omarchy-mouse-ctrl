@@ -20,6 +20,9 @@ Item {
   property string actionStatus: ""
   property bool refreshing: false
   property bool detected: false
+  // Set while the user is dragging a control. A refresh landing mid-drag would
+  // overwrite the value under their thumb.
+  property bool suspended: false
   property var writable: []
   property var unverified: []
 
@@ -85,6 +88,7 @@ Item {
     // ignored and a read-back report the old value. hskctl also takes a file
     // lock, which covers the other bar instances and the CLI; this just avoids
     // queueing behind ourselves.
+    if (suspended) return
     if (statusProcess.running || setProcess.running || _queue.length > 0) return
     refreshing = true
     statusProcess.command = [hskctl, "--json", "status"]
