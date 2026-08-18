@@ -16,12 +16,13 @@ vendor's mouse.
 | Omarchy Quattro plugin (bar widget + panel) | done |
 | `hskctl` CLI and HID transport | done |
 | Transport + command table | decoded from the vendor binary |
-| Value maps (which byte means 4000 Hz) | **needs one check against the real mouse** |
-| DPI writes | read-only until verified |
+| Battery, connection, firmware | confirmed on hardware |
+| DPI — 7 stages, X/Y, LED colours | read **and** write confirmed on hardware |
+| Polling rate, 250–4000 Hz | measured, not inferred |
+| Debounce | read-only — read and write are asymmetric |
 
-`hskctl fields` marks anything still unverified. Those fields read correctly;
-what is unconfirmed is the raw↔friendly mapping, because that lives in the
-vendor's WinForms UI code rather than in the command table.
+`hskctl fields` marks anything still unverified, and `hskctl doctor` dumps the
+raw bytes of every read command when something looks wrong.
 
 ## The protocol
 
@@ -63,9 +64,18 @@ Command table, straight from the firmware:
 | connection state | — | `90` |
 | firmware version | — | `81` |
 
-Device: **VID `33e4`**, 14 product ids, **interface 2**. DPI stages are
-big-endian `u16` (seven of them), sleep is a sub-command of opcode `0x02` with
-its selector at byte 6.
+Device: **VID `33e4`**, 14 product ids. The config endpoint is found by vendor
+usage page plus a feature report, *not* interface number — the dongle enumerates
+at interface 7 despite the driver's `mi_02` string.
+
+The reply echoes the request: `rx[2]` length, `rx[3]` opcode, `rx[4]` link flag,
+payload from `rx[5]`. **An ACK does not mean success** — the firmware
+acknowledges a wrong link flag and then ignores the command, replying with an
+all-zero payload.
+
+DPI is one block: active stage at `rx[5]`, then seven stages of seven bytes from
+`rx[7]` — X `u16be`, Y `u16be`, R, G, B. Sleep is a sub-command of opcode `0x02`
+with its selector at byte 6.
 
 Factory reset (`09`) is deliberately not bound to any field — nothing in the
 panel should be one keystroke from wiping the mouse's config.
@@ -108,23 +118,19 @@ Python 3.9+, no pip packages — it talks to `/dev/hidraw*` directly.
 ## Verify before trusting a write
 
 ```bash
-hskctl probe      # confirm it picks the interface-2 node
-hskctl status     # every value should match the Windows app
-hskctl fields     # shows what is writable and what is unverified
+hskctl probe      # rank the candidate endpoints
+hskctl status     # read everything
+hskctl doctor     # raw bytes of every read command; writes nothing
 ```
 
-Check `status` against the vendor app first. If polling rate reads `250` when
-the app says `1000`, the enum in the profile is wrong — fix
-`fields.pollingRate.values` before writing anything. Then:
+`set` always reads the field back and tells you if the mouse disagrees with what
+you asked for, so a mapping error surfaces immediately rather than silently
+landing somewhere else.
 
 ```bash
-hskctl set pollingRate 1000
+hskctl set pollingRate 4000
+hskctl set dpiStage1 800
 ```
-
-`set` always reads the field back and tells you if the mouse disagrees with
-what you asked for. A mismatch means the mapping is wrong — stop rather than
-trying more values. When every field round-trips and survives a replug, set
-`"status": "verified"` in the profile and drop the `_needsVerification` notes.
 
 Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
 
@@ -160,7 +166,7 @@ hskctl/          CLI + hidraw transport + the profile interpreter
   cli.py           always-JSON-parseable command line
 profiles/        the decoded protocol -- data, not code
 tools/           analyze-driver.py, capture-usbmon.sh, decode-capture.py
-tests/           30 Python tests, 33 JS tests
+tests/           40 Python tests, 33 JS tests
 docs/            how the protocol was decoded, and how to verify it
 ```
 
@@ -175,7 +181,8 @@ python3 -m unittest discover -s tests
 node tests/test_model.js
 ```
 
-The Python suite pins the decoded protocol: that every read opcode is its write
-opcode + `0x80`, that wired and wireless packets differ in exactly one byte,
-that DPI decodes big-endian, that read-only fields refuse writes, and that
-factory reset is unreachable.
+The Python suite pins both the decoded protocol and the hardware measurements:
+every read opcode is its write opcode + `0x80`, wired and wireless packets
+differ in exactly one byte, the DPI block decodes the captured reply, the
+polling map is exactly what was measured, read-only fields refuse writes, and
+factory reset stays unreachable.
