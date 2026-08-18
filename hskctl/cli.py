@@ -641,6 +641,58 @@ def cmd_calibrate_polling(args) -> int:
     return _emit(payload, args.json, human)
 
 
+def cmd_fix_dpi(args) -> int:
+    """Repair a DPI block containing out-of-range values.
+
+    Reads the block, clamps any stage whose X or Y is outside the sensor's
+    range, forces Y to match X, and writes the whole thing back in one go.
+    Setting stages one at a time cannot fix this: every write rewrites the
+    entire block, so a corrupt neighbour would be carried straight back.
+    """
+    try:
+        profile = load_profile(args.profile)
+        session = open_session(profile, args.device)
+    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json)
+
+    lo, hi = 50, 26000
+    changes: list[dict] = []
+    try:
+        for n in range(1, 8):
+            x_field, y_field = f"dpiStage{n}", f"dpiStage{n}Y"
+            if not profile.has_field(x_field):
+                continue
+            x = session.get(x_field)
+            y = session.get(y_field) if profile.has_field(y_field) else x
+            new_x = x if lo <= x <= hi else args.default
+            new_y = new_x if not (lo <= y <= hi) or y != new_x else y
+            if new_x != x:
+                session.set(x_field, new_x)
+            if profile.has_field(y_field) and new_y != y:
+                session.set(y_field, new_y)
+            if new_x != x or new_y != y:
+                changes.append(
+                    {"stage": n, "wasX": x, "wasY": y, "nowX": new_x, "nowY": new_y}
+                )
+    except (NotDiscovered, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json, changes=changes)
+
+    payload = {"ok": True, "changes": changes}
+
+    def human(p):
+        if not p["changes"]:
+            print("Every DPI stage is already in range. Nothing changed.")
+            return
+        for c in p["changes"]:
+            print(
+                f"  stage {c['stage']}: {c['wasX']}x{c['wasY']} -> "
+                f"{c['nowX']}x{c['nowY']}"
+            )
+        print(f"\nRepaired {len(p['changes'])} stage(s).")
+
+    return _emit(payload, args.json, human)
+
+
 def cmd_profiles(args) -> int:
     names = list_profiles()
     payload = {"ok": True, "profiles": names}
@@ -675,6 +727,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "doctor", help="dump the raw bytes of every read command (writes nothing)"
     ).set_defaults(func=cmd_doctor)
+
+    fix = sub.add_parser(
+        "fix-dpi", help="clamp out-of-range DPI stages and re-link Y to X"
+    )
+    fix.add_argument("--default", type=int, default=800)
+    fix.set_defaults(func=cmd_fix_dpi)
 
     measure = sub.add_parser(
         "measure-polling", help="time the mouse's reports to measure real Hz"

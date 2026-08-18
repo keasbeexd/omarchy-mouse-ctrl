@@ -120,7 +120,7 @@
       "valueOffset": 5,
       "responseOffset": 5
     },
-    "_dpiComment": "Two writes, as the vendor does. hts_dpi_trackBar_MouseCaptureChanged calls hts_set_get_dpis_colors and then hts_set_get_dpis_colors_O. The first sets the live value; the second, in the legacy 5-byte-per-stage layout, is what persists. Writing only the first works until the mouse is switched off.",
+    "_dpiComment": "ONE write, not two. hts_set_get_dpis_colors (7 bytes per stage: X u16be, Y u16be, R G B) and hts_set_get_dpis_colors_O (5 bytes per stage, no separate Y) are selected by globe_FW_Old_New_Flag -- new firmware uses the first, old firmware the second. They are alternatives, never a sequence. Firmware 1.0.7 reports separate X and Y, so it is the new path. Sending the legacy packet to new firmware misaligns every stage from byte 9 on and writes colour bytes into the Y axis.",
     "dpi": {
       "get": "00 00 39 83",
       "responseOffset": 5,
@@ -131,20 +131,7 @@
         5,
         65
       ],
-      "_verified": "writes confirmed on hardware 2026-08-18",
-      "mirrorTo": {
-        "command": "dpiLegacy",
-        "from": "dpi",
-        "sourceFirst": 7,
-        "sourceStride": 7,
-        "targetFirst": 7,
-        "targetStride": 5,
-        "stages": 7,
-        "payloadRange": [
-          5,
-          65
-        ]
-      }
+      "_verified": "writes confirmed on hardware 2026-08-18"
     },
     "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
     "sleep": {
@@ -156,19 +143,7 @@
     },
     "_resetComment": "HTS_RESET_CMD restores factory defaults. Deliberately not wired to any field -- nothing in the panel should be one keystroke away from wiping the mouse's config.",
     "_linkFlagComment": "linkFlag:false marks commands whose vendor function never sets byte 4. For sleep that byte carries part of the sub-command, so writing a link flag into it corrupts the packet.",
-    "_replyComment": "The reply echoes the request: rx[2]=response length, rx[3]=opcode, rx[4]=link flag, payload from rx[5]. Crucially the firmware ACKs a packet carrying the wrong link flag and then ignores it, replying with an all-zero payload -- so an ACK is not proof of success.",
-    "dpiLegacy": {
-      "get": "00 00 2b 83",
-      "set": "00 00 2b 03",
-      "valueOffset": 5,
-      "responseOffset": 5,
-      "readModifyWrite": true,
-      "payloadRange": [
-        5,
-        65
-      ],
-      "_comment": "hts_set_get_dpis_colors_O -- the firmware's older DPI layout: 5 bytes per stage (DPI u16be then R G B), no separate X/Y axis. The vendor app writes this immediately after the current-format block, and it is this write that survives a power cycle."
-    }
+    "_replyComment": "The reply echoes the request: rx[2]=response length, rx[3]=opcode, rx[4]=link flag, payload from rx[5]. Crucially the firmware ACKs a packet carrying the wrong link flag and then ignores it, replying with an all-zero payload -- so an ACK is not proof of success."
   },
   "fields": {
     "batteryPercent": {

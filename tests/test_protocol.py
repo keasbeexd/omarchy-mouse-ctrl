@@ -401,23 +401,17 @@ class RealProfileTests(unittest.TestCase):
             self.profile.build_request("sleep", write=False, wireless=True)[4], 0x02
         )
 
-    def test_dpi_mirrors_into_the_legacy_layout(self):
-        """The vendor writes the DPI block twice, and only the second persists.
+    def test_dpi_has_exactly_one_write_command(self):
+        """The legacy layout is an alternative, not a companion.
 
-        hts_dpi_trackBar_MouseCaptureChanged calls hts_set_get_dpis_colors and
-        then hts_set_get_dpis_colors_O. Writing only the first survives until
-        the mouse is switched off, then reverts.
+        globe_FW_Old_New_Flag picks hts_set_get_dpis_colors (new firmware,
+        7 bytes per stage) OR hts_set_get_dpis_colors_O (old firmware, 5 bytes
+        per stage). Sending both misaligns every stage from byte 9 on and
+        writes colour bytes into the Y axis -- which is exactly what happened
+        on hardware when this was modelled as a sequence.
         """
-        mirror = self.profile.data["commands"]["dpi"]["mirrorTo"]
-        self.assertEqual(mirror["command"], "dpiLegacy")
-        # Current layout is 7 bytes per stage (X, Y, RGB); legacy is 5 (DPI, RGB).
-        self.assertEqual(mirror["sourceStride"], 7)
-        self.assertEqual(mirror["targetStride"], 5)
-        self.assertEqual(mirror["stages"], 7)
-        legacy = self.profile.data["commands"]["dpiLegacy"]
-        self.assertEqual(int(legacy["set"].split()[3], 16), 0x03)
-        self.assertEqual(int(legacy["set"].split()[2], 16), 0x2B)
-        self.assertEqual(int(legacy["get"].split()[3], 16), 0x83)
+        self.assertNotIn("dpiLegacy", self.profile.data["commands"])
+        self.assertNotIn("mirrorTo", self.profile.data["commands"]["dpi"])
 
     def test_commands_that_carry_a_block_are_read_modify_write(self):
         """DPI holds seven stages plus colours; a synthesised packet would zero
