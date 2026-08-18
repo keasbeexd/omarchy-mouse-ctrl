@@ -4,10 +4,11 @@
 // formatting out of QML makes the failure modes testable and keeps the panel
 // free of string surgery.
 
-// Measured on hardware: the polling register divides a 1000 Hz base clock, so
-// the reachable rates are 1000/n. These are the divisors that land on round
-// numbers; the ceiling is the base, not the "4K" on the box.
-var POLLING_RATES = [1000, 500, 250, 125]
+// Every one of these was measured by timing the mouse's own reports. The
+// register is not a single formula -- 1/2/4 divide a 1000 Hz base while 32 and
+// 64 are high-rate codes -- so the panel offers exactly the rates confirmed on
+// hardware. 4K included.
+var POLLING_RATES = [250, 500, 1000, 2000, 4000]
 
 function parseStatus(raw) {
   var text = String(raw || "").trim()

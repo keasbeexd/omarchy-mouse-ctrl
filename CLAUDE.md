@@ -111,10 +111,17 @@ distinguishes "the mouse answered 0" from "the mouse never answered", which
 look identical in the panel.
 
 `hskctl calibrate-polling` sweeps a register and measures the effect of each
-raw value. A hard lesson from building it: it originally snapped each
-measurement to the nearest rate on an assumed ladder, which turned a clean
-1000/raw divider into a nonsense table. **Report what you measured, then fit a
-model to it. Never round measurements onto a ladder you assumed in advance.**
+raw value. Two lessons are baked into it, both learned the hard way here:
+
+**Report what you measured, then fit a model to it.** It originally snapped
+each reading to the nearest rate on an assumed ladder, turning a clean 1000/raw
+relationship into a table that contradicted its own measurements.
+
+**Sweep the values the device can actually receive, not a tidy range.** A
+linear 0..6 sweep found a 1000 Hz ceiling and made 4K look unreachable. The
+vendor slider emits `1<<position`, so the interesting values were 32 and 64 --
+outside any range a human would think to try. Read the UI code to learn what
+inputs are legal before deciding what to test.
 
 ## Tests
 
@@ -147,12 +154,11 @@ docs/         how the protocol was decoded and how to verify it
 
 ## Open work
 
-1. `pollingRate` is settled: the register is a **divider** on a 1000 Hz base,
-   not a lookup table. Raw 1..6 clocked 1000/500/333/250/200/167 Hz, all within
-   0.5% of 1000/raw. The ceiling is therefore 1000 Hz, and 4000 Hz -- the model
-   name -- is not reachable through this register. Where 4K mode lives is an
-   open question: a separate command, a dongle mode, or a hardware switch.
-   `tools/analyze-driver.py` on the vendor binary is the place to look.
+1. `pollingRate` is settled, and the answer is not a formula. Raw 1..6 divide a
+   1000 Hz base (1000/500/333/250/200/167 Hz), but raw 32 and 64 clock 2000 and
+   4000 Hz. Non-monotonic, so the profile holds an explicit map of exactly what
+   was measured. 4K needs no special mode -- the vendor slider emits `1<<pos`,
+   and positions 5 and 6 are the high-rate codes. Raw 8 and 16 are untested.
 2. DPI writes are confirmed on hardware -- 800, 1200 and 400 each read back
    correctly. Still open: whether a write survives unplugging the dongle. The
    command table has no explicit save/commit packet, so it may be implicit.

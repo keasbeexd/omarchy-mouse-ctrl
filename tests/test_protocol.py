@@ -256,14 +256,18 @@ class RealProfileTests(unittest.TestCase):
         )
         self.assertEqual(packet[3], 0x02, "write must use the set opcode")
         # Measured on hardware: the register divides a 1000 Hz base.
-        self.assertEqual(packet[5], 1, "1000 Hz is base/1")
+        self.assertEqual(packet[5], 1, "1000 Hz is raw 1")
 
-    def test_polling_is_a_divider_not_a_table(self):
-        """Every calibration point fits 1000/raw to under 0.5%."""
+    def test_polling_map_is_exactly_what_was_measured(self):
+        """Not a divider after all.
+
+        raw 1..6 divide a 1000 Hz base, but raw 32 and 64 clock 2000 and 4000 --
+        measured, not inferred. The map is non-monotonic, so any single formula
+        would be wrong; this pins the observations.
+        """
         spec = self.profile.data["fields"]["pollingRate"]
-        self.assertEqual(spec.get("dividerBase"), 1000)
-        self.assertNotIn("values", spec)
-        measured = {0: 1000, 1: 1000, 2: 500, 3: 333, 4: 250, 5: 200, 6: 167}
+        self.assertNotIn("dividerBase", spec, "a formula cannot describe this register")
+        measured = {1: 1000, 2: 500, 3: 333, 4: 250, 5: 200, 6: 167, 32: 2000, 64: 4000}
         reply = bytearray(65)
         reply[1] = 0xA1
         for raw, hz in measured.items():
@@ -274,13 +278,13 @@ class RealProfileTests(unittest.TestCase):
                 f"raw {raw} should decode to the measured {hz} Hz",
             )
 
-    def test_polling_encodes_only_exact_divisors(self):
-        for hz, raw in ((1000, 1), (500, 2), (250, 4), (125, 8)):
+    def test_polling_encodes_the_measured_rates(self):
+        for hz, raw in ((1000, 1), (500, 2), (250, 4), (2000, 32), (4000, 64)):
             self.assertEqual(self.profile.encode_value("pollingRate", hz)[0], raw)
-        # 4000 is on the box but unreachable from a 1000 Hz base.
-        with self.assertRaises(ProtocolError) as ctx:
-            self.profile.encode_value("pollingRate", 4000)
-        self.assertIn("divides", str(ctx.exception))
+
+    def test_polling_rejects_a_rate_never_measured(self):
+        with self.assertRaises(ProtocolError):
+            self.profile.encode_value("pollingRate", 8000)
 
     def test_sleep_uses_its_subcommand_and_big_endian_value(self):
         packet = self.profile.build_request(

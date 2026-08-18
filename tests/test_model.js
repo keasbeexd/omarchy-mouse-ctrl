@@ -226,11 +226,8 @@ test("unknown level falls back to the mouse glyph", () => {
 });
 
 console.log("pollingOptions");
-test("polling options come from the measured 1000 Hz divider", () => {
-  // The register divides a 1000 Hz base, so 2000 and 4000 are unreachable
-  // however the box is marketed. Offering them would produce write errors.
-  assert.deepStrictEqual(Model.POLLING_RATES, [1000, 500, 250, 125]);
-  Model.POLLING_RATES.forEach((hz) => assert.strictEqual(1000 % hz, 0));
+test("polling options are exactly the rates measured on hardware", () => {
+  assert.deepStrictEqual(Model.POLLING_RATES, [250, 500, 1000, 2000, 4000]);
 });
 
 test("parseStatus carries writable and unverified through", () => {
@@ -262,7 +259,7 @@ test("every option has a value and a label", () => {
     assert.ok(typeof o.label === "string" && o.label.length > 0);
   });
   assert.strictEqual(options.find((o) => o.value === "1000").label, "1K");
-  assert.strictEqual(options.find((o) => o.value === "4000"), undefined);
+  assert.strictEqual(options.find((o) => o.value === "4000").label, "4K");
   assert.strictEqual(options.find((o) => o.value === "500").label, "500");
 });
 

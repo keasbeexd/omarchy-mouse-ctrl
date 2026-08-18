@@ -70,6 +70,21 @@ its selector at byte 6.
 Factory reset (`09`) is deliberately not bound to any field — nothing in the
 panel should be one keystroke from wiping the mouse's config.
 
+## Measured behaviour
+
+Everything below was measured by timing the mouse's own input reports, not
+inferred from the binary:
+
+| raw | Hz | | raw | Hz |
+|-----|------|---|-----|------|
+| 1 | 1000 | | 5 | 200 |
+| 2 | 500  | | 6 | 167 |
+| 3 | 333  | | 32 | 2000 |
+| 4 | 250  | | 64 | 4000 |
+
+Note it is not one formula. Raw 1..6 divide a 1000 Hz base; 32 and 64 are
+high-rate codes. `hskctl calibrate-polling` reproduces this in about 20 seconds.
+
 ## Install
 
 ```bash

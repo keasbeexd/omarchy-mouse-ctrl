@@ -182,8 +182,17 @@
     "pollingRate": {
       "command": "polling",
       "encoding": "u8",
-      "dividerBase": 1000,
-      "_note": "Measured on hardware, not guessed. The register is a divisor of a 1000 Hz base clock: raw 1..6 clocked 1000/500/333/250/200/167 Hz, every point within 0.5% of 1000/raw. Raw 0 behaves as 1. This is why an enum was always going to be wrong. Note the ceiling here is 1000 Hz -- see _pollingCeiling."
+      "_note": "Every value here was measured by timing the mouse's own input reports -- none inferred. The register is NOT a single formula: raw 1..6 divide a 1000 Hz base, while raw 32 and 64 are high-rate codes clocking 2000 and 4000 Hz. Non-monotonic, so an explicit map is the only honest model. Raw 8 (predicted 125 Hz) and raw 16 are untested.",
+      "values": {
+        "1": 1000,
+        "2": 500,
+        "3": 333,
+        "4": 250,
+        "5": 200,
+        "6": 167,
+        "32": 2000,
+        "64": 4000
+      }
     },
     "liftOffDistance": {
       "command": "liftOff",
@@ -424,5 +433,5 @@
       }
     ]
   },
-  "_pollingCeiling": "Measured: raw 1/2/4/8 divide a 1000 Hz base (1000/500/250/125 Hz). But the vendor's polling slider encodes 1<<position for positions >= 0 and position*-32 for the two positions ABOVE the base -- so it can also emit raw 32 and raw 64, which a linear sweep never reaches. Those are the likely 2000 and 4000 Hz settings. UNTESTED: measure them with `hskctl set pollingRate 32 --raw` before believing it. If confirmed, pollingRate is not a pure divider and dividerBase must be replaced by an explicit map."
+  "_pollingNote": "Resolved. The vendor slider emits 1<<position, so positions 0..6 give raw 1,2,4,8,16,32,64. Measured: 1=1000, 2=500, 4=250, 32=2000, 64=4000 Hz. 4K is reachable and needs no separate mode."
 }
