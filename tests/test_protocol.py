@@ -270,7 +270,10 @@ class RealProfileTests(unittest.TestCase):
         self.assertEqual(self.profile.decode("dpiStage1", bytes(reply)), 1600)
 
     def test_read_only_fields_refuse_writes(self):
-        for name in ("batteryPercent", "connection", "firmwareVersion", "dpiStage1"):
+        # Readings the firmware only reports, plus stage count, whose value
+        # reshapes the stage list rather than setting one.
+        for name in ("batteryPercent", "charging", "connection",
+                     "firmwareVersion", "dpiStageCount"):
             self.assertFalse(
                 self.profile.field_writable(name), f"{name} must stay read-only"
             )
@@ -290,8 +293,46 @@ class RealProfileTests(unittest.TestCase):
                 "angleSnap",
                 "debounceMs",
                 "sleepMinutes",
+                "activeDpiStage",
+                "dpiStage1",
+                "dpiStage2",
+                "dpiStage3",
+                "dpiStage4",
+                "dpiStage5",
+                "dpiStage6",
+                "dpiStage7",
             },
         )
+
+    def test_link_flag_is_omitted_where_the_firmware_omits_it(self):
+        """`hts_get_connect_state` and `hts_get_set_sleep` never set byte 4.
+
+        For sleep this matters twice over: byte 4 carries part of the
+        sub-command, so stamping a link flag into it corrupts the packet.
+        """
+        for name in ("connection", "sleep"):
+            wired = self.profile.build_request(name, write=False, wireless=False)
+            dongle = self.profile.build_request(name, write=False, wireless=True)
+            self.assertEqual(
+                wired, dongle, f"{name} must not vary with the link flag"
+            )
+        # And the sleep sub-command byte survives untouched.
+        self.assertEqual(
+            self.profile.build_request("sleep", write=False, wireless=True)[4], 0x02
+        )
+
+    def test_commands_that_carry_a_block_are_read_modify_write(self):
+        """DPI holds seven stages plus colours; a synthesised packet would zero
+        everything this profile has not decoded."""
+        dpi = self.profile.data["commands"]["dpi"]
+        self.assertTrue(dpi.get("readModifyWrite"))
+        self.assertEqual(dpi.get("payloadRange"), [5, 65])
+        # Scalar commands must NOT be, or a write costs a needless extra read.
+        for name in ("polling", "motion", "angle", "liftOff"):
+            self.assertFalse(
+                self.profile.data["commands"][name].get("readModifyWrite"),
+                f"{name} carries a single value and needs no read first",
+            )
 
     def test_reset_is_not_reachable_from_any_field(self):
         """Factory reset exists in the firmware; nothing should bind to it."""

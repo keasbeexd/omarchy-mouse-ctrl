@@ -58,8 +58,10 @@ Rules:
    alone.** It gets confirmed against real hardware or it stays flagged.
 2. **Never bind anything to `HTS_RESET_CMD` (opcode `09`).** It is factory
    reset. It is deliberately absent from `commands` and a test enforces that.
-3. **DPI stays read-only** until its seven-stage write is verified on a real
-   mouse. Writing it rewrites all stages and their colours in one packet.
+3. **DPI writes go read-modify-write.** The packet carries all seven stages
+   and their colours at once, so `set` reads the mouse's own block, changes one
+   field, and echoes the rest back untouched. Never synthesise a DPI packet
+   from an empty buffer — the undecoded colour bytes would be zeroed.
 4. Blind writes to a HID device can brick it. Prefer reading. If you need a new
    command, get it from the vendor binary or a capture — not from a guess.
 
@@ -90,6 +92,13 @@ HSK variant means adding a profile, not a branch.
 
 If you find yourself writing `if model == ...` in Python, stop — it belongs in
 the profile.
+
+## Diagnosing a misbehaving mouse
+
+`hskctl doctor` sends every read opcode on both link flags and prints the raw
+request and reply for each. It writes nothing. Use it before theorising: it
+distinguishes "the mouse answered 0" from "the mouse never answered", which
+look identical in the panel.
 
 ## Tests
 
@@ -124,8 +133,9 @@ docs/         how the protocol was decoded and how to verify it
 
 1. Verify the five `_needsVerification` fields against the Windows app, then
    set `"status": "verified"` and drop the notes. **Needs hardware.**
-2. Enable DPI writes once the seven-stage packet is confirmed. **Needs
-   hardware.**
+2. Confirm a DPI write survives a replug. Read-modify-write is implemented
+   and unit-tested against a simulated device, but has never touched real
+   hardware. **Needs hardware.**
 3. `charging` reads byte 6 of the battery reply; confirm `1` means charging.
 4. `tools/analyze-driver.py` never got run against the older 2023 build
    (`HSK_Pro_4K_FWSW20230322.rar`). Diffing the two would cross-check the

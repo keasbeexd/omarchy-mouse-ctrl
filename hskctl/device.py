@@ -160,6 +160,34 @@ class Session:
         packet = self.profile.build_request(command, write=False, wireless=self.wireless)
         return self._exchange_checked(command, packet)
 
+    def trial_read(self, command: str, wireless: bool) -> dict:
+        """One read attempt, reporting exactly what went over the wire.
+
+        Deliberately does not raise and does not retry: `doctor` needs the raw
+        result of each individual attempt, including the failures, rather than
+        the tidied-up answer `_read` produces.
+        """
+        try:
+            packet = self.profile.build_request(command, write=False, wireless=wireless)
+        except ProtocolError as exc:
+            return {"command": command, "wireless": wireless, "error": str(exc)}
+        out = {
+            "command": command,
+            "wireless": wireless,
+            "request": packet.hex(" "),
+        }
+        try:
+            reply = self._exchange(packet)
+        except (OSError, ProtocolError) as exc:
+            out["error"] = f"{type(exc).__name__}: {exc}"
+            return out
+        out["reply"] = reply.hex(" ") if reply else ""
+        out["replyLength"] = len(reply)
+        out["ack"] = self.profile.check_ack(reply)
+        out["ackByte"] = reply[1] if len(reply) > 1 else None
+        out["allZero"] = bool(reply) and not any(reply)
+        return out
+
     # -- high level ----------------------------------------------------------
 
     def read_all(self) -> dict:
@@ -208,11 +236,29 @@ class Session:
         if not self.profile.field_writable(name):
             raise ProtocolError(f"{name!r} is read-only on this device")
         command = self.profile.field_command(name)
-        payload = self.profile.encode_value(name, value)
-        packet = self.profile.build_request(
-            command, write=True, value_bytes=payload, wireless=self.wireless
-        )
-        self._exchange_checked(command, packet)
+        spec = self.profile.data["commands"][command]
+
+        if spec.get("readModifyWrite"):
+            # Commands that carry a whole block -- DPI carries seven stages and
+            # their colours in one packet -- must not be synthesised from
+            # nothing, or every field we have not decoded gets zeroed. Read the
+            # mouse's own block, change one field in it, send it back.
+            current = self._read(command)
+            packet = bytearray(
+                self.profile.build_request(command, write=True, wireless=self.wireless)
+            )
+            start, end = spec.get("payloadRange", [5, len(current)])
+            end = min(end, len(current), len(packet))
+            packet[start:end] = current[start:end]
+            self.profile.encode_into(packet, name, value)
+            self.profile.checksum(packet)
+            self._exchange_checked(command, bytes(packet))
+        else:
+            payload = self.profile.encode_value(name, value)
+            packet = self.profile.build_request(
+                command, write=True, value_bytes=payload, wireless=self.wireless
+            )
+            self._exchange_checked(command, packet)
         if self.profile.has_command("commit"):
             time.sleep(self.profile.transport.get("settleMs", 60) / 1000.0)
             self._exchange(

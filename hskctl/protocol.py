@@ -282,11 +282,13 @@ class Profile:
             raise NotDiscovered(f"command:{command_name}:{'set' if write else 'get'}")
         buf = parse_template(template, length)
 
-        # Byte 4 flags a wireless link. The vendor app sets it whenever the
-        # mouse is on the dongle rather than the cable, and the firmware
-        # ignores commands whose link flag does not match.
+        # Byte 4 flags a wireless link -- but only for the commands whose vendor
+        # function actually sets it. `hts_get_connect_state` and
+        # `hts_get_set_sleep` have no is_wireless block at all, and for sleep
+        # byte 4 carries part of the sub-command, so writing a link flag there
+        # corrupts the packet. Commands opt out with "linkFlag": false.
         flag_offset = self.transport.get("wirelessFlagOffset")
-        if flag_offset is not None and wireless:
+        if flag_offset is not None and wireless and cmd.get("linkFlag", True):
             buf[flag_offset] = 1
 
         if write and value_bytes:

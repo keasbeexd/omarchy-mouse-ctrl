@@ -291,6 +291,122 @@ def cmd_fields(args) -> int:
     return _emit(payload, args.json, human)
 
 
+def cmd_doctor(args) -> int:
+    """Read-only diagnostic: dump the raw bytes of every read command.
+
+    Sends nothing but read opcodes, on both link flags, and prints exactly what
+    came back. This is what to paste when something reads wrong -- it shows
+    whether the mouse is answering at all, whether it is the right endpoint,
+    and whether a value really is zero or just never arrived.
+    """
+    import os
+
+    try:
+        profile = load_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    candidates = rank_candidates(profile)
+    report: dict = {
+        "ok": True,
+        "model": profile.model,
+        "profileStatus": profile.status,
+        "profilePath": profile.path,
+        "candidates": [c.as_dict() for c in candidates],
+        "attempts": [],
+    }
+
+    if not candidates and not args.device:
+        report["ok"] = False
+        report["error"] = "no candidate HID node found"
+        return _emit(report, args.json, lambda p: print(p["error"]))
+
+    path = args.device or candidates[0].info.path
+    report["device"] = path
+
+    # Permissions matter more than anything else here: every exchange needs the
+    # node opened read-write, so a udev rule that never landed looks exactly
+    # like a mouse that will not answer.
+    access = {"path": path, "exists": os.path.exists(path)}
+    for mode, label in ((os.R_OK, "read"), (os.W_OK, "write")):
+        access[label] = os.access(path, mode)
+    try:
+        st = os.stat(path)
+        access["mode"] = oct(st.st_mode & 0o777)
+        access["uid"] = st.st_uid
+        access["gid"] = st.st_gid
+    except OSError as exc:
+        access["error"] = str(exc)
+    report["access"] = access
+
+    try:
+        session = open_session(profile, path)
+    except (DeviceNotFound, ProtocolError) as exc:
+        report["ok"] = False
+        report["error"] = str(exc)
+        return _emit(report, args.json, lambda p: print(p["error"]))
+
+    commands = [
+        name
+        for name in profile.data.get("commands", {})
+        if not name.startswith("_") and profile.has_command(name)
+    ]
+    for name in commands:
+        for wireless in (False, True):
+            report["attempts"].append(session.trial_read(name, wireless))
+
+    def human(p):
+        print(f"{p['model']}   profile: {p['profileStatus']}   {p['profilePath']}")
+        print()
+        print("candidates:")
+        for c in p["candidates"]:
+            mark = "->" if c["path"] == p.get("device") else "  "
+            page = c["usagePage"]
+            print(
+                f"  {mark} {c['path']}  {c['vidpid']}  iface={c['interface']}  "
+                f"usagePage={f'0x{page:04x}' if page is not None else '-'}  "
+                f"featureIds={c['featureReportIds'] or '-'}  score={c['score']}"
+            )
+        a = p["access"]
+        print()
+        print(
+            f"access: {a['path']}  mode={a.get('mode')}  "
+            f"readable={a.get('read')}  writable={a.get('write')}"
+        )
+        if not a.get("write"):
+            print("  !! not writable -- every exchange needs O_RDWR.")
+            print("     Run ./install.sh --udev, then replug the mouse or dongle.")
+        print()
+        print("read attempts (nothing below writes to the mouse):")
+        for att in p["attempts"]:
+            tag = f"{att['command']}/{'dongle' if att['wireless'] else 'wired'}"
+            if "error" in att:
+                print(f"  {tag:<24} ERROR {att['error']}")
+                continue
+            ack = "ACK" if att.get("ack") else "no-ack"
+            zero = " ALL-ZERO" if att.get("allZero") else ""
+            byte = att.get("ackByte")
+            print(
+                f"  {tag:<24} {ack:<7} byte1="
+                f"{f'0x{byte:02x}' if byte is not None else '--'}{zero}"
+            )
+            print(f"    tx {att['request'][:47]}")
+            print(f"    rx {att.get('reply', '')[:47]}")
+        acked = [a for a in p["attempts"] if a.get("ack")]
+        print()
+        if not acked:
+            print("Nothing acknowledged. Either this is the wrong hidraw node,")
+            print("or the mouse is asleep -- move it and run this again.")
+        else:
+            links = {a["wireless"] for a in acked}
+            print(
+                f"{len(acked)} of {len(p['attempts'])} attempts acknowledged; "
+                f"working link flag: {'dongle' if True in links else 'wired'}"
+            )
+
+    return _emit(report, args.json, human)
+
+
 def cmd_profiles(args) -> int:
     names = list_profiles()
     payload = {"ok": True, "profiles": names}
@@ -322,6 +438,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("profiles", help="list available device profiles").set_defaults(
         func=cmd_profiles
     )
+    sub.add_parser(
+        "doctor", help="dump the raw bytes of every read command (writes nothing)"
+    ).set_defaults(func=cmd_doctor)
 
     get_p = sub.add_parser("get", help="read one setting")
     get_p.add_argument("field")
