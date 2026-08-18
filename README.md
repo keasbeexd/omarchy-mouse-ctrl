@@ -17,9 +17,12 @@ vendor's mouse.
 | `hskctl` CLI and HID transport | done |
 | Transport + command table | decoded from the vendor binary |
 | Battery, connection, firmware | confirmed on hardware |
-| DPI — 7 stages, X/Y, LED colours | read **and** write confirmed on hardware |
-| Polling rate, 250–4000 Hz | measured, not inferred |
+| DPI — 7 stages, X/Y linked, LED colours | read and write confirmed on hardware |
+| Polling rate, 250–4000 Hz | measured on hardware, not inferred |
+| Motion sync, angle snap, lift-off | confirmed on hardware |
 | Debounce | read-only — read and write are asymmetric |
+| Sleep timer | readable; unit not established |
+| Persistence across power-cycle | **unresolved** |
 
 `hskctl fields` marks anything still unverified, and `hskctl doctor` dumps the
 raw bytes of every read command when something looks wrong.
@@ -166,7 +169,7 @@ hskctl/          CLI + hidraw transport + the profile interpreter
   cli.py           always-JSON-parseable command line
 profiles/        the decoded protocol -- data, not code
 tools/           analyze-driver.py, capture-usbmon.sh, decode-capture.py
-tests/           40 Python tests, 33 JS tests
+tests/           42 Python tests, 33 JS tests
 docs/            how the protocol was decoded, and how to verify it
 ```
 
