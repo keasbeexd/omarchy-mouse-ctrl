@@ -424,5 +424,5 @@
       }
     ]
   },
-  "_pollingCeiling": "The dongle clocked a 1000 Hz base during calibration, so no divisor reaches the 4000 Hz this model is sold on. 4K mode is presumably enabled elsewhere -- a separate command, a dongle mode, or a hardware switch -- and has not been located in the driver yet."
+  "_pollingCeiling": "Measured: raw 1/2/4/8 divide a 1000 Hz base (1000/500/250/125 Hz). But the vendor's polling slider encodes 1<<position for positions >= 0 and position*-32 for the two positions ABOVE the base -- so it can also emit raw 32 and raw 64, which a linear sweep never reaches. Those are the likely 2000 and 4000 Hz settings. UNTESTED: measure them with `hskctl set pollingRate 32 --raw` before believing it. If confirmed, pollingRate is not a pure divider and dividerBase must be replaced by an explicit map."
 }

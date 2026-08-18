@@ -553,13 +553,17 @@ def cmd_calibrate_polling(args) -> int:
         return _fail(str(exc), args.json)
 
     results: list[dict] = []
+    try:
+        sweep = [int(v) for v in str(args.values).split(",") if v.strip()]
+    except ValueError:
+        return _fail("--values must be a comma-separated list of integers", args.json)
     print(
-        f"Sweeping raw 0..{args.max_raw}. Keep the mouse moving the whole time "
-        f"(about {(args.max_raw + 1) * (args.seconds + 1):.0f} seconds).\n",
+        f"Sweeping raw {sweep}. Keep the mouse moving the whole time "
+        f"(about {len(sweep) * (args.seconds + 1):.0f} seconds).\n",
         file=sys.stderr,
     )
     try:
-        for raw in range(args.max_raw + 1):
+        for raw in sweep:
             try:
                 session.set_raw("pollingRate", raw)
             except (ProtocolError, OSError) as exc:
@@ -683,7 +687,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="sweep the polling register and measure what each raw value means",
     )
     calib.add_argument("--seconds", type=float, default=2.0)
-    calib.add_argument("--max-raw", type=int, default=6)
+    calib.add_argument(
+        "--values",
+        default="1,2,4,8,16,32,64",
+        help="comma-separated raw values to sweep. The vendor slider emits "
+             "1<<position for positions >= 0, and position*-32 (32, 64) for "
+             "the two above the base rate -- so a linear sweep misses them.",
+    )
     calib.set_defaults(func=cmd_calibrate_polling)
 
     get_p = sub.add_parser("get", help="read one setting")
