@@ -144,9 +144,9 @@ docs/         how the protocol was decoded and how to verify it
 1. `pollingRate` is the last unverified map. `hskctl measure-polling` times the
    mouse's own input reports; compare with `hskctl get pollingRate` and correct
    the enum from the pair.
-2. Confirm a DPI write survives a replug. The block layout is confirmed against
-   hardware and the arithmetic checks out (2 + 7*7 = 51 = the reported payload
-   length), but no write has been made yet.
+2. DPI writes are confirmed on hardware -- 800, 1200 and 400 each read back
+   correctly. Still open: whether a write survives unplugging the dongle. The
+   command table has no explicit save/commit packet, so it may be implicit.
 3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
    Confirm it reads 1 on the cable.
 4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the

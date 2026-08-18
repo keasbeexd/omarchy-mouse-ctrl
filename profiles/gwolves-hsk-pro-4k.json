@@ -130,7 +130,8 @@
       "payloadRange": [
         5,
         65
-      ]
+      ],
+      "_verified": "writes confirmed on hardware 2026-08-18"
     },
     "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
     "sleep": {
@@ -238,7 +239,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 1"
+      "_note": "X axis of stage 1. Writes confirmed on hardware: 800, 1200 and 400 each read back correctly through read-modify-write."
     },
     "dpiStage1Y": {
       "command": "dpi",
