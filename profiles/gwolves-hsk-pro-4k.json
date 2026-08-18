@@ -245,7 +245,6 @@
       "encoding": "u8",
       "min": 1,
       "max": 7,
-      "readOnly": true,
       "_note": "rx[6] -- how many DPI stages the mouse cycles through, not an unknown flag. hts_set_get_dpis_colors writes tx[6] from the struct field that hts_dpi_level_combo_SelectionChangeCommitted sets from the 'DPI level' combo, and that handler clamps the active stage down to it. Reads 0 on this mouse, which is odd -- it cycles more stages than that -- so either the firmware does not use it the way the app does, or an earlier bad packet zeroed it.",
       "_needsVerification": "writing it is untested on hardware; read it, change the count, and check the mouse cycles that many stages before trusting the write"
     },

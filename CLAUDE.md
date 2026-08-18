@@ -260,9 +260,19 @@ docs/         how the protocol was decoded and how to verify it
    plugged in there are two answering nodes, and the dongle does not know the
    mouse is charging. Check which path `doctor` selected before touching the
    profile.
-4. `rx[6]` of the DPI reply is the stage count. Reads 1 on this mouse, which is
-   worth understanding — the panel offers seven. Writing it is untested, so the
-   field is read-only.
+4. **`rx[6]` of the DPI reply is the stage count, and it reads 0 on the
+   hardware — this is the current lead for DPI writes being ignored.** The
+   symptoms all line up: the write is ACKed, the reply echoes the new value
+   back, and the very next read has the old one. `activeDpiStage` (`tx[5]`)
+   still applies, but nothing in the stage array does, and colours are refused
+   the same way. If the firmware writes `tx[6]` stages out of the packet, a
+   count of zero means it writes none — which is exactly what we see.
+   Read-modify-write copies that 0 straight back every time, so it is
+   self-perpetuating. It very likely got zeroed by the legacy-packet incident.
+   `dpiStageCount` is writable now so the theory can be tested:
+   `hskctl probe-write dpiStageCount 7`, then retry a DPI write. If that is it,
+   the DPI write should stop trusting a nonsensical count rather than echoing
+   it.
 5. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
    tuple, write takes a row index into the driver's 6-row table. Model the
    table to re-enable writing.

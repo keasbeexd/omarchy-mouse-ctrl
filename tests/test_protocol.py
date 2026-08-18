@@ -354,14 +354,13 @@ class RealProfileTests(unittest.TestCase):
         self.assertEqual(self.profile.decode("dpiStage2Color", bytes(buf)), "#ffa500")
 
     def test_read_only_fields_refuse_writes(self):
-        # Readings the firmware only reports, plus stage count, whose value
-        # reshapes the stage list rather than setting one.
+        # Readings the firmware only reports.
         # debounce is here because its read and write are asymmetric: the read
         # returns byte 0 of a 4-byte tuple, the write takes a row index into the
         # driver's table. Writing the number you just read would select a
         # different row.
         for name in ("batteryPercent", "charging", "connection",
-                     "firmwareVersion", "dpiStageCount", "debounceMs"):
+                     "firmwareVersion", "debounceMs"):
             self.assertFalse(
                 self.profile.field_writable(name), f"{name} must stay read-only"
             )
@@ -379,6 +378,7 @@ class RealProfileTests(unittest.TestCase):
             "angleSnap",
             "sleepMinutes",
             "activeDpiStage",
+            "dpiStageCount",
         }
         for n in range(1, 8):
             expected |= {f"dpiStage{n}", f"dpiStage{n}Y", f"dpiStage{n}Color"}
