@@ -4,3 +4,5 @@ capture.pcapng
 capture.json
 capture.labels
 .hsk-capture.pid
+*.tar.gz
+*.bundle

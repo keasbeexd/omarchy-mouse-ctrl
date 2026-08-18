@@ -260,7 +260,9 @@ Panel {
         else if (t === "r" || t === "R") hsk.refresh()
         else if (t === "d" || t === "D") hsk.cycleDpiStage()
         else if (t === "m" || t === "M") hsk.toggle("motionSync")
-        else if (t >= "1" && t <= "6") hsk.setDpiStage(parseInt(t, 10))
+        // 1..7, not 1..6 -- the mouse has seven stages and stage 7 was
+        // unreachable from the keyboard.
+        else if (t >= "1" && t <= "7") hsk.setDpiStage(parseInt(t, 10))
       }
 
       Flickable {
