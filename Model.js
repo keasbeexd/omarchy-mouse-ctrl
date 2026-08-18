@@ -105,6 +105,8 @@ function barLabel(settings, showBattery) {
 // whatever stages reported a value, so a partial mapping still renders.
 function dpiStages(settings) {
   var stages = []
+  // With no stage count reported, show every stage that has a value rather
+  // than guessing a number and hiding real ones.
   var count = has(settings, "dpiStageCount") ? settings.dpiStageCount : 7
   for (var i = 1; i <= 7; i++) {
     var key = "dpiStage" + i

@@ -92,6 +92,9 @@ def _decode_scalar(buf: bytes, spec: dict) -> Any:
         raw = buf[off] & 0x0F
     elif enc == "nibble_high":
         raw = (buf[off] >> 4) & 0x0F
+    elif enc == "version3":
+        # Three bytes of major.minor.patch, as the firmware reports it.
+        return "%d.%d.%d" % (buf[off], buf[off + 1], buf[off + 2])
     else:
         raise ProtocolError(f"unknown encoding {enc!r}")
 

@@ -390,8 +390,17 @@ def cmd_doctor(args) -> int:
                 f"  {tag:<24} {ack:<7} byte1="
                 f"{f'0x{byte:02x}' if byte is not None else '--'}{zero}"
             )
-            print(f"    tx {att['request'][:47]}")
-            print(f"    rx {att.get('reply', '')[:47]}")
+            for label, blob in (("tx", att["request"]), ("rx", att.get("reply", ""))):
+                tokens = blob.split()
+                # 16 bytes a line, and stop at the last non-zero so a 65-byte
+                # packet with a short payload does not print four blank rows.
+                last = max(
+                    (i for i, t in enumerate(tokens) if t != "00"), default=-1
+                )
+                shown = tokens[: max(8, last + 2)]
+                for i in range(0, len(shown), 16):
+                    prefix = label if i == 0 else "  "
+                    print(f"    {prefix} {' '.join(shown[i:i + 16])}")
         acked = [a for a in p["attempts"] if a.get("ack")]
         print()
         if not acked:

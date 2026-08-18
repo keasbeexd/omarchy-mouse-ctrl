@@ -269,11 +269,30 @@ class RealProfileTests(unittest.TestCase):
         reply[7:9] = (1600).to_bytes(2, "big")
         self.assertEqual(self.profile.decode("dpiStage1", bytes(reply)), 1600)
 
+    def test_battery_reads_the_byte_the_mouse_actually_uses(self):
+        """Observed on hardware: rx[5] is status, rx[6] is the percentage."""
+        reply = bytes.fromhex("00a1028f01006300") + bytes(57)
+        self.assertEqual(self.profile.decode("batteryPercent", reply), 99)
+        self.assertIs(self.profile.decode("charging", reply), False)
+
+    def test_firmware_version_is_three_bytes(self):
+        reply = bytes.fromhex("00a106810101000700 5808".replace(" ", "")) + bytes(54)
+        self.assertEqual(self.profile.decode("firmwareVersion", reply), "1.0.7")
+
+    def test_only_stage_one_is_mapped(self):
+        """The stage stride is 6 bytes, so 2..7 stay unmapped until a full dump."""
+        for name in ("dpiStage2", "dpiStage7"):
+            self.assertNotIn(name, self.profile.data["fields"])
+
     def test_read_only_fields_refuse_writes(self):
         # Readings the firmware only reports, plus stage count, whose value
         # reshapes the stage list rather than setting one.
+        # debounce is here because its read and write are asymmetric: the read
+        # returns byte 0 of a 4-byte tuple, the write takes a row index into the
+        # driver's table. Writing the number you just read would select a
+        # different row.
         for name in ("batteryPercent", "charging", "connection",
-                     "firmwareVersion", "dpiStageCount"):
+                     "firmwareVersion", "dpiStageCount", "debounceMs"):
             self.assertFalse(
                 self.profile.field_writable(name), f"{name} must stay read-only"
             )
@@ -291,16 +310,10 @@ class RealProfileTests(unittest.TestCase):
                 "liftOffDistance",
                 "motionSync",
                 "angleSnap",
-                "debounceMs",
                 "sleepMinutes",
                 "activeDpiStage",
                 "dpiStage1",
-                "dpiStage2",
-                "dpiStage3",
-                "dpiStage4",
-                "dpiStage5",
-                "dpiStage6",
-                "dpiStage7",
+                "dpiStage1Y",
             },
         )
 

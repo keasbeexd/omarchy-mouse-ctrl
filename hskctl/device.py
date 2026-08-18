@@ -97,9 +97,10 @@ class DeviceNotFound(ProtocolError):
 class Session:
     profile: Profile
     info: HidrawInfo
-    # Which link we currently believe the mouse is on. Corrected automatically
-    # on the first exchange that gets no acknowledgement.
+    # Which link the mouse is on. Established by detect_link() before the first
+    # exchange, because an ACK alone does not prove the flag was right.
     wireless: bool = False
+    _link_detected: bool = False
 
     # -- low level -----------------------------------------------------------
 
@@ -156,7 +157,39 @@ class Session:
             f"Try `hskctl probe`."
         )
 
+    def detect_link(self) -> bool:
+        """Ask the mouse which link it is on, and set the flag accordingly.
+
+        This has to be explicit. The firmware acknowledges a packet carrying the
+        *wrong* link flag -- it replies 0xA1 and echoes the header -- and then
+        ignores it, answering with an all-zero payload. So an ACK is not proof
+        the command was honoured, and retrying only on a missing ACK never
+        corrects the flag: reads come back as zeros and writes vanish silently.
+
+        `connection` is the one command that carries no link flag at all, so it
+        answers the question regardless of which link we are on.
+        """
+        if self._link_detected:
+            return self.wireless
+        self._link_detected = True
+        if not self.profile.has_command("connection"):
+            return self.wireless
+        try:
+            reply = self._exchange_checked(
+                "connection",
+                self.profile.build_request("connection", write=False),
+            )
+        except (OSError, ProtocolError):
+            return self.wireless
+        spec = self.profile.data["commands"]["connection"]
+        offset = spec.get("responseOffset", 5)
+        if offset < len(reply):
+            # Non-zero means a wireless link; the cable reports 0.
+            self.wireless = reply[offset] != 0
+        return self.wireless
+
     def _read(self, command: str) -> bytes:
+        self.detect_link()
         packet = self.profile.build_request(command, write=False, wireless=self.wireless)
         return self._exchange_checked(command, packet)
 
@@ -235,6 +268,7 @@ class Session:
         """
         if not self.profile.field_writable(name):
             raise ProtocolError(f"{name!r} is read-only on this device")
+        self.detect_link()
         command = self.profile.field_command(name)
         spec = self.profile.data["commands"][command]
 

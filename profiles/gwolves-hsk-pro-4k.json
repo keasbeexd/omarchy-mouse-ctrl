@@ -120,7 +120,7 @@
       "valueOffset": 5,
       "responseOffset": 5
     },
-    "_dpiComment": "hts_set_get_dpis_colors carries all seven stages and their colours in one packet: active stage at byte 5, stage count at byte 6, then big-endian u16 stages from byte 7. Writes therefore go read-modify-write -- the mouse's own block is read back, one field is changed, and the rest is echoed untouched, so undecoded bytes (the colours) survive.",
+    "_dpiComment": "hts_set_get_dpis_colors carries every stage in one packet. Per stage it writes three big-endian u16 pairs from byte 7 -- X DPI, Y DPI, and a third value -- so the stride is 6 bytes. Observed: rx[7:9]=rx[9:11]=400, i.e. stage 1 at 400 DPI on both axes. Writes go read-modify-write so undecoded bytes survive.",
     "dpi": {
       "get": "00 00 39 83",
       "responseOffset": 5,
@@ -141,7 +141,8 @@
       "linkFlag": false
     },
     "_resetComment": "HTS_RESET_CMD restores factory defaults. Deliberately not wired to any field -- nothing in the panel should be one keystroke away from wiping the mouse's config.",
-    "_linkFlagComment": "linkFlag:false marks commands whose vendor function never sets byte 4. For sleep that byte carries part of the sub-command, so writing a link flag into it corrupts the packet."
+    "_linkFlagComment": "linkFlag:false marks commands whose vendor function never sets byte 4. For sleep that byte carries part of the sub-command, so writing a link flag into it corrupts the packet.",
+    "_replyComment": "The reply echoes the request: rx[2]=response length, rx[3]=opcode, rx[4]=link flag, payload from rx[5]. Crucially the firmware ACKs a packet carrying the wrong link flag and then ignores it, replying with an all-zero payload -- so an ACK is not proof of success."
   },
   "fields": {
     "batteryPercent": {
@@ -149,30 +150,33 @@
       "encoding": "u8",
       "min": 0,
       "max": 100,
-      "readOnly": true
+      "readOnly": true,
+      "offset": 6
     },
     "charging": {
       "command": "battery",
-      "offset": 6,
+      "offset": 5,
       "encoding": "u8",
       "type": "bool",
       "readOnly": true,
-      "_needsVerification": "byte 6 of the battery reply is a status byte; confirm 1 means charging"
+      "_needsVerification": "byte 5 of the battery reply; observed 0 while discharging -- confirm it reads 1 on the cable"
     },
     "connection": {
       "command": "connection",
       "encoding": "u8",
       "readOnly": true,
-      "_needsVerification": "confirm which raw value means wired vs dongle",
       "values": {
         "0": "wired",
         "1": "dongle"
-      }
+      },
+      "_note": "observed 1 on the dongle; the cable reports 0"
     },
     "firmwareVersion": {
       "command": "version",
-      "encoding": "u16be",
-      "readOnly": true
+      "offset": 5,
+      "encoding": "version3",
+      "readOnly": true,
+      "_note": "three bytes major.minor.patch; observed 01 00 07"
     },
     "pollingRate": {
       "command": "polling",
@@ -211,7 +215,8 @@
       "encoding": "u8",
       "min": 0,
       "max": 20,
-      "_needsVerification": "the vendor app indexes a 4-byte table by this value; confirm it is a plain millisecond count"
+      "_needsVerification": "read returns byte 0 of a 4-byte tuple (observed 03 0a 23 14, row 1 of the driver's 6-row table) while the write takes a row index -- the two are not the same number, so writing is disabled until the table is modelled",
+      "readOnly": true
     },
     "sleepMinutes": {
       "command": "sleep",
@@ -241,66 +246,21 @@
       "encoding": "u16be",
       "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
       "min": 50,
-      "max": 26000
+      "max": 26000,
+      "_note": "X axis of stage 1. hts_set_get_dpis_colors writes three u16 pairs per stage, so the stage stride is 6 bytes -- stages 2..7 stay unmapped until a full 65-byte dpi dump confirms where stage 2 starts."
     },
-    "dpiStage2": {
+    "dpiStage1Y": {
       "command": "dpi",
       "offset": 9,
       "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
       "min": 50,
-      "max": 26000
-    },
-    "dpiStage3": {
-      "command": "dpi",
-      "offset": 11,
-      "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
-      "min": 50,
-      "max": 26000
-    },
-    "dpiStage4": {
-      "command": "dpi",
-      "offset": 13,
-      "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
-      "min": 50,
-      "max": 26000
-    },
-    "dpiStage5": {
-      "command": "dpi",
-      "offset": 15,
-      "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
-      "min": 50,
-      "max": 26000
-    },
-    "dpiStage6": {
-      "command": "dpi",
-      "offset": 17,
-      "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
-      "min": 50,
-      "max": 26000
-    },
-    "dpiStage7": {
-      "command": "dpi",
-      "offset": 19,
-      "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
-      "min": 50,
-      "max": 26000
+      "max": 26000,
+      "_note": "Y axis of stage 1; equals X unless the vendor app's independent-XY mode is on"
     }
   },
   "ui": {
     "dpiStages": [
-      "dpiStage1",
-      "dpiStage2",
-      "dpiStage3",
-      "dpiStage4",
-      "dpiStage5",
-      "dpiStage6",
-      "dpiStage7"
+      "dpiStage1"
     ],
     "quickToggles": [
       "motionSync",
