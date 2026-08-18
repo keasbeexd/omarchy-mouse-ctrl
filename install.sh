@@ -10,6 +10,7 @@
 #   --autoapply  re-apply saved settings whenever the mouse reconnects
 #   --link       put `hskctl` on your PATH for use in a terminal
 #   --plugin     copy the plugin into place by hand, if you cloned it yourself
+#   --dev        symlink this checkout into the plugins dir, for hacking on it
 #   --uninstall  undo --link and --plugin
 #
 # With no arguments it does --udev and --link.
@@ -43,6 +44,24 @@ copy_plugin() {
     omarchy-shell shell rescanPlugins >/dev/null 2>&1 || warn "rescan failed -- is the shell running?"
   fi
   info "Now run: omarchy plugin enable $PLUGIN_ID"
+}
+
+link_plugin() {
+  # Omarchy discovers third-party plugins with a glob -- `for sub in "$dir"/*/`
+  # plus a `[[ -f "$sub/manifest.json" ]]` test -- and both follow symlinks, so
+  # the plugin directory can be a link to a working checkout. (The first-party
+  # scan uses `find` without -L and would not, but that path is not used here.)
+  info "Linking $REPO_DIR into $PLUGIN_DIR"
+  mkdir -p "$(dirname "$PLUGIN_DIR")"
+  if [[ -e "$PLUGIN_DIR" && ! -L "$PLUGIN_DIR" ]]; then
+    die "$PLUGIN_DIR already exists and is a real directory. Move it aside first."
+  fi
+  ln -sfn "$REPO_DIR" "$PLUGIN_DIR"
+  if command -v omarchy-shell >/dev/null 2>&1; then
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || warn "rescan failed -- is the shell running?"
+  fi
+  info "Edits in $REPO_DIR are now live. Run:  omarchy plugin enable $PLUGIN_ID"
+  warn "Auto-reload on save may not follow the symlink; use 'omarchy-shell shell rescanPlugins' after edits."
 }
 
 install_udev() {
@@ -97,6 +116,7 @@ case "${1:-}" in
   --autoapply) install_autoapply ;;
   --link)      link_cli ;;
   --plugin)    copy_plugin ;;
+  --dev)       link_plugin ;;
   --uninstall) uninstall ;;
   "")
     command -v python3 >/dev/null || die "python3 is required"

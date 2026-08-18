@@ -118,20 +118,29 @@ hskctl save                 # record the current settings as your baseline
 
 ## Install
 
+Once the repo is public, the whole install is:
+
 ```bash
 omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
 omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
-That is the whole install. The repo *is* the plugin — `manifest.json` sits at
-the root — and `hskctl` ships inside it, so the widget runs the copy bundled
-beside itself with nothing else to set up.
+The repo *is* the plugin — `manifest.json` sits at the root — and `hskctl` ships
+inside it, so the widget runs the copy bundled beside itself.
 
-One optional extra: a udev rule, so changing settings doesn't need sudo.
+From a local checkout instead, either snapshot it or link it:
 
 ```bash
-cd ~/.config/omarchy/plugins/io.github.keasbeexd.hsk
-./install.sh --udev     # --link also puts hskctl on your PATH
+./install.sh --plugin    # copy into ~/.config/omarchy/plugins/
+./install.sh --dev       # symlink it, so edits here are live
+omarchy plugin enable io.github.keasbeexd.hsk
+```
+
+One thing you do need either way — a udev rule, so changing settings doesn't
+need sudo. Replug the mouse afterwards.
+
+```bash
+./install.sh --udev      # --link also puts hskctl on your PATH
 ```
 
 Python 3.9+, no pip packages — it talks to `/dev/hidraw*` directly.
