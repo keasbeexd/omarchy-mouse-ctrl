@@ -409,6 +409,8 @@ class RealProfileTests(unittest.TestCase):
         tracks wrong. Writing Y alone still leaves X, so independent setting
         remains possible.
         """
+        # Splitting these also breaks persistence: a DPI write that left Y at
+        # its old value read back correctly and then vanished on power-off.
         for n in range(1, 8):
             self.assertEqual(
                 self.profile.data["fields"][f"dpiStage{n}"]["linkedField"],

@@ -22,7 +22,7 @@ vendor's mouse.
 | Motion sync, angle snap, lift-off | confirmed on hardware |
 | Debounce | read-only — read and write are asymmetric |
 | Sleep timer | readable; unit not established |
-| Persistence of hskctl writes | **open** — see below |
+| Persistence across power-cycle | works — writes reach the mouse's flash |
 
 `hskctl fields` marks anything still unverified, and `hskctl doctor` dumps the
 raw bytes of every read command when something looks wrong.
@@ -98,22 +98,23 @@ inferred from the binary:
 Note it is not one formula. Raw 1..6 divide a 1000 Hz base; 32 and 64 are
 high-rate codes. `hskctl calibrate-polling` reproduces this in about 20 seconds.
 
-## Settings written by hskctl do not survive a power cycle — yet
+## Persistence
 
-The mouse itself persists fine: its settings follow it between machines. So a
-write from the vendor app reaches flash and a write from `hskctl` does not, and
-something differs between the two packets. Under investigation — the suspects
-are bytes 5 and 6, which the vendor fills from its own state rather than from a
-read-back.
+Settings survive a power cycle and follow the mouse between machines — it has
+onboard storage and `hskctl` writes reach it.
 
-Until that is settled, there is a safety net:
+That was not true until DPI writes started setting both axes together. Writing
+only X, and leaving Y at its previous value, produced a change that read back
+correctly and then vanished on power-off. The firmware appears to commit only a
+block it considers complete, so `dpiStageN` and `dpiStageNY` ride in one packet
+(see `linkedField` in the profile). Do not split them.
+
+If you still want a belt-and-braces restore on reconnect:
 
 ```bash
 hskctl save                 # record the current settings as your baseline
 ./install.sh --autoapply    # re-apply them whenever the mouse reappears
 ```
-
-Change something, run `hskctl save` again, and that becomes the new baseline.
 
 ## Install
 

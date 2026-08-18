@@ -176,18 +176,16 @@ docs/         how the protocol was decoded and how to verify it
    4000 Hz. Non-monotonic, so the profile holds an explicit map of exactly what
    was measured. 4K needs no special mode -- the vendor slider emits `1<<pos`,
    and positions 5 and 6 are the high-rate codes. Raw 8 and 16 are untested.
-2. DPI persistence is **open**. The mouse does have onboard storage -- its
-   settings follow it between machines -- so a write from the vendor app
-   persists and a write from hskctl does not. Something differs between the
-   two packets. `in_Queue_Close`/`in_Queue_Open` writing local files is the
-   app caching UI state, NOT the persistence mechanism; do not conclude from
-   them that the mouse has no flash. Prime suspects: `tx[5]` and `tx[6]`,
-   which the vendor fills from its own struct (`arg1[1]`, `arg1[0]`) while
-   read-modify-write copies them back from the reply. **Ruled out:** the read
-   path stores arg1[1]=rx[5] and arg1[0]=rx[6], the write path sends
-   tx[5]=arg1[1] and tx[6]=arg1[0] -- perfectly symmetric, so copying them
-   back from the reply is exactly what the vendor does. Two theories have now
-   been wrong; get evidence before proposing a third.
+2. DPI persistence **works**, mechanism not fully explained. It started working
+   with the linked-axis change (`linkedField`), which was made for usability,
+   not persistence. Before it, `set dpiStage1 1600` left Y at its old value and
+   did not survive a power cycle; after it, X and Y are written together and it
+   does. The likely rule is that the firmware only commits a block it considers
+   complete. Counter-evidence: the corrupt legacy write persisted with X=2000
+   and Y=0xAA00, wildly mismatched -- though that packet also carried a
+   different length byte, so it is not a clean comparison. Treat the mechanism
+   as unconfirmed; do not "simplify" the linked write away.
+
 3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
    Confirm it reads 1 on the cable.
 4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the
