@@ -199,11 +199,11 @@
     "liftOffDistance": {
       "command": "liftOff",
       "encoding": "u8",
-      "_needsVerification": "confirm 0 is 1mm and 1 is 2mm",
       "values": {
-        "0": "1mm",
-        "1": "2mm"
-      }
+        "1": "1mm",
+        "2": "2mm"
+      },
+      "_note": "Read out of hts_liftoff_low_radioButton_CheckedChanged: the low button sets 1, the high button sets 2. The earlier 0/1 map was wrong in both directions -- writing '1mm' sent raw 0, which the firmware rejected, and a mouse sitting at raw 1 (actually 1mm) was displayed as 2mm."
     },
     "motionSync": {
       "command": "motion",

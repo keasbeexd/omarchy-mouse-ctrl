@@ -422,6 +422,18 @@ class RealProfileTests(unittest.TestCase):
                 "Y must not drag X with it",
             )
 
+    def test_lift_off_uses_the_values_the_firmware_uses(self):
+        """hts_liftoff_low_radioButton_CheckedChanged: low sets 1, high sets 2.
+
+        The original 0/1 guess was wrong both ways -- writing "1mm" sent raw 0,
+        which the firmware rejected, and a mouse at raw 1 (1mm) was shown as
+        2mm.
+        """
+        values = self.profile.data["fields"]["liftOffDistance"]["values"]
+        self.assertEqual(values, {"1": "1mm", "2": "2mm"})
+        self.assertEqual(self.profile.encode_value("liftOffDistance", "1mm")[0], 1)
+        self.assertEqual(self.profile.encode_value("liftOffDistance", "2mm")[0], 2)
+
     def test_dpi_gets_a_longer_settle_than_the_scalar_commands(self):
         """DPI moves 51 bytes of payload; the scalars move one.
 

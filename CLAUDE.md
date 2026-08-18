@@ -120,6 +120,19 @@ HSK variant means adding a profile, not a branch.
 If you find yourself writing `if model == ...` in Python, stop — it belongs in
 the profile.
 
+## Never name a QML id `mouse`
+
+`MouseArea.onClicked` carries an implicit `mouse` parameter -- the MouseEvent --
+which silently shadows an id of the same name. The service was `id: mouse`, so
+`mouse.setDpiStage(...)` inside a click handler resolved to the event object and
+did nothing, with no visible error.
+
+The giveaway was which controls worked: `Toggle.clicked()` and
+`PanelActionButton.clicked()` take no parameters, so motion sync and angle
+snapping were fine, while every MouseArea click was dead. Anything that looks
+like "this control does nothing but that one works" is worth checking for a
+shadowed id before suspecting the device. The service is now `id: hsk`.
+
 ## Only one thing may talk to the mouse at a time
 
 A command is a send followed by a read of the device's single reply buffer, so

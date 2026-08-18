@@ -23,20 +23,26 @@ Panel {
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
 
-  readonly property var rows: mouse.rows
-  readonly property var dpiStages: Model.dpiStages(mouse.effectiveValues)
-  readonly property bool needsSetup: mouse.state === "undiscovered"
-  readonly property bool hasError: mouse.state === "error"
+  readonly property var rows: hsk.rows
+  readonly property var dpiStages: Model.dpiStages(hsk.effectiveValues)
+  readonly property bool needsSetup: hsk.state === "undiscovered"
+  readonly property bool hasError: hsk.state === "error"
 
-  readonly property color barIconColor: mouse.lowBattery
+  readonly property color barIconColor: hsk.lowBattery
     ? root.urgent
-    : (mouse.ready ? barForeground : Qt.darker(barForeground, 1.55))
+    : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55))
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  // NOT `id: mouse`. MouseArea.onClicked carries an implicit `mouse`
+  // parameter (the MouseEvent), which silently shadows an id of that name --
+  // so `mouse.setDpiStage(...)` inside a click handler resolved to the event,
+  // not the service, and did nothing. Handlers for parameterless signals
+  // (Toggle.clicked, PanelActionButton.clicked) were unaffected, which is why
+  // the toggles worked and clicking a DPI stage did not.
   Service {
-    id: mouse
+    id: hsk
     settings: root.settings
   }
 
@@ -76,18 +82,18 @@ Panel {
       // One step per press, matching the sensor's 50 DPI granularity; hold
       // shift-free repeat and it walks smoothly.
       var wanted = Model.clampDpi(row.dpi + direction * Model.DPI_STEP)
-      if (wanted !== row.dpi) mouse.set("dpiStage" + row.stage, wanted)
+      if (wanted !== row.dpi) hsk.set("dpiStage" + row.stage, wanted)
     } else if (row.kind === "pollingRate") {
       var options = Model.POLLING_RATES
-      var current = mouse.value("pollingRate")
+      var current = hsk.value("pollingRate")
       var index = options.indexOf(current)
       if (index < 0) index = 0
       var next = Math.max(0, Math.min(options.length - 1, index + direction))
-      if (options[next] !== current) mouse.set("pollingRate", options[next])
+      if (options[next] !== current) hsk.set("pollingRate", options[next])
     } else if (row.kind === "liftOffDistance") {
-      mouse.set("liftOffDistance", mouse.value("liftOffDistance") === "1mm" ? "2mm" : "1mm")
+      hsk.set("liftOffDistance", hsk.value("liftOffDistance") === "1mm" ? "2mm" : "1mm")
     } else if (row.kind === "toggle") {
-      mouse.toggle(row.field)
+      hsk.toggle(row.field)
     }
   }
 
@@ -95,9 +101,9 @@ Panel {
     var row = currentRow()
     if (!row) return
     if (row.kind === "dpiStage") {
-      if (row.selectable) mouse.setDpiStage(row.stage)
+      if (row.selectable) hsk.setDpiStage(row.stage)
     } else if (row.kind === "toggle") {
-      mouse.toggle(row.field)
+      hsk.toggle(row.field)
     } else {
       adjustCurrent(1)
     }
@@ -107,8 +113,8 @@ Panel {
   function cycleCurrentColor() {
     var row = currentRow()
     if (!row || row.kind !== "dpiStage") return
-    if (!mouse.canWrite("dpiStage" + row.stage + "Color")) return
-    mouse.set("dpiStage" + row.stage + "Color", Model.nextStageColor(row.color))
+    if (!hsk.canWrite("dpiStage" + row.stage + "Color")) return
+    hsk.set("dpiStage" + row.stage + "Color", Model.nextStageColor(row.color))
   }
 
   function scrollItemIntoView(item) {
@@ -160,7 +166,7 @@ Panel {
   onOpenedChanged: if (opened) {
     cursorActive = false
     if (panelFlick) panelFlick.contentY = 0
-    mouse.refresh()
+    hsk.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -176,15 +182,15 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    function refresh(): string { mouse.refresh(); return "ok" }
-    function status(): string { return mouse.summary }
-    function cycleDpi(): string { mouse.cycleDpiStage(); return "ok" }
+    function refresh(): string { hsk.refresh(); return "ok" }
+    function status(): string { return hsk.summary }
+    function cycleDpi(): string { hsk.cycleDpiStage(); return "ok" }
     function setDpiStage(stage: string): string {
-      mouse.setDpiStage(parseInt(stage, 10))
+      hsk.setDpiStage(parseInt(stage, 10))
       return "ok"
     }
     function setPollingRate(rate: string): string {
-      mouse.set("pollingRate", parseInt(rate, 10))
+      hsk.set("pollingRate", parseInt(rate, 10))
       return "ok"
     }
   }
@@ -195,27 +201,27 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: mouse.barText
-    slotSize: mouse.barText !== "" ? Style.bar.statusSlot : Style.bar.iconSlot
-    active: mouse.lowBattery
-    tooltipText: mouse.model + " — " + mouse.summary
+    text: hsk.barText
+    slotSize: hsk.barText !== "" ? Style.bar.statusSlot : Style.bar.iconSlot
+    active: hsk.lowBattery
+    tooltipText: hsk.model + " — " + hsk.summary
     iconComponent: Component {
       Item {
         Text {
           anchors.centerIn: parent
-          text: mouse.ready
-            ? Model.batteryGlyph(mouse.value("batteryPercent"), mouse.value("charging") === true)
+          text: hsk.ready
+            ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
             : "󰍽"
           color: root.barIconColor
           font.family: root.fontFamily
           font.pixelSize: Style.bar.iconFont
-          opacity: mouse.ready ? 1.0 : 0.55
+          opacity: hsk.ready ? 1.0 : 0.55
         }
       }
     }
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) mouse.cycleDpiStage()
-      else if (buttonCode === Qt.MiddleButton) mouse.refresh()
+      if (buttonCode === Qt.RightButton) hsk.cycleDpiStage()
+      else if (buttonCode === Qt.MiddleButton) hsk.refresh()
       else root.toggle()
     }
   }
@@ -244,10 +250,10 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "c" || t === "C") root.cycleCurrentColor()
-        else if (t === "r" || t === "R") mouse.refresh()
-        else if (t === "d" || t === "D") mouse.cycleDpiStage()
-        else if (t === "m" || t === "M") mouse.toggle("motionSync")
-        else if (t >= "1" && t <= "6") mouse.setDpiStage(parseInt(t, 10))
+        else if (t === "r" || t === "R") hsk.refresh()
+        else if (t === "d" || t === "D") hsk.cycleDpiStage()
+        else if (t === "m" || t === "M") hsk.toggle("motionSync")
+        else if (t >= "1" && t <= "6") hsk.setDpiStage(parseInt(t, 10))
       }
 
       Flickable {
@@ -269,17 +275,17 @@ Panel {
           PanelHero {
             id: hero
             width: parent.width
-            title: mouse.model
-            meta: mouse.summary
+            title: hsk.model
+            meta: hsk.summary
             foreground: root.foreground
             fontFamily: root.fontFamily
-            iconOpacity: mouse.ready ? 1.0 : 0.5
+            iconOpacity: hsk.ready ? 1.0 : 0.5
             iconComponent: Component {
               Text {
-                text: mouse.ready
-                  ? Model.batteryGlyph(mouse.value("batteryPercent"), mouse.value("charging") === true)
+                text: hsk.ready
+                  ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
                   : "󰍽"
-                color: mouse.lowBattery ? root.urgent : root.foreground
+                color: hsk.lowBattery ? root.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.display
               }
@@ -290,15 +296,15 @@ Panel {
                 tooltipText: "Refresh"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                onClicked: mouse.refresh()
+                onClicked: hsk.refresh()
               }
             }
           }
 
           Text {
-            visible: mouse.actionStatus !== "" || (mouse.lastError !== "" && !root.needsSetup)
+            visible: hsk.actionStatus !== "" || (hsk.lastError !== "" && !root.needsSetup)
             width: parent.width
-            text: mouse.actionStatus !== "" ? mouse.actionStatus : mouse.lastError
+            text: hsk.actionStatus !== "" ? hsk.actionStatus : hsk.lastError
             color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -328,7 +334,7 @@ Panel {
               Text {
                 width: parent.width
                 text: root.needsSetup
-                  ? (mouse.detected ? "Mouse found, protocol not mapped" : "Mouse not detected")
+                  ? (hsk.detected ? "Mouse found, protocol not mapped" : "Mouse not detected")
                   : "hskctl unavailable"
                 color: root.foreground
                 font.family: root.fontFamily
@@ -340,8 +346,8 @@ Panel {
               Text {
                 width: parent.width
                 text: {
-                  if (root.hasError) return mouse.lastError
-                  if (!mouse.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
+                  if (root.hasError) return hsk.lastError
+                  if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
                   return "hskctl can see the device but does not know its config protocol yet. "
                        + "Run a capture to fill in the profile."
                 }
@@ -403,12 +409,12 @@ Panel {
           // --- performance ------------------------------------------------
 
           PanelSeparator {
-            visible: mouse.canWrite("pollingRate") || mouse.canWrite("liftOffDistance")
+            visible: hsk.canWrite("pollingRate") || hsk.canWrite("liftOffDistance")
             foreground: root.foreground
           }
 
           Column {
-            visible: mouse.canWrite("pollingRate") || mouse.canWrite("liftOffDistance")
+            visible: hsk.canWrite("pollingRate") || hsk.canWrite("liftOffDistance")
             width: parent.width
             spacing: Style.space(10)
 
@@ -419,7 +425,7 @@ Panel {
             }
 
             Column {
-              visible: mouse.canWrite("pollingRate")
+              visible: hsk.canWrite("pollingRate")
               width: parent.width
               spacing: Style.space(6)
 
@@ -433,13 +439,13 @@ Panel {
               // ButtonGroup is a Row -- it sizes to its chips, so no explicit
               // width here or the group stretches past its content.
               ButtonGroup {
-                options: Model.pollingOptions(mouse.value("pollingRate"))
-                value: String(mouse.value("pollingRate"))
+                options: Model.pollingOptions(hsk.value("pollingRate"))
+                value: String(hsk.value("pollingRate"))
                 foreground: root.foreground
                 accent: Color.accent
                 fontFamily: root.fontFamily
                 cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
-                onChanged: function(v) { mouse.set("pollingRate", parseInt(v, 10)) }
+                onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
                 onHovered: function(index, on) {
                   if (on) root.setCursor(root.rowIndexOf("pollingRate", null))
                 }
@@ -447,7 +453,7 @@ Panel {
             }
 
             Column {
-              visible: mouse.canWrite("liftOffDistance")
+              visible: hsk.canWrite("liftOffDistance")
               width: parent.width
               spacing: Style.space(6)
 
@@ -460,11 +466,11 @@ Panel {
 
               ButtonGroup {
                 options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
-                value: String(mouse.value("liftOffDistance"))
+                value: String(hsk.value("liftOffDistance"))
                 foreground: root.foreground
                 accent: Color.accent
                 fontFamily: root.fontFamily
-                onChanged: function(v) { mouse.set("liftOffDistance", v) }
+                onChanged: function(v) { hsk.set("liftOffDistance", v) }
                 onHovered: function(index, on) {
                   if (on) root.setCursor(root.rowIndexOf("liftOffDistance", null))
                 }
@@ -494,19 +500,19 @@ Panel {
               id: toggleColumn
               width: parent.width
               spacing: Style.space(6)
-              readonly property bool hasAny: mouse.canWrite("motionSync")
-                || mouse.canWrite("angleSnap")
-                || mouse.canWrite("rippleControl")
+              readonly property bool hasAny: hsk.canWrite("motionSync")
+                || hsk.canWrite("angleSnap")
+                || hsk.canWrite("rippleControl")
 
               Repeater {
                 model: ["motionSync", "angleSnap", "rippleControl"]
                 Toggle {
                   required property var modelData
-                  visible: mouse.canWrite(modelData)
+                  visible: hsk.canWrite(modelData)
                   width: toggleColumn.width
                   label: Model.toggleLabel(modelData)
                   description: Model.toggleDescription(modelData)
-                  checked: mouse.value(modelData) === true
+                  checked: hsk.value(modelData) === true
                   foreground: root.foreground
                   accent: Color.accent
                   fontFamily: root.fontFamily
@@ -514,7 +520,7 @@ Panel {
                     var row = root.currentRow()
                     return root.cursorActive && row && row.kind === "toggle" && row.field === modelData
                   }
-                  onClicked: mouse.toggle(modelData)
+                  onClicked: hsk.toggle(modelData)
                   onHovered: function(on) {
                     if (on) root.setCursor(root.rowIndexOf("toggle", modelData))
                   }
@@ -574,7 +580,7 @@ Panel {
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
-          onClicked: mouse.setDpiStage(stageRow.stage)
+          onClicked: hsk.setDpiStage(stageRow.stage)
         }
       }
 
@@ -603,7 +609,7 @@ Panel {
         onMoved: function(v) { root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage)) }
         onReleased: function(v) {
           var wanted = Model.clampDpi(v)
-          if (wanted !== stageRow.dpi) mouse.set("dpiStage" + stageRow.stage, wanted)
+          if (wanted !== stageRow.dpi) hsk.set("dpiStage" + stageRow.stage, wanted)
         }
       }
 
@@ -622,7 +628,7 @@ Panel {
       // Colour swatch. Clicking steps through the firmware's stage palette.
       Rectangle {
         id: swatchBox
-        visible: stageRow.swatch !== "" && mouse.canWrite("dpiStage" + stageRow.stage + "Color")
+        visible: stageRow.swatch !== "" && hsk.canWrite("dpiStage" + stageRow.stage + "Color")
         Layout.preferredWidth: Style.space(14)
         Layout.preferredHeight: Style.space(14)
         Layout.alignment: Qt.AlignVCenter
@@ -638,7 +644,7 @@ Panel {
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
-          onClicked: mouse.set(
+          onClicked: hsk.set(
             "dpiStage" + stageRow.stage + "Color",
             Model.nextStageColor(stageRow.swatch)
           )
@@ -663,7 +669,7 @@ Panel {
       z: -1
       cursorShape: Qt.PointingHandCursor
       onContainsMouseChanged: if (containsMouse) root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
-      onClicked: mouse.setDpiStage(stageRow.stage)
+      onClicked: hsk.setDpiStage(stageRow.stage)
     }
 
     PanelToolTip {
