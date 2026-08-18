@@ -225,7 +225,8 @@
       "command": "sleep",
       "encoding": "u16be",
       "min": 0,
-      "max": 60
+      "max": 60,
+      "_needsVerification": "observed 240 on hardware; the unit is not established. If minutes it would be 4 hours, if seconds 4 minutes -- do not present it as either until measured."
     },
     "activeDpiStage": {
       "command": "dpi",

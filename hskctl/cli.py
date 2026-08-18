@@ -26,9 +26,9 @@ FRIENDLY_LABELS = {
     "pollingRate": "Polling rate",
     "motionSync": "Motion Sync",
     "liftOffDistance": "Lift-off distance",
-    "debounceMs": "Debounce",
+    "debounceMs": "Debounce (raw)",
     "angleSnap": "Angle snapping",
-    "sleepMinutes": "Sleep timer",
+    "sleepMinutes": "Sleep timer (raw)",
     "firmwareVersion": "Firmware",
 }
 
@@ -167,7 +167,9 @@ def cmd_status(args) -> int:
             elif key == "pollingRate":
                 value = f"{value} Hz"
             elif key == "debounceMs":
-                value = f"{value} ms"
+                # Not milliseconds: this is byte 0 of a 4-byte tuple indexed by
+                # a row in the driver's table. Do not imply a unit.
+                value = f"{value} (raw; unit not established)"
             elif isinstance(value, bool):
                 value = "on" if value else "off"
             print(f"  {label:<20} {value}")
