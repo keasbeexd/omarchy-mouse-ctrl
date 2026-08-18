@@ -364,6 +364,94 @@ def cmd_fields(args) -> int:
     return _emit(payload, args.json, human)
 
 
+def cmd_probe_write(args) -> int:
+    """Write one field, then report what moved *anywhere* in its block.
+
+    `set` reads back the one field it was asked about, which answers "did my
+    change take" and nothing else. When a write is refused that is the wrong
+    question -- the useful one is whether the block changed at all, and where.
+    A value that lands on the neighbouring stage, a block the firmware accepts
+    and then rewrites, and a packet it drops on the floor all look identical
+    through a single field, and completely different through the whole block.
+
+    Read, write, read. Nothing is retried and nothing is restored.
+    """
+    try:
+        profile = load_profile(args.profile)
+        session = open_session(profile, args.device)
+        command = profile.field_command(args.field)
+        before = bytes(session._read(command))
+    except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json, field=args.field)
+
+    value = _coerce(args.value)
+    write_error = None
+    try:
+        session.set(args.field, value)
+    except (NotDiscovered, HidrawError, ProtocolError, OSError) as exc:
+        write_error = str(exc)
+
+    try:
+        after = bytes(session._read(command))
+    except (HidrawError, ProtocolError, OSError) as exc:
+        return _fail(f"could not read {command!r} back: {exc}", args.json, field=args.field)
+
+    # Every field carried by the same command, decoded on both sides. This is
+    # profile-driven rather than DPI-specific: whatever the block holds, the
+    # comparison covers it.
+    siblings = []
+    for name, spec in (profile.data.get("fields") or {}).items():
+        if (spec.get("command") or spec.get("from")) != command:
+            continue
+        try:
+            was, now = profile.decode(name, before), profile.decode(name, after)
+        except (NotDiscovered, ProtocolError, IndexError, ValueError):
+            continue
+        siblings.append({"field": name, "before": was, "after": now,
+                         "changed": was != now})
+
+    width = max(len(before), len(after))
+    moved = [i for i in range(width)
+             if (before[i] if i < len(before) else None)
+             != (after[i] if i < len(after) else None)]
+
+    payload = {
+        "ok": write_error is None,
+        "command": command,
+        "field": args.field,
+        "requested": value,
+        "writeError": write_error,
+        "before": before.hex(" "),
+        "after": after.hex(" "),
+        "bytesChanged": moved,
+        "fields": siblings,
+    }
+
+    def human(p):
+        if p["writeError"]:
+            print(f"the write itself failed: {p['writeError']}")
+        print(f"command {p['command']}, asked for {p['field']} = {p['requested']!r}")
+        print()
+        for label, blob in (("before", p["before"]), ("after ", p["after"])):
+            tokens = blob.split()
+            while len(tokens) > 16 and tokens[-1] == "00":
+                tokens.pop()
+            for i in range(0, len(tokens), 16):
+                print(f"  {label if i == 0 else '      '} {i:>3}  "
+                      f"{' '.join(tokens[i:i + 16])}")
+        print()
+        if not p["bytesChanged"]:
+            print("  no byte in the block changed -- the mouse dropped the write")
+        else:
+            print(f"  bytes that moved: {p['bytesChanged']}")
+        print()
+        for s in p["fields"]:
+            mark = "*" if s["changed"] else " "
+            print(f"  {mark} {s['field']:<20} {s['before']!r} -> {s['after']!r}")
+
+    return _emit(payload, args.json, human)
+
+
 def _autoapply_state() -> dict:
     """Is anything going to write to the mouse behind the user's back?
 
@@ -962,6 +1050,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="dump the bytes of the exchange",
     )
     get_p.set_defaults(func=cmd_get)
+
+    pw = sub.add_parser(
+        "probe-write",
+        help="write one field and report every byte that moved in its block",
+    )
+    pw.add_argument("field")
+    pw.add_argument("value")
+    pw.set_defaults(func=cmd_probe_write)
 
     set_p = sub.add_parser("set", help="write one setting")
     set_p.add_argument("field")
