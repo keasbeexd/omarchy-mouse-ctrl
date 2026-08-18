@@ -182,10 +182,8 @@
     "pollingRate": {
       "command": "polling",
       "encoding": "u8",
-      "_needsVerification": "only raw 1 is measured (1000 Hz, timed from the mouse's own reports). Run `hskctl calibrate-polling` to fill in the rest; an unmeasured raw value decodes to itself rather than to an invented rate.",
-      "values": {
-        "1": 1000
-      }
+      "dividerBase": 1000,
+      "_note": "Measured on hardware, not guessed. The register is a divisor of a 1000 Hz base clock: raw 1..6 clocked 1000/500/333/250/200/167 Hz, every point within 0.5% of 1000/raw. Raw 0 behaves as 1. This is why an enum was always going to be wrong. Note the ceiling here is 1000 Hz -- see _pollingCeiling."
     },
     "liftOffDistance": {
       "command": "liftOff",
@@ -425,5 +423,6 @@
         ]
       }
     ]
-  }
+  },
+  "_pollingCeiling": "The dongle clocked a 1000 Hz base during calibration, so no divisor reaches the 4000 Hz this model is sold on. 4K mode is presumably enabled elsewhere -- a separate command, a dongle mode, or a hardware switch -- and has not been located in the driver yet."
 }

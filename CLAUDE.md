@@ -110,6 +110,12 @@ request and reply for each. It writes nothing. Use it before theorising: it
 distinguishes "the mouse answered 0" from "the mouse never answered", which
 look identical in the panel.
 
+`hskctl calibrate-polling` sweeps a register and measures the effect of each
+raw value. A hard lesson from building it: it originally snapped each
+measurement to the nearest rate on an assumed ladder, which turned a clean
+1000/raw divider into a nonsense table. **Report what you measured, then fit a
+model to it. Never round measurements onto a ladder you assumed in advance.**
+
 ## Tests
 
 ```bash
@@ -141,9 +147,12 @@ docs/         how the protocol was decoded and how to verify it
 
 ## Open work
 
-1. `pollingRate` is the last unverified map. `hskctl measure-polling` times the
-   mouse's own input reports; compare with `hskctl get pollingRate` and correct
-   the enum from the pair.
+1. `pollingRate` is settled: the register is a **divider** on a 1000 Hz base,
+   not a lookup table. Raw 1..6 clocked 1000/500/333/250/200/167 Hz, all within
+   0.5% of 1000/raw. The ceiling is therefore 1000 Hz, and 4000 Hz -- the model
+   name -- is not reachable through this register. Where 4K mode lives is an
+   open question: a separate command, a dongle mode, or a hardware switch.
+   `tools/analyze-driver.py` on the vendor binary is the place to look.
 2. DPI writes are confirmed on hardware -- 800, 1200 and 400 each read back
    correctly. Still open: whether a write survives unplugging the dongle. The
    command table has no explicit save/commit packet, so it may be implicit.

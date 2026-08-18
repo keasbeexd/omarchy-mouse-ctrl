@@ -226,8 +226,11 @@ test("unknown level falls back to the mouse glyph", () => {
 });
 
 console.log("pollingOptions");
-test("polling options stop at 4000 -- this is not an 8K mouse", () => {
-  assert.deepStrictEqual(Model.POLLING_RATES, [125, 250, 500, 1000, 2000, 4000]);
+test("polling options come from the measured 1000 Hz divider", () => {
+  // The register divides a 1000 Hz base, so 2000 and 4000 are unreachable
+  // however the box is marketed. Offering them would produce write errors.
+  assert.deepStrictEqual(Model.POLLING_RATES, [1000, 500, 250, 125]);
+  Model.POLLING_RATES.forEach((hz) => assert.strictEqual(1000 % hz, 0));
 });
 
 test("parseStatus carries writable and unverified through", () => {
@@ -258,16 +261,16 @@ test("every option has a value and a label", () => {
     assert.ok(typeof o.value === "string" && o.value.length > 0);
     assert.ok(typeof o.label === "string" && o.label.length > 0);
   });
-  assert.strictEqual(options.find((o) => o.value === "4000").label, "4K");
-  assert.strictEqual(options.find((o) => o.value === "8000"), undefined);
+  assert.strictEqual(options.find((o) => o.value === "1000").label, "1K");
+  assert.strictEqual(options.find((o) => o.value === "4000"), undefined);
   assert.strictEqual(options.find((o) => o.value === "500").label, "500");
 });
 
 test("option values match what ButtonGroup compares against", () => {
   // ButtonGroup does String(o.value) === value, and the panel passes
   // String(mouse.value("pollingRate")). These must line up exactly.
-  const options = Model.pollingOptions(4000);
-  assert.ok(options.some((o) => String(o.value) === String(4000)));
+  const options = Model.pollingOptions(1000);
+  assert.ok(options.some((o) => String(o.value) === String(1000)));
 });
 
 console.log(`\n${passed} passed`);

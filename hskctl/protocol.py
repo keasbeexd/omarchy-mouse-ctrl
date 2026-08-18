@@ -100,6 +100,13 @@ def _decode_scalar(buf: bytes, spec: dict) -> Any:
     else:
         raise ProtocolError(f"unknown encoding {enc!r}")
 
+    # A divider register: the firmware stores a divisor of a fixed base clock,
+    # so the friendly value is base/raw rather than a table lookup. Raw 0 is
+    # treated as 1 -- the hardware clamps it to full rate.
+    base = spec.get("dividerBase")
+    if base:
+        return int(round(base / max(raw, 1)))
+
     scale = spec.get("scale")
     if scale:
         raw = raw * scale
@@ -148,6 +155,16 @@ def _encode_scalar(buf: bytearray, spec: dict, value: Any) -> None:
             raw = bytes.fromhex(text)
         except ValueError as exc:
             raise ProtocolError(f"{value!r} is not a #rrggbb colour") from exc
+    elif spec.get("dividerBase"):
+        base = spec["dividerBase"]
+        wanted = int(value)
+        if wanted <= 0 or base % wanted:
+            allowed = sorted({base // d for d in range(1, 17)}, reverse=True)
+            raise ProtocolError(
+                f"{value} is not reachable: this register divides a {base} Hz base, "
+                f"so only exact divisors work ({', '.join(str(a) for a in allowed[:8])}, ...)"
+            )
+        raw = base // wanted
     else:
         raw = int(value)
         offset_add = spec.get("add")
@@ -373,6 +390,9 @@ class Profile:
         values = spec.get("values")
         if values:
             return list(values.values())
+        base = spec.get("dividerBase")
+        if base:
+            return sorted({base // d for d in range(1, 9)}, reverse=True)
         if spec.get("min") is not None and spec.get("max") is not None:
             return [spec["min"], spec["max"]]
         return None

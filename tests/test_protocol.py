@@ -255,18 +255,32 @@ class RealProfileTests(unittest.TestCase):
             value_bytes=self.profile.encode_value("pollingRate", 1000),
         )
         self.assertEqual(packet[3], 0x02, "write must use the set opcode")
-        # Measured on hardware: raw 1 clocks 1000 Hz.
-        self.assertEqual(packet[5], 1, "1000 Hz encodes as raw 1 at byte 5")
+        # Measured on hardware: the register divides a 1000 Hz base.
+        self.assertEqual(packet[5], 1, "1000 Hz is base/1")
 
-    def test_only_measured_polling_rates_are_claimed(self):
-        """An unmeasured raw value must not decode to an invented rate."""
-        values = self.profile.data["fields"]["pollingRate"]["values"]
-        self.assertEqual(values, {"1": 1000})
+    def test_polling_is_a_divider_not_a_table(self):
+        """Every calibration point fits 1000/raw to under 0.5%."""
+        spec = self.profile.data["fields"]["pollingRate"]
+        self.assertEqual(spec.get("dividerBase"), 1000)
+        self.assertNotIn("values", spec)
+        measured = {0: 1000, 1: 1000, 2: 500, 3: 333, 4: 250, 5: 200, 6: 167}
         reply = bytearray(65)
         reply[1] = 0xA1
-        reply[5] = 4
-        # Falls through to the raw number rather than pretending to know.
-        self.assertEqual(self.profile.decode("pollingRate", bytes(reply)), 4)
+        for raw, hz in measured.items():
+            reply[5] = raw
+            self.assertEqual(
+                self.profile.decode("pollingRate", bytes(reply)),
+                hz,
+                f"raw {raw} should decode to the measured {hz} Hz",
+            )
+
+    def test_polling_encodes_only_exact_divisors(self):
+        for hz, raw in ((1000, 1), (500, 2), (250, 4), (125, 8)):
+            self.assertEqual(self.profile.encode_value("pollingRate", hz)[0], raw)
+        # 4000 is on the box but unreachable from a 1000 Hz base.
+        with self.assertRaises(ProtocolError) as ctx:
+            self.profile.encode_value("pollingRate", 4000)
+        self.assertIn("divides", str(ctx.exception))
 
     def test_sleep_uses_its_subcommand_and_big_endian_value(self):
         packet = self.profile.build_request(

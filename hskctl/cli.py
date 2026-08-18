@@ -552,7 +552,6 @@ def cmd_calibrate_polling(args) -> int:
     except (NotDiscovered, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
-    ladder = [125, 250, 500, 1000, 2000, 4000, 8000]
     results: list[dict] = []
     print(
         f"Sweeping raw 0..{args.max_raw}. Keep the mouse moving the whole time "
@@ -569,15 +568,14 @@ def cmd_calibrate_polling(args) -> int:
             time.sleep(0.6)
             readback = session.get_raw("pollingRate")
             measured = _sample_polling(profile, args.seconds)
-            entry = {
-                "raw": raw,
-                "accepted": readback == raw,
-                "readback": readback,
-                "measuredHz": round(measured, 1),
-            }
-            if measured:
-                entry["nearestRate"] = min(ladder, key=lambda r: abs(r - measured))
-            results.append(entry)
+            results.append(
+                {
+                    "raw": raw,
+                    "accepted": readback == raw,
+                    "readback": readback,
+                    "measuredHz": round(measured, 1),
+                }
+            )
             print(
                 f"  raw {raw}: readback {readback}  "
                 f"{'~' + str(round(measured)) + ' Hz' if measured else 'no samples'}",
@@ -593,16 +591,29 @@ def cmd_calibrate_polling(args) -> int:
                 file=sys.stderr,
             )
 
-    derived = {
-        str(r["raw"]): r["nearestRate"]
-        for r in results
-        if r.get("accepted") and r.get("nearestRate")
-    }
+    # Fit a divider before assuming a lookup table: if every measurement matches
+    # base/raw, the register is a divisor of a base clock and an enum would be
+    # the wrong shape entirely.
+    good = [r for r in results if r.get("accepted") and r.get("measuredHz")]
+    divider = None
+    if len(good) >= 3:
+        # The base is whatever raw 1 clocks (or raw*Hz, which is constant).
+        bases = [r["measuredHz"] * max(r["raw"], 1) for r in good]
+        candidate = round(sum(bases) / len(bases))
+        worst = max(
+            abs(candidate / max(r["raw"], 1) - r["measuredHz"])
+            / (candidate / max(r["raw"], 1))
+            for r in good
+        )
+        if worst < 0.05:
+            divider = {"base": candidate, "worstErrorPct": round(worst * 100, 2)}
+
     payload = {
-        "ok": bool(derived),
+        "ok": bool(good),
         "original": original,
         "results": results,
-        "derivedValues": derived,
+        "dividerFit": divider,
+        "derivedValues": {str(r["raw"]): round(r["measuredHz"]) for r in good},
     }
 
     def human(p):
@@ -611,8 +622,17 @@ def cmd_calibrate_polling(args) -> int:
             print("No raw value produced a usable measurement.")
             print("The mouse has to be moving throughout the sweep.")
             return
-        print("Measured mapping -- paste into fields.pollingRate.values:")
-        print(json.dumps(p["derivedValues"], indent=2))
+        fit = p["dividerFit"]
+        if fit:
+            print(
+                f"This register is a DIVIDER, not a lookup table: every measurement "
+                f"fits {fit['base']} Hz / raw to within {fit['worstErrorPct']}%."
+            )
+            print(f'Set fields.pollingRate.dividerBase to {fit["base"]}.')
+            print(f'Ceiling is {fit["base"]} Hz -- no divisor goes above it.')
+        else:
+            print("No divider fits. Measured values, for a lookup table:")
+            print(json.dumps(p["derivedValues"], indent=2))
 
     return _emit(payload, args.json, human)
 
