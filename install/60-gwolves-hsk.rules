@@ -1,0 +1,9 @@
+# G-Wolves HSK (VID 33e4)
+#
+# uaccess grants the logged-in user read/write on the config endpoint, so
+# hskctl and the Omarchy panel do not need sudo.
+KERNEL=="hidraw*", ATTRS{idVendor}=="33e4", MODE="0660", TAG+="uaccess"
+
+# The mouse does not persist DPI across a power cycle, so re-apply saved
+# settings whenever it reappears.
+KERNEL=="hidraw*", ATTRS{idVendor}=="33e4", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="hskctl-apply.service"

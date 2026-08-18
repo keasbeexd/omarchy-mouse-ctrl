@@ -176,10 +176,13 @@ docs/         how the protocol was decoded and how to verify it
    4000 Hz. Non-monotonic, so the profile holds an explicit map of exactly what
    was measured. 4K needs no special mode -- the vendor slider emits `1<<pos`,
    and positions 5 and 6 are the high-rate codes. Raw 8 and 16 are untested.
-2. DPI persistence is still unexplained. A write reads back correctly and, in
-   one test, reverted on power-cycle. Do **not** "solve" this by also sending
-   `hts_set_get_dpis_colors_O` -- see the rule below. Find the real commit path
-   or establish that there isn't one.
+2. DPI persistence is **resolved, and the answer is that it does not persist.**
+   There is no save-to-flash command; the vendor's own app does not rely on
+   one. `in_Queue_Close` / `in_Queue_Open` call ReadFileProlie/WriteFileProlie
+   -- it stores settings in local files and pushes them back when the mouse
+   reconnects, which is why it needs a tray icon and a process watcher.
+   `hskctl save` / `hskctl apply` plus a udev-triggered systemd user unit do
+   the same thing. Do not go looking for a commit packet; there isn't one.
 3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
    Confirm it reads 1 on the cable.
 4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the

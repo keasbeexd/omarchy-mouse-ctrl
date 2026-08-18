@@ -1,0 +1,17 @@
+[Unit]
+Description=Re-apply G-Wolves HSK settings when the mouse appears
+Documentation=https://github.com/keasbeexd/omarchy-hsk
+
+[Service]
+Type=oneshot
+# The mouse loses its settings on power-off -- it has no save-to-flash command,
+# which is why the vendor's Windows app keeps them in local files and pushes
+# them back on reconnect. This does the same, without a tray icon.
+#
+# The delay lets the dongle finish enumerating; without it the first exchange
+# can land before the config endpoint exists.
+ExecStartPre=/usr/bin/sleep 2
+ExecStart=%h/.local/bin/hskctl apply
+
+[Install]
+WantedBy=default.target

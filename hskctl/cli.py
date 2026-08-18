@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -695,6 +696,90 @@ def cmd_fix_dpi(args) -> int:
     return _emit(payload, args.json, human)
 
 
+SETTINGS_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "hskctl",
+    "settings.json",
+)
+
+
+def cmd_save(args) -> int:
+    """Record the mouse's current writable settings to disk.
+
+    The mouse does not keep DPI across a power cycle. Neither does the vendor's
+    Windows software rely on it to: `in_Queue_Close` and `in_Queue_Open` call
+    ReadFileProlie/WriteFileProlie, so the app stores settings in local files
+    and pushes them back when the mouse reconnects. This is the same approach,
+    without needing a tray icon.
+    """
+    try:
+        profile = load_profile(args.profile)
+        session = open_session(profile, args.device)
+        settings = session.read_all()
+    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json)
+
+    keep = {k: v for k, v in settings.items() if profile.field_writable(k)}
+    path = args.file or SETTINGS_PATH
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"model": profile.model, "settings": keep}, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        return _fail(f"could not write {path}: {exc}", args.json)
+
+    payload = {"ok": True, "path": path, "saved": keep}
+    return _emit(
+        payload,
+        args.json,
+        lambda p: print(f"Saved {len(p['saved'])} settings to {p['path']}"),
+    )
+
+
+def cmd_apply(args) -> int:
+    """Push saved settings back to the mouse."""
+    path = args.file or SETTINGS_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            saved = json.load(fh).get("settings", {})
+    except OSError as exc:
+        return _fail(f"could not read {path}: {exc}", args.json, path=path)
+    except ValueError as exc:
+        return _fail(f"{path} is not valid JSON: {exc}", args.json, path=path)
+
+    try:
+        profile = load_profile(args.profile)
+        session = open_session(profile, args.device)
+    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json)
+
+    applied, skipped = [], []
+    for field, value in saved.items():
+        if not profile.field_writable(field):
+            skipped.append({"field": field, "why": "not writable"})
+            continue
+        try:
+            if session.get(field) == value:
+                continue
+            session.set(field, value)
+            applied.append({"field": field, "value": value})
+        except (NotDiscovered, HidrawError, ProtocolError, OSError) as exc:
+            skipped.append({"field": field, "why": str(exc)})
+
+    payload = {"ok": True, "path": path, "applied": applied, "skipped": skipped}
+
+    def human(p):
+        if not p["applied"]:
+            print("Mouse already matches the saved settings.")
+        for a in p["applied"]:
+            print(f"  {a['field']} -> {a['value']}")
+        for sk in p["skipped"]:
+            print(f"  skipped {sk['field']}: {sk['why']}")
+
+    return _emit(payload, args.json, human)
+
+
 def cmd_profiles(args) -> int:
     names = list_profiles()
     payload = {"ok": True, "profiles": names}
@@ -729,6 +814,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "doctor", help="dump the raw bytes of every read command (writes nothing)"
     ).set_defaults(func=cmd_doctor)
+
+    save = sub.add_parser("save", help="record current settings to disk")
+    save.add_argument("--file")
+    save.set_defaults(func=cmd_save)
+
+    apply_p = sub.add_parser("apply", help="push saved settings back to the mouse")
+    apply_p.add_argument("--file")
+    apply_p.set_defaults(func=cmd_apply)
 
     fix = sub.add_parser(
         "fix-dpi", help="clamp out-of-range DPI stages and re-link Y to X"
