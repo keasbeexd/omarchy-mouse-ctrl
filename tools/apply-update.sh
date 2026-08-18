@@ -55,9 +55,18 @@ git bundle list-heads "$BUNDLE" >/dev/null 2>&1 \
 info "Using $(basename "$BUNDLE")  ($(du -h "$BUNDLE" | cut -f1))"
 
 # --- refuse to clobber uncommitted work -------------------------------------
-if [[ -n "$(git status --porcelain)" ]]; then
-  git status --short
-  die "you have uncommitted changes. Commit or stash them first."
+# Only *tracked* changes matter. A fast-forward cannot overwrite an untracked
+# file -- and if an incoming commit adds one with the same name, git refuses on
+# its own with a clear message. Blocking on untracked files just means a stray
+# scratch script stops you updating.
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  git status --short --untracked-files=no
+  die "you have uncommitted changes to tracked files. Commit or stash them first."
+fi
+
+UNTRACKED="$(git ls-files --others --exclude-standard)"
+if [[ -n "$UNTRACKED" ]]; then
+  warn "untracked files present (left alone): $(echo "$UNTRACKED" | tr '\n' ' ')"
 fi
 
 BEFORE="$(git rev-parse HEAD)"
