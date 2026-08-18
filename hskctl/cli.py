@@ -209,6 +209,8 @@ def cmd_set(args) -> int:
     try:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
+        if getattr(args, "verbose", False):
+            session.trace = []
         if getattr(args, "raw", False):
             session.set_raw(args.field, int(args.value))
             readback = session.get_raw(args.field)
@@ -218,6 +220,14 @@ def cmd_set(args) -> int:
             readback = session.get(args.field)
     except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, field=args.field, requested=value)
+
+    if getattr(args, "verbose", False) and session.trace:
+        print(f"link: {'dongle' if session.wireless else 'wired'}", file=sys.stderr)
+        for entry in session.trace:
+            tokens = entry["data"].split()
+            print(f"  {entry['step']}:", file=sys.stderr)
+            for i in range(0, min(len(tokens), 32), 16):
+                print(f"    {' '.join(tokens[i:i + 16])}", file=sys.stderr)
 
     ok = str(readback) == str(value)
     payload = {
@@ -862,6 +872,11 @@ def build_parser() -> argparse.ArgumentParser:
     set_p = sub.add_parser("set", help="write one setting")
     set_p.add_argument("field")
     set_p.add_argument("value")
+    set_p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="dump the bytes of the exchange, for diagnosing a write that does nothing",
+    )
     set_p.add_argument(
         "--raw",
         action="store_true",

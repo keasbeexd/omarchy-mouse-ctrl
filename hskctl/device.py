@@ -439,6 +439,17 @@ class Session:
             return int.from_bytes(reply[offset : offset + 2], "big")
         return reply[offset]
 
+    # Filled in when tracing is on, so `set --verbose` can show exactly what
+    # went over the wire rather than only the outcome.
+    trace: list = None
+
+    def _trace(self, label: str, data) -> None:
+        if self.trace is None:
+            return
+        if isinstance(data, (bytes, bytearray)):
+            data = bytes(data).hex(" ")
+        self.trace.append({"step": label, "data": data})
+
     def set(self, name: str, value: Any) -> None:
         """Write one setting.
 
@@ -459,12 +470,15 @@ class Session:
             # nothing, or every field we have not decoded gets zeroed. Read the
             # mouse's own block, change one field in it, send it back.
             current = self._read(command)
+            self._trace("read before write", current)
             packet = bytearray(
                 self.profile.build_request(command, write=True, wireless=self.wireless)
             )
+            self._trace("write template", packet)
             start, end = spec.get("payloadRange", [5, len(current)])
             end = min(end, len(current), len(packet))
             packet[start:end] = current[start:end]
+            self._trace("after copying the current block", packet)
             self.profile.encode_into(packet, name, value)
             # A linked field rides in the same packet. DPI has independent X and
             # Y axes, but the vendor app keeps them equal unless you explicitly
@@ -474,7 +488,9 @@ class Session:
             if linked and self.profile.has_field(linked):
                 self.profile.encode_into(packet, linked, value)
             self.profile.checksum(packet)
-            self._exchange_checked(command, bytes(packet))
+            self._trace("packet sent", packet)
+            reply = self._exchange_checked(command, bytes(packet))
+            self._trace("reply to the write", reply)
         else:
             payload = self.profile.encode_value(name, value)
             packet = self.profile.build_request(
