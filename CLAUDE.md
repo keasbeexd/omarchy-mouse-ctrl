@@ -120,6 +120,22 @@ HSK variant means adding a profile, not a branch.
 If you find yourself writing `if model == ...` in Python, stop — it belongs in
 the profile.
 
+## Only one thing may talk to the mouse at a time
+
+A command is a send followed by a read of the device's single reply buffer, so
+two callers interleaving corrupt both: a write looks ignored, a read-back
+reports the old value, and a read returns zeros. `open_session` takes an
+exclusive `flock` for the life of the process.
+
+This is not theoretical. Omarchy runs **one bar per monitor**, each with its own
+refresh timer, so a multi-monitor setup fires concurrent `status` reads by
+default -- and a click lands a `set` in the middle of one. It presented as
+"clicking a DPI stage does nothing, but right-clicking the bar icon works":
+right-click happens with the panel closed, so nothing else was in flight.
+
+`Service.qml` also queues writes behind an in-flight read rather than firing
+them concurrently, so a click during a refresh is delayed rather than lost.
+
 ## Timing
 
 `hts_send_cmd` waits 60ms either side of a command, and that is right for the

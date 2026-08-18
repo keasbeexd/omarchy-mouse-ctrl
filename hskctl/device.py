@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import atexit
+import fcntl
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -91,6 +94,67 @@ def rank_candidates(profile: Profile | None = None) -> list[Candidate]:
 
 class DeviceNotFound(ProtocolError):
     pass
+
+
+class DeviceBusy(ProtocolError):
+    pass
+
+
+_LOCK_HANDLE = None
+
+
+def _lock_path() -> str:
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime and os.path.isdir(runtime):
+        return os.path.join(runtime, "hskctl.lock")
+    return os.path.join("/tmp", f"hskctl-{os.getuid()}.lock")
+
+
+def acquire_device_lock(timeout: float = 6.0) -> None:
+    """Serialise device access across every hskctl process.
+
+    A command is a send followed by a read of the *device's* single reply
+    buffer, so two processes interleaving turns both of them into nonsense:
+    one gets the other's answer, a write appears to be ignored, and a
+    read-back reports the old value.
+
+    This is not hypothetical. Omarchy runs one bar per monitor, each with its
+    own refresh timer, so a two-monitor setup fires concurrent `status` reads
+    by default -- and a click lands a `set` right in the middle of one.
+    """
+    global _LOCK_HANDLE
+    if _LOCK_HANDLE is not None:
+        return
+    path = _lock_path()
+    handle = open(path, "w")
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                handle.close()
+                raise DeviceBusy(
+                    f"another hskctl is talking to the mouse and did not finish "
+                    f"within {timeout:.0f}s (lock: {path}). If nothing else is "
+                    f"running, delete that file."
+                )
+            time.sleep(0.05)
+    _LOCK_HANDLE = handle
+    atexit.register(_release_device_lock)
+
+
+def _release_device_lock() -> None:
+    global _LOCK_HANDLE
+    if _LOCK_HANDLE is None:
+        return
+    try:
+        fcntl.flock(_LOCK_HANDLE.fileno(), fcntl.LOCK_UN)
+        _LOCK_HANDLE.close()
+    except OSError:
+        pass
+    _LOCK_HANDLE = None
 
 
 @dataclass
@@ -429,6 +493,9 @@ class Session:
 
 
 def open_session(profile: Profile, path: str | None = None) -> Session:
+    # Every caller that reaches the device goes through here, so this is the
+    # one place the lock has to be taken.
+    acquire_device_lock()
     if path:
         from .hidraw import describe
 

@@ -80,7 +80,12 @@ Item {
   }
 
   function refresh() {
-    if (statusProcess.running) return
+    // A read must not overlap a write. Both are separate hskctl processes and
+    // the device has one reply buffer, so interleaving them makes a write look
+    // ignored and a read-back report the old value. hskctl also takes a file
+    // lock, which covers the other bar instances and the CLI; this just avoids
+    // queueing behind ourselves.
+    if (statusProcess.running || setProcess.running || _queue.length > 0) return
     refreshing = true
     statusProcess.command = [hskctl, "--json", "status"]
     statusProcess.running = true
@@ -106,8 +111,11 @@ Item {
 
   function set(field, value) {
     var job = { field: field, value: value }
-    if (setProcess.running) {
+    // Queue behind an in-flight write *or* an in-flight read, so a click during
+    // a refresh is not thrown away.
+    if (setProcess.running || statusProcess.running) {
       _queue.push(job)
+      if (!drainTimer.running) drainTimer.start()
       return
     }
     _run(job)
@@ -161,6 +169,19 @@ Item {
   }
 
   Timer {
+    // Waits for an in-flight read to finish, then releases the queued writes.
+    id: drainTimer
+    interval: 120
+    repeat: true
+    running: false
+    onTriggered: {
+      if (setProcess.running || statusProcess.running) return
+      if (root._queue.length === 0) { drainTimer.stop(); return }
+      root._run(root._queue.shift())
+    }
+  }
+
+  Timer {
     id: settleTimer
     interval: 250
     repeat: false
@@ -182,7 +203,7 @@ Item {
     // Armed while *either* process runs and only disarmed once both are idle --
     // stopping it on whichever finishes first would leave the other unwatched.
     id: watchdog
-    interval: 8000
+    interval: 15000
     repeat: false
     running: statusProcess.running || setProcess.running
     onTriggered: {
@@ -245,6 +266,7 @@ Item {
         var next = root._queue.shift()
         root._run(next)
       } else {
+        drainTimer.stop()
         settleTimer.restart()
       }
     }

@@ -15,7 +15,7 @@ import sys
 from typing import Any
 
 from . import __version__
-from .device import DeviceNotFound, open_session, rank_candidates
+from .device import DeviceBusy, DeviceNotFound, open_session, rank_candidates
 from .hidraw import HidrawError, enumerate_devices
 from .protocol import NotDiscovered, ProtocolError, list_profiles, load_profile
 
@@ -137,7 +137,7 @@ def cmd_status(args) -> int:
     try:
         session = open_session(profile, args.device)
         settings = session.read_all()
-    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, state="error", model=profile.model, settings={})
 
     payload = {
@@ -186,7 +186,7 @@ def cmd_get(args) -> int:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
         value = session.get(args.field)
-    except (NotDiscovered, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, field=args.field)
     payload = {"ok": True, "field": args.field, "value": value}
     return _emit(payload, args.json, lambda p: print(p["value"]))
@@ -216,7 +216,7 @@ def cmd_set(args) -> int:
         else:
             session.set(args.field, value)
             readback = session.get(args.field)
-    except (NotDiscovered, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, field=args.field, requested=value)
 
     ok = str(readback) == str(value)
@@ -353,7 +353,7 @@ def cmd_doctor(args) -> int:
 
     try:
         session = open_session(profile, path)
-    except (DeviceNotFound, ProtocolError) as exc:
+    except (DeviceBusy, DeviceNotFound, ProtocolError) as exc:
         report["ok"] = False
         report["error"] = str(exc)
         return _emit(report, args.json, lambda p: print(p["error"]))
@@ -558,7 +558,7 @@ def cmd_calibrate_polling(args) -> int:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
         original = session.get_raw("pollingRate")
-    except (NotDiscovered, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
     results: list[dict] = []
@@ -661,7 +661,7 @@ def cmd_fix_dpi(args) -> int:
     try:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
-    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
     lo, hi = 50, 26000
@@ -722,7 +722,7 @@ def cmd_save(args) -> int:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
         settings = session.read_all()
-    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
     keep = {k: v for k, v in settings.items() if profile.field_writable(k)}
@@ -757,7 +757,7 @@ def cmd_apply(args) -> int:
     try:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
-    except (DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
     applied, skipped = [], []

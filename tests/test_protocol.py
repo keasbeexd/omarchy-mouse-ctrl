@@ -497,6 +497,53 @@ class RealProfileTests(unittest.TestCase):
                 self.assertGreater(len(note), 20, f"{name}'s caveat is too vague to act on")
 
 
+class DeviceLockTests(unittest.TestCase):
+    """The device has one reply buffer, so concurrent callers corrupt it."""
+
+    def test_lock_excludes_a_second_holder(self):
+        import subprocess
+        import sys
+        import textwrap
+        import time
+
+        prog = textwrap.dedent(
+            """
+            import sys, time
+            sys.path.insert(0, %r)
+            from hskctl.device import acquire_device_lock, DeviceBusy
+            try:
+                acquire_device_lock(timeout=float(sys.argv[1]))
+                print("acquired")
+                sys.stdout.flush()
+                time.sleep(float(sys.argv[2]))
+            except DeviceBusy:
+                print("blocked")
+                sys.exit(3)
+            """
+        ) % os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        holder = subprocess.Popen(
+            [sys.executable, "-c", prog, "5", "1.2"],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            time.sleep(0.4)
+            blocked = subprocess.run(
+                [sys.executable, "-c", prog, "0.2", "0"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("blocked", blocked.stdout)
+        finally:
+            holder.wait(timeout=10)
+
+        after = subprocess.run(
+            [sys.executable, "-c", prog, "3", "0"], capture_output=True, text=True
+        )
+        self.assertIn("acquired", after.stdout)
+
+
 class ReportDescriptorTests(unittest.TestCase):
     def test_finds_vendor_page_and_feature_report(self):
         # Usage Page (Vendor 0xFF00), Usage (0x01), Collection (Application),
