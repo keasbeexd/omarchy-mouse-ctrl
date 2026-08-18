@@ -46,8 +46,11 @@ fi
 cd "$REPO_DIR"
 git rev-parse --git-dir >/dev/null 2>&1 || die "$REPO_DIR is not a git repository"
 
-git bundle verify "$BUNDLE" >/dev/null 2>&1 \
-  || die "$BUNDLE is not a valid git bundle (a truncated download looks like this)"
+# `git bundle verify` only checks the header and prerequisites -- it happily
+# passes a truncated file, because it never reads the pack. The fetch below is
+# the real test, so keep this as a cheap "is it a bundle at all" check.
+git bundle list-heads "$BUNDLE" >/dev/null 2>&1 \
+  || die "$BUNDLE is not a git bundle"
 
 info "Using $(basename "$BUNDLE")  ($(du -h "$BUNDLE" | cut -f1))"
 
@@ -60,7 +63,13 @@ fi
 BEFORE="$(git rev-parse HEAD)"
 
 # --- apply ------------------------------------------------------------------
-git fetch --quiet "$BUNDLE" main:refs/remotes/update/main --force
+if ! git fetch --quiet "$BUNDLE" main:refs/remotes/update/main --force 2>/tmp/hsk-fetch-err; then
+  head -3 /tmp/hsk-fetch-err >&2 || true
+  rm -f /tmp/hsk-fetch-err
+  die "could not read the objects out of $(basename "$BUNDLE").
+       A part-finished download does exactly this -- download it again."
+fi
+rm -f /tmp/hsk-fetch-err
 if ! git merge --ff-only refs/remotes/update/main >/dev/null 2>&1; then
   if git merge-base --is-ancestor refs/remotes/update/main HEAD; then
     info "Already contains this bundle."

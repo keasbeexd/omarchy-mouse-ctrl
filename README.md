@@ -208,6 +208,21 @@ docs/            how the protocol was decoded, and how to verify it
 are all data in `profiles/*.json`. The same engine handles the other HSK
 variants if you profile them.
 
+## Applying an update from a bundle
+
+```bash
+./tools/apply-update.sh
+```
+
+Picks the newest `.bundle` from `~/Downloads` (the download tends to arrive
+renamed, so it globs rather than expecting a filename), fast-forwards, pushes,
+pulls the plugin directory if it is a separate clone rather than a symlink, and
+restarts the shell.
+
+It stops rather than improvising: a dirty tree, a truncated download, or
+anything that is not a fast-forward all produce an error and no changes.
+`--no-push` and `--no-reload` skip those steps.
+
 ## Tests
 
 ```bash
