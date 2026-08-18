@@ -401,6 +401,25 @@ class RealProfileTests(unittest.TestCase):
             self.profile.build_request("sleep", write=False, wireless=True)[4], 0x02
         )
 
+    def test_dpi_x_is_linked_to_y(self):
+        """Setting DPI must move both axes, as the vendor app does.
+
+        The sensor has independent X and Y, but the vendor keeps them equal
+        unless XY_DPI_Enable is ticked -- and a mouse whose axes disagree
+        tracks wrong. Writing Y alone still leaves X, so independent setting
+        remains possible.
+        """
+        for n in range(1, 8):
+            self.assertEqual(
+                self.profile.data["fields"][f"dpiStage{n}"]["linkedField"],
+                f"dpiStage{n}Y",
+            )
+            self.assertNotIn(
+                "linkedField",
+                self.profile.data["fields"][f"dpiStage{n}Y"],
+                "Y must not drag X with it",
+            )
+
     def test_dpi_has_exactly_one_write_command(self):
         """The legacy layout is an alternative, not a companion.
 

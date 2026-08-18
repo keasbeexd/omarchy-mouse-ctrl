@@ -102,6 +102,14 @@ Work that does not:
 If you are in a cloud session, stay in the second list and leave a note about
 what needs checking on hardware.
 
+## DPI axes
+
+The sensor has independent X and Y. The vendor app keeps them equal unless
+`XY_DPI_Enable` is ticked, so `dpiStageN` carries `linkedField: dpiStageNY` and
+writes both in one packet. Writing `dpiStageNY` alone leaves X, which is how
+you set them independently. A mouse whose axes disagree tracks wrong, so
+linked is the right default.
+
 ## Design rule
 
 **No device knowledge belongs in code.** Commands, opcodes, offsets and

@@ -242,7 +242,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 1. Writes confirmed on hardware: 800, 1200 and 400 each read back correctly through read-modify-write."
+      "_note": "X axis of stage 1. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage1Y on its own for an independent Y.",
+      "linkedField": "dpiStage1Y"
     },
     "dpiStage1Y": {
       "command": "dpi",
@@ -250,7 +251,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 1"
+      "_note": "Y axis of stage 1. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage1Color": {
       "command": "dpi",
@@ -264,7 +265,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 2"
+      "_note": "X axis of stage 2. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage2Y on its own for an independent Y.",
+      "linkedField": "dpiStage2Y"
     },
     "dpiStage2Y": {
       "command": "dpi",
@@ -272,7 +274,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 2"
+      "_note": "Y axis of stage 2. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage2Color": {
       "command": "dpi",
@@ -286,7 +288,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 3"
+      "_note": "X axis of stage 3. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage3Y on its own for an independent Y.",
+      "linkedField": "dpiStage3Y"
     },
     "dpiStage3Y": {
       "command": "dpi",
@@ -294,7 +297,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 3"
+      "_note": "Y axis of stage 3. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage3Color": {
       "command": "dpi",
@@ -308,7 +311,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 4"
+      "_note": "X axis of stage 4. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage4Y on its own for an independent Y.",
+      "linkedField": "dpiStage4Y"
     },
     "dpiStage4Y": {
       "command": "dpi",
@@ -316,7 +320,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 4"
+      "_note": "Y axis of stage 4. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage4Color": {
       "command": "dpi",
@@ -330,7 +334,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 5"
+      "_note": "X axis of stage 5. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage5Y on its own for an independent Y.",
+      "linkedField": "dpiStage5Y"
     },
     "dpiStage5Y": {
       "command": "dpi",
@@ -338,7 +343,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 5"
+      "_note": "Y axis of stage 5. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage5Color": {
       "command": "dpi",
@@ -352,7 +357,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 6"
+      "_note": "X axis of stage 6. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage6Y on its own for an independent Y.",
+      "linkedField": "dpiStage6Y"
     },
     "dpiStage6Y": {
       "command": "dpi",
@@ -360,7 +366,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 6"
+      "_note": "Y axis of stage 6. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage6Color": {
       "command": "dpi",
@@ -374,7 +380,8 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 7"
+      "_note": "X axis of stage 7. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage7Y on its own for an independent Y.",
+      "linkedField": "dpiStage7Y"
     },
     "dpiStage7Y": {
       "command": "dpi",
@@ -382,7 +389,7 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 7"
+      "_note": "Y axis of stage 7. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
     },
     "dpiStage7Color": {
       "command": "dpi",

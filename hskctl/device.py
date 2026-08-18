@@ -340,6 +340,7 @@ class Session:
         self.detect_link()
         command = self.profile.field_command(name)
         spec = self.profile.data["commands"][command]
+        spec_field = self.profile.field(name)
 
         if spec.get("readModifyWrite"):
             # Commands that carry a whole block -- DPI carries seven stages and
@@ -354,6 +355,13 @@ class Session:
             end = min(end, len(current), len(packet))
             packet[start:end] = current[start:end]
             self.profile.encode_into(packet, name, value)
+            # A linked field rides in the same packet. DPI has independent X and
+            # Y axes, but the vendor app keeps them equal unless you explicitly
+            # unlink them -- and a mouse whose axes disagree tracks wrong. One
+            # write, both axes.
+            linked = spec_field.get("linkedField")
+            if linked and self.profile.has_field(linked):
+                self.profile.encode_into(packet, linked, value)
             self.profile.checksum(packet)
             self._exchange_checked(command, bytes(packet))
         else:
