@@ -657,9 +657,13 @@ Panel {
       anchors.fill: parent
       acceptedButtons: Qt.LeftButton
       hoverEnabled: true
-      // Sits behind the slider and swatch, so it only catches the row's margins.
+      // Sits behind the slider and swatch, so it only catches the row's margins
+      // and the stage label -- but that is most of the row, and clicking any of
+      // it should select the stage rather than only the small radio glyph.
       z: -1
+      cursorShape: Qt.PointingHandCursor
       onContainsMouseChanged: if (containsMouse) root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
+      onClicked: mouse.setDpiStage(stageRow.stage)
     }
 
     PanelToolTip {

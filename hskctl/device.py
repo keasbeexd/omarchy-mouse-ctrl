@@ -104,18 +104,31 @@ class Session:
 
     # -- low level -----------------------------------------------------------
 
-    def _exchange(self, packet: bytes) -> bytes:
+    def _settle(self, command: str | None) -> float:
+        """Seconds to wait between sending and reading back.
+
+        The vendor uses 60ms for everything, but its commands carry one byte of
+        payload. DPI carries 51, and at 60ms the reply is sometimes not ready --
+        which shows up as an all-zero payload, indistinguishable from a mouse
+        that ignored the packet. Commands can raise their own settle.
+        """
+        spec = (self.profile.data.get("commands") or {}).get(command or "") or {}
+        ms = spec.get("settleMs", self.profile.transport.get("settleMs", 60))
+        return ms / 1000.0
+
+    def _exchange(self, packet: bytes, command: str | None = None) -> bytes:
         t = self.profile.transport
         read_len = t.get("readLength") or t.get("packetLength")
         report_id = t.get("reportId") or 0
+        settle = self._settle(command)
         with HidrawDevice(self.info.path) as dev:
             if t.get("kind") == "output":
                 dev.write_output(packet)
-                time.sleep(t.get("settleMs", 30) / 1000.0)
+                time.sleep(settle)
                 reply = dev.read_input(read_len, timeout=1.5)
                 return reply or b""
             dev.set_feature(packet)
-            time.sleep(t.get("settleMs", 30) / 1000.0)
+            time.sleep(settle)
             return dev.get_feature(report_id, read_len)
 
     def _describe_reply(self, reply: bytes) -> str:
@@ -133,7 +146,7 @@ class Session:
         `sleep` -- must be left alone: flipping byte 4 on those corrupts the
         packet, and for `sleep` that byte is part of the sub-command.
         """
-        reply = self._exchange(packet)
+        reply = self._exchange(packet, command)
         if self.profile.check_ack(reply):
             return reply
 
@@ -145,8 +158,8 @@ class Session:
             # Nothing to flip. A silent mouse here is usually one that is
             # asleep, and the packet we just sent is what wakes it, so try the
             # identical packet again before giving up.
-            time.sleep(self.profile.transport.get("settleMs", 60) / 1000.0)
-            reply = self._exchange(packet)
+            time.sleep(self._settle(command))
+            reply = self._exchange(packet, command)
             if self.profile.check_ack(reply):
                 return reply
             raise ProtocolError(
@@ -160,7 +173,7 @@ class Session:
         flipped = bytearray(packet)
         flipped[flag] = 1 if self.wireless else 0
         self.profile.checksum(flipped)
-        reply = self._exchange(bytes(flipped))
+        reply = self._exchange(bytes(flipped), command)
         if self.profile.check_ack(reply):
             return reply
         self.wireless = not self.wireless  # neither worked; leave the guess as it was
@@ -221,7 +234,7 @@ class Session:
         # A mouse that just woke answers the first packet with an empty payload.
         # Reads are idempotent, so one more costs 60ms and never hurts.
         if reply and not any(reply[5:]):
-            time.sleep(self.profile.transport.get("settleMs", 60) / 1000.0)
+            time.sleep(self._settle(command))
             retry = self._exchange_checked(command, packet)
             if retry and any(retry[5:]):
                 return retry
@@ -244,7 +257,7 @@ class Session:
             "request": packet.hex(" "),
         }
         try:
-            reply = self._exchange(packet)
+            reply = self._exchange(packet, command)
         except (OSError, ProtocolError) as exc:
             out["error"] = f"{type(exc).__name__}: {exc}"
             return out

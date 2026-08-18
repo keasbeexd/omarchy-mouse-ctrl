@@ -131,7 +131,9 @@
         5,
         65
       ],
-      "_verified": "writes confirmed on hardware 2026-08-18"
+      "_verified": "writes confirmed on hardware 2026-08-18",
+      "settleMs": 140,
+      "_settleComment": "51 bytes of payload, against one for the scalar commands. At the vendor's 60ms the reply is sometimes not ready, which arrives as an all-zero payload and looks exactly like a command the mouse ignored -- so selecting a stage from the panel failed intermittently while the smaller commands were fine."
     },
     "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
     "sleep": {

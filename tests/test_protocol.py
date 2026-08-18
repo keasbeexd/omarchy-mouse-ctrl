@@ -422,6 +422,22 @@ class RealProfileTests(unittest.TestCase):
                 "Y must not drag X with it",
             )
 
+    def test_dpi_gets_a_longer_settle_than_the_scalar_commands(self):
+        """DPI moves 51 bytes of payload; the scalars move one.
+
+        At the vendor's 60ms the DPI reply is sometimes not ready, and a
+        not-ready reply is all zeros -- indistinguishable from a command the
+        mouse ignored. That is what made selecting a stage fail intermittently
+        while polling and the toggles worked.
+        """
+        commands = self.profile.data["commands"]
+        base = self.profile.transport["settleMs"]
+        self.assertGreater(commands["dpi"]["settleMs"], base)
+        for name in ("polling", "motion", "angle", "liftOff"):
+            self.assertNotIn(
+                "settleMs", commands[name], f"{name} should use the default"
+            )
+
     def test_dpi_has_exactly_one_write_command(self):
         """The legacy layout is an alternative, not a companion.
 

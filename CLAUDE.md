@@ -120,6 +120,18 @@ HSK variant means adding a profile, not a branch.
 If you find yourself writing `if model == ...` in Python, stop — it belongs in
 the profile.
 
+## Timing
+
+`hts_send_cmd` waits 60ms either side of a command, and that is right for the
+scalar commands, which carry one byte. DPI carries 51 and needs longer -- at
+60ms its reply is sometimes not ready, and a not-ready reply is **all zeros**,
+which is byte-for-byte what an ignored command looks like. Commands can set
+their own `settleMs`; `dpi` uses 140.
+
+This is worth remembering because the failure is intermittent and looks like a
+mapping bug: selecting a DPI stage failed on and off while polling and the
+toggles, being small, were fine throughout.
+
 ## Diagnosing a misbehaving mouse
 
 `hskctl doctor` sends every read opcode on both link flags and prints the raw
