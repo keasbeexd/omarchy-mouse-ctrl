@@ -18,7 +18,7 @@
     "sanity-check every reading before trusting a write."
   ],
   "match": {
-    "_comment": "VID and PIDs are the constants hts_init matches on. Interface 2 comes from the 'mi_02' device-path fragment in the binary.",
+    "_comment": "VID and PIDs are the constants hts_init matches on. The config endpoint is identified by a vendor usage page (0xffff observed) plus a feature report -- not by interface number, which was 7 on the dongle despite the driver's 'mi_02' string.",
     "vendorIds": [
       "33e4"
     ],
@@ -38,8 +38,8 @@
       "5907",
       "5908"
     ],
-    "interface": 2,
-    "usagePage": null,
+    "interface": null,
+    "usagePage": 65535,
     "requireFeatureReport": true
   },
   "transport": {
@@ -120,7 +120,7 @@
       "valueOffset": 5,
       "responseOffset": 5
     },
-    "_dpiComment": "hts_set_get_dpis_colors carries every stage in one packet. Per stage it writes three big-endian u16 pairs from byte 7 -- X DPI, Y DPI, and a third value -- so the stride is 6 bytes. Observed: rx[7:9]=rx[9:11]=400, i.e. stage 1 at 400 DPI on both axes. Writes go read-modify-write so undecoded bytes survive.",
+    "_dpiComment": "Confirmed against hardware. Payload: rx[5] active stage, rx[6] an unidentified flag, then seven stages of seven bytes each from rx[7] -- X u16be, Y u16be, then R G B. 2 + 7*7 = 51 = the response length the firmware reports in rx[2]. Writes go read-modify-write so the colours and the unmapped flag survive.",
     "dpi": {
       "get": "00 00 39 83",
       "responseOffset": 5,
@@ -230,24 +230,15 @@
       "encoding": "u8",
       "min": 1,
       "max": 7,
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it"
-    },
-    "dpiStageCount": {
-      "command": "dpi",
-      "offset": 6,
-      "encoding": "u8",
-      "min": 1,
-      "max": 7,
-      "readOnly": true
+      "_note": "observed 1; rx[6] is a second flag whose meaning is not established, so it is not mapped"
     },
     "dpiStage1": {
       "command": "dpi",
       "offset": 7,
       "encoding": "u16be",
-      "_needsVerification": "DPI writes are read-modify-write and were never tested on hardware; confirm the value survives a replug before relying on it",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 1. hts_set_get_dpis_colors writes three u16 pairs per stage, so the stage stride is 6 bytes -- stages 2..7 stay unmapped until a full 65-byte dpi dump confirms where stage 2 starts."
+      "_note": "X axis of stage 1"
     },
     "dpiStage1Y": {
       "command": "dpi",
@@ -255,12 +246,156 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 1; equals X unless the vendor app's independent-XY mode is on"
+      "_note": "Y axis of stage 1"
+    },
+    "dpiStage1Color": {
+      "command": "dpi",
+      "offset": 11,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 1"
+    },
+    "dpiStage2": {
+      "command": "dpi",
+      "offset": 14,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "X axis of stage 2"
+    },
+    "dpiStage2Y": {
+      "command": "dpi",
+      "offset": 16,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "Y axis of stage 2"
+    },
+    "dpiStage2Color": {
+      "command": "dpi",
+      "offset": 18,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 2"
+    },
+    "dpiStage3": {
+      "command": "dpi",
+      "offset": 21,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "X axis of stage 3"
+    },
+    "dpiStage3Y": {
+      "command": "dpi",
+      "offset": 23,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "Y axis of stage 3"
+    },
+    "dpiStage3Color": {
+      "command": "dpi",
+      "offset": 25,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 3"
+    },
+    "dpiStage4": {
+      "command": "dpi",
+      "offset": 28,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "X axis of stage 4"
+    },
+    "dpiStage4Y": {
+      "command": "dpi",
+      "offset": 30,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "Y axis of stage 4"
+    },
+    "dpiStage4Color": {
+      "command": "dpi",
+      "offset": 32,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 4"
+    },
+    "dpiStage5": {
+      "command": "dpi",
+      "offset": 35,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "X axis of stage 5"
+    },
+    "dpiStage5Y": {
+      "command": "dpi",
+      "offset": 37,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "Y axis of stage 5"
+    },
+    "dpiStage5Color": {
+      "command": "dpi",
+      "offset": 39,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 5"
+    },
+    "dpiStage6": {
+      "command": "dpi",
+      "offset": 42,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "X axis of stage 6"
+    },
+    "dpiStage6Y": {
+      "command": "dpi",
+      "offset": 44,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "Y axis of stage 6"
+    },
+    "dpiStage6Color": {
+      "command": "dpi",
+      "offset": 46,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 6"
+    },
+    "dpiStage7": {
+      "command": "dpi",
+      "offset": 49,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "X axis of stage 7"
+    },
+    "dpiStage7Y": {
+      "command": "dpi",
+      "offset": 51,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "_note": "Y axis of stage 7"
+    },
+    "dpiStage7Color": {
+      "command": "dpi",
+      "offset": 53,
+      "encoding": "rgb",
+      "_note": "LED colour for stage 7"
     }
   },
   "ui": {
     "dpiStages": [
-      "dpiStage1"
+      "dpiStage1",
+      "dpiStage2",
+      "dpiStage3",
+      "dpiStage4",
+      "dpiStage5",
+      "dpiStage6",
+      "dpiStage7"
     ],
     "quickToggles": [
       "motionSync",
@@ -270,15 +405,13 @@
       {
         "title": "DPI",
         "fields": [
-          "activeDpiStage",
-          "dpiStageCount"
+          "activeDpiStage"
         ]
       },
       {
         "title": "PERFORMANCE",
         "fields": [
-          "pollingRate",
-          "debounceMs"
+          "pollingRate"
         ]
       },
       {

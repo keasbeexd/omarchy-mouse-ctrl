@@ -92,6 +92,8 @@ def _decode_scalar(buf: bytes, spec: dict) -> Any:
         raw = buf[off] & 0x0F
     elif enc == "nibble_high":
         raw = (buf[off] >> 4) & 0x0F
+    elif enc == "rgb":
+        return "#%02x%02x%02x" % (buf[off], buf[off + 1], buf[off + 2])
     elif enc == "version3":
         # Three bytes of major.minor.patch, as the firmware reports it.
         return "%d.%d.%d" % (buf[off], buf[off + 1], buf[off + 2])
@@ -138,6 +140,14 @@ def _encode_scalar(buf: bytearray, spec: dict, value: Any) -> None:
                 raise ProtocolError(f"{value!r} is not a valid on/off value")
         else:
             raw = 1 if value else 0
+    elif spec.get("encoding") == "rgb":
+        text = str(value).lstrip("#")
+        if len(text) != 6:
+            raise ProtocolError(f"{value!r} is not a #rrggbb colour")
+        try:
+            raw = bytes.fromhex(text)
+        except ValueError as exc:
+            raise ProtocolError(f"{value!r} is not a #rrggbb colour") from exc
     else:
         raw = int(value)
         offset_add = spec.get("add")
@@ -173,6 +183,8 @@ def _encode_scalar(buf: bytearray, spec: dict, value: Any) -> None:
         buf[off] = (buf[off] & 0xF0) | (raw & 0x0F)
     elif enc == "nibble_high":
         buf[off] = (buf[off] & 0x0F) | ((raw & 0x0F) << 4)
+    elif enc == "rgb":
+        buf[off : off + 3] = bytes(raw)
     else:
         raise ProtocolError(f"unknown encoding {enc!r}")
 

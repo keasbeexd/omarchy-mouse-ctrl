@@ -41,7 +41,17 @@ hts_send_cmd(tx, rx):
 | 4 | link flag: `1` on the dongle, `0` on the cable |
 | 5+ | value |
 
-VID `33e4`, 14 product ids, interface 2. DPI stages are big-endian `u16`.
+VID `33e4`, 14 product ids. The config endpoint is identified by a vendor usage
+page plus a feature report, **not** by interface number — the dongle enumerates
+at interface 7 despite the driver's `mi_02` string.
+
+The reply echoes the request: `rx[2]` response length, `rx[3]` opcode, `rx[4]`
+link flag, payload from `rx[5]`. **An ACK is not proof of success** — the
+firmware acknowledges a packet carrying the wrong link flag and then ignores
+it, replying with an all-zero payload. Sessions call `detect_link()` first.
+
+DPI is one block: `rx[5]` active stage, `rx[6]` an unidentified flag, then seven
+stages of seven bytes from `rx[7]` — X `u16be`, Y `u16be`, R, G, B.
 `sleep` is the one exception to the byte-3 rule: it is a sub-command of opcode
 `0x02` carrying its selector at byte 6.
 
@@ -131,12 +141,19 @@ docs/         how the protocol was decoded and how to verify it
 
 ## Open work
 
-1. Verify the five `_needsVerification` fields against the Windows app, then
-   set `"status": "verified"` and drop the notes. **Needs hardware.**
-2. Confirm a DPI write survives a replug. Read-modify-write is implemented
-   and unit-tested against a simulated device, but has never touched real
-   hardware. **Needs hardware.**
-3. `charging` reads byte 6 of the battery reply; confirm `1` means charging.
+1. `pollingRate` is the last unverified map. `hskctl measure-polling` times the
+   mouse's own input reports; compare with `hskctl get pollingRate` and correct
+   the enum from the pair.
+2. Confirm a DPI write survives a replug. The block layout is confirmed against
+   hardware and the arithmetic checks out (2 + 7*7 = 51 = the reported payload
+   length), but no write has been made yet.
+3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
+   Confirm it reads 1 on the cable.
+4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the
+   stage count or an independent-XY flag; both would read 1 here.
+5. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
+   tuple, write takes a row index into the driver's 6-row table. Model the
+   table to re-enable writing.
 4. `tools/analyze-driver.py` never got run against the older 2023 build
    (`HSK_Pro_4K_FWSW20230322.rar`). Diffing the two would cross-check the
    command table. Does not need hardware, only the archive.

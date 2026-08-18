@@ -279,10 +279,48 @@ class RealProfileTests(unittest.TestCase):
         reply = bytes.fromhex("00a106810101000700 5808".replace(" ", "")) + bytes(54)
         self.assertEqual(self.profile.decode("firmwareVersion", reply), "1.0.7")
 
-    def test_only_stage_one_is_mapped(self):
-        """The stage stride is 6 bytes, so 2..7 stay unmapped until a full dump."""
-        for name in ("dpiStage2", "dpiStage7"):
-            self.assertNotIn(name, self.profile.data["fields"])
+    def test_all_seven_dpi_stages_map_at_stride_seven(self):
+        """Confirmed on hardware: X u16be, Y u16be, then RGB, seven bytes apart.
+
+        The arithmetic is the proof -- 2 header bytes plus 7*7 stage bytes is
+        51, exactly the payload length the firmware reports in rx[2].
+        """
+        for n in range(1, 8):
+            base = 7 + (n - 1) * 7
+            self.assertEqual(self.profile.data["fields"][f"dpiStage{n}"]["offset"], base)
+            self.assertEqual(
+                self.profile.data["fields"][f"dpiStage{n}Y"]["offset"], base + 2
+            )
+            self.assertEqual(
+                self.profile.data["fields"][f"dpiStage{n}Color"]["offset"], base + 4
+            )
+        self.assertEqual(7 + 7 * 7, 56)
+
+    def test_dpi_block_decodes_the_captured_reply(self):
+        raw = (
+            "00 a1 33 83 01 01 01 01 90 01 90 aa 00 00 06 40 06 40 ff a5 00 "
+            "06 40 06 40 ff ff 00 0c 80 0c 80 00 ff 00 11 94 11 94 00 ff ff "
+            "13 88 13 88 00 00 ff 19 00 19 00 80 00 80 00"
+        )
+        buf = bytearray(65)
+        vals = [int(x, 16) for x in raw.split()]
+        buf[: len(vals)] = vals
+        reply = bytes(buf)
+        self.assertEqual(
+            [self.profile.decode(f"dpiStage{n}", reply) for n in range(1, 8)],
+            [400, 1600, 1600, 3200, 4500, 5000, 6400],
+        )
+        self.assertEqual(self.profile.decode("dpiStage1Color", reply), "#aa0000")
+        self.assertEqual(self.profile.decode("dpiStage7Color", reply), "#800080")
+
+    def test_writing_one_stage_leaves_its_neighbours_and_colour_alone(self):
+        buf = bytearray(65)
+        buf[7:9] = (400).to_bytes(2, "big")
+        buf[14:16] = (1600).to_bytes(2, "big")
+        buf[18:21] = bytes.fromhex("ffa500")
+        self.profile.encode_into(buf, "dpiStage1", 800)
+        self.assertEqual(self.profile.decode("dpiStage2", bytes(buf)), 1600)
+        self.assertEqual(self.profile.decode("dpiStage2Color", bytes(buf)), "#ffa500")
 
     def test_read_only_fields_refuse_writes(self):
         # Readings the firmware only reports, plus stage count, whose value
@@ -303,19 +341,17 @@ class RealProfileTests(unittest.TestCase):
             for f in self.profile.data["fields"]
             if not f.startswith("_") and self.profile.field_writable(f)
         }
-        self.assertEqual(
-            writable,
-            {
-                "pollingRate",
-                "liftOffDistance",
-                "motionSync",
-                "angleSnap",
-                "sleepMinutes",
-                "activeDpiStage",
-                "dpiStage1",
-                "dpiStage1Y",
-            },
-        )
+        expected = {
+            "pollingRate",
+            "liftOffDistance",
+            "motionSync",
+            "angleSnap",
+            "sleepMinutes",
+            "activeDpiStage",
+        }
+        for n in range(1, 8):
+            expected |= {f"dpiStage{n}", f"dpiStage{n}Y", f"dpiStage{n}Color"}
+        self.assertEqual(writable, expected)
 
     def test_link_flag_is_omitted_where_the_firmware_omits_it(self):
         """`hts_get_connect_state` and `hts_get_set_sleep` never set byte 4.

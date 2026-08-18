@@ -23,13 +23,11 @@ FRIENDLY_LABELS = {
     "charging": "Charging",
     "connection": "Connection",
     "activeDpiStage": "Active DPI stage",
-    "dpiStageCount": "DPI stages",
     "pollingRate": "Polling rate",
     "motionSync": "Motion Sync",
     "liftOffDistance": "Lift-off distance",
     "debounceMs": "Debounce",
     "angleSnap": "Angle snapping",
-    "rippleControl": "Ripple control",
     "sleepMinutes": "Sleep timer",
     "firmwareVersion": "Firmware",
 }
@@ -416,6 +414,92 @@ def cmd_doctor(args) -> int:
     return _emit(report, args.json, human)
 
 
+def cmd_measure_polling(args) -> int:
+    """Time the mouse's input reports to measure the real polling rate.
+
+    This settles the one thing static analysis could not: the raw byte the
+    firmware reports for polling rate means nothing until you know which Hz it
+    corresponds to. Rather than trust a guessed enum, count the reports.
+    """
+    import statistics
+    import time
+
+    from .hidraw import HidrawDevice, enumerate_devices
+
+    try:
+        profile = load_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    vids = {v.lower() for v in profile.match.get("vendorIds") or []}
+    pointer = None
+    for info in enumerate_devices():
+        if vids and f"{info.vendor_id:04x}" not in vids:
+            continue
+        # The pointer node is Generic Desktop / Mouse, and it is the only one
+        # that streams movement.
+        if info.usage_page == 0x01 and info.usage == 0x02:
+            pointer = info
+            break
+    if pointer is None:
+        return _fail(
+            "could not find the mouse's pointer node (Generic Desktop / Mouse). "
+            "Run `hskctl probe` to see what is present.",
+            args.json,
+        )
+
+    seconds = max(1.0, float(args.seconds))
+    stamps: list[float] = []
+    print(
+        f"Move the mouse continuously for {seconds:.0f} seconds...",
+        file=sys.stderr,
+    )
+    try:
+        with HidrawDevice(pointer.path) as dev:
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                data = dev.read_input(64, timeout=0.2)
+                if data:
+                    stamps.append(time.monotonic())
+    except (OSError, HidrawError) as exc:
+        return _fail(str(exc), args.json, device=pointer.path)
+
+    if len(stamps) < 20:
+        return _fail(
+            f"only {len(stamps)} reports seen -- the mouse has to be moving "
+            f"throughout. Try again and keep it moving.",
+            args.json,
+            device=pointer.path,
+            samples=len(stamps),
+        )
+
+    gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b > a]
+    median_gap = statistics.median(gaps)
+    measured = 1.0 / median_gap if median_gap else 0.0
+    # Snap to the rate the firmware actually offers.
+    ladder = [125, 250, 500, 1000, 2000, 4000, 8000]
+    nearest = min(ladder, key=lambda r: abs(r - measured))
+
+    payload = {
+        "ok": True,
+        "device": pointer.path,
+        "samples": len(stamps),
+        "measuredHz": round(measured, 1),
+        "nearestRate": nearest,
+    }
+
+    def human(p):
+        print(f"\nsamples      : {p['samples']}")
+        print(f"measured     : {p['measuredHz']} Hz")
+        print(f"nearest rate : {p['nearestRate']} Hz")
+        print()
+        print("Compare that with `hskctl get pollingRate`. If they disagree, the")
+        print("raw->Hz map in the profile is wrong; tell me both numbers and I")
+        print("will correct it.")
+
+    return _emit(payload, args.json, human)
+
+
 def cmd_profiles(args) -> int:
     names = list_profiles()
     payload = {"ok": True, "profiles": names}
@@ -450,6 +534,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "doctor", help="dump the raw bytes of every read command (writes nothing)"
     ).set_defaults(func=cmd_doctor)
+
+    measure = sub.add_parser(
+        "measure-polling", help="time the mouse's reports to measure real Hz"
+    )
+    measure.add_argument("--seconds", type=float, default=3.0)
+    measure.set_defaults(func=cmd_measure_polling)
 
     get_p = sub.add_parser("get", help="read one setting")
     get_p.add_argument("field")
