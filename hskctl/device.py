@@ -185,15 +185,23 @@ class Session:
         read_len = t.get("readLength") or t.get("packetLength")
         report_id = t.get("reportId") or 0
         settle = self._settle(command)
+        # Tracing lives here rather than in the callers so that *every* wire
+        # transaction is captured -- including the link-flag retry, the
+        # wake-up resend and the verification read-back. A trace that only
+        # shows the packet you meant to send hides exactly the cases where
+        # something else went out instead.
+        self._trace(f"-> {command or '?'}", packet)
         with HidrawDevice(self.info.path) as dev:
             if t.get("kind") == "output":
                 dev.write_output(packet)
                 time.sleep(settle)
-                reply = dev.read_input(read_len, timeout=1.5)
-                return reply or b""
-            dev.set_feature(packet)
-            time.sleep(settle)
-            return dev.get_feature(report_id, read_len)
+                reply = dev.read_input(read_len, timeout=1.5) or b""
+            else:
+                dev.set_feature(packet)
+                time.sleep(settle)
+                reply = dev.get_feature(report_id, read_len)
+        self._trace(f"<- {command or '?'}", reply)
+        return reply
 
     def _describe_reply(self, reply: bytes) -> str:
         if not reply:

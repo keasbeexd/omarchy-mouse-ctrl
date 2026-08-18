@@ -76,9 +76,11 @@ payload from `rx[5]`. **An ACK does not mean success** — the firmware
 acknowledges a wrong link flag and then ignores the command, replying with an
 all-zero payload.
 
-DPI is one block: active stage at `rx[5]`, then seven stages of seven bytes from
-`rx[7]` — X `u16be`, Y `u16be`, R, G, B. Sleep is a sub-command of opcode `0x02`
-with its selector at byte 6.
+DPI is one block: active stage at `rx[5]`, the number of stages the mouse
+cycles at `rx[6]`, then seven stages of seven bytes from `rx[7]` — X `u16be`,
+Y `u16be`, R, G, B. The battery reply is two bytes: charging at `rx[5]`,
+percentage at `rx[6]`. Sleep is a sub-command of opcode `0x02` with its
+selector at byte 6.
 
 Factory reset (`09`) is deliberately not bound to any field — nothing in the
 panel should be one keystroke from wiping the mouse's config.
@@ -109,12 +111,17 @@ correctly and then vanished on power-off. The firmware appears to commit only a
 block it considers complete, so `dpiStageN` and `dpiStageNY` ride in one packet
 (see `linkedField` in the profile). Do not split them.
 
-If you still want a belt-and-braces restore on reconnect:
+If you still want a belt-and-braces restore on reconnect, it is opt-in:
 
 ```bash
 hskctl save                 # record the current settings as your baseline
 ./install.sh --autoapply    # re-apply them whenever the mouse reappears
 ```
+
+Arm this and a udev rule writes that baseline back every time the mouse
+enumerates, so a stale one reads as "my settings keep reverting". `hskctl set`
+updates the baseline as it goes, and `hskctl doctor` prints whether it is armed
+and exactly what it holds.
 
 ## Install
 
@@ -160,6 +167,14 @@ landing somewhere else.
 ```bash
 hskctl set pollingRate 4000
 hskctl set dpiStage1 800
+```
+
+If a write reads back wrong, `--verbose` dumps every packet that crossed the
+wire — including the link-flag retry and the verification read, not just the
+one you meant to send:
+
+```bash
+hskctl set dpiStage1 1600 --verbose
 ```
 
 Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).

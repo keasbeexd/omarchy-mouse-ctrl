@@ -185,9 +185,13 @@ def cmd_get(args) -> int:
     try:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
+        if getattr(args, "verbose", False):
+            session.trace = []
         value = session.get(args.field)
     except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, field=args.field)
+    if getattr(args, "verbose", False) and session.trace:
+        _print_trace(session)
     payload = {"ok": True, "field": args.field, "value": value}
     return _emit(payload, args.json, lambda p: print(p["value"]))
 
@@ -202,6 +206,56 @@ def _coerce(text: str) -> Any:
         return int(text)
     except ValueError:
         return text
+
+
+def _refresh_baseline(field: str, value: Any) -> None:
+    """Keep the re-apply baseline in step with a successful write.
+
+    `hskctl apply` exists to restore settings when the mouse reappears, and it
+    is armed by a udev rule. A baseline that is never updated therefore turns
+    into a machine that silently undoes your changes: you set 1600, the mouse
+    reconnects, and systemd puts the old value back. Worse, whatever the mouse
+    happened to hold the day `save` ran -- including a corrupted colour -- gets
+    reinstated forever.
+
+    So a write updates the baseline it would otherwise be fighting. Only if one
+    already exists: this never creates the file, because a user who has not
+    opted in should not acquire a baseline as a side effect of setting DPI.
+    """
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return
+    settings = doc.get("settings")
+    if not isinstance(settings, dict) or field not in settings:
+        return
+    if settings[field] == value:
+        return
+    settings[field] = value
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2)
+            fh.write("\n")
+    except OSError:
+        pass
+
+
+def _print_trace(session) -> None:
+    """Dump every byte that crossed the wire, to stderr.
+
+    Trailing zeros are trimmed rather than the packet being truncated to a
+    fixed width: a DPI packet carries seven stages across 56 bytes, and cutting
+    it at 32 hides the half that matters.
+    """
+    print(f"link: {'dongle' if session.wireless else 'wired'}", file=sys.stderr)
+    for entry in session.trace:
+        tokens = entry["data"].split()
+        while len(tokens) > 16 and tokens[-1] == "00":
+            tokens.pop()
+        print(f"  {entry['step']}:", file=sys.stderr)
+        for i in range(0, len(tokens), 16):
+            print(f"    {i:>3}  {' '.join(tokens[i:i + 16])}", file=sys.stderr)
 
 
 def cmd_set(args) -> int:
@@ -222,14 +276,11 @@ def cmd_set(args) -> int:
         return _fail(str(exc), args.json, field=args.field, requested=value)
 
     if getattr(args, "verbose", False) and session.trace:
-        print(f"link: {'dongle' if session.wireless else 'wired'}", file=sys.stderr)
-        for entry in session.trace:
-            tokens = entry["data"].split()
-            print(f"  {entry['step']}:", file=sys.stderr)
-            for i in range(0, min(len(tokens), 32), 16):
-                print(f"    {' '.join(tokens[i:i + 16])}", file=sys.stderr)
+        _print_trace(session)
 
     ok = str(readback) == str(value)
+    if ok and not getattr(args, "raw", False):
+        _refresh_baseline(args.field, readback)
     payload = {
         "ok": ok,
         "field": args.field,
@@ -313,6 +364,31 @@ def cmd_fields(args) -> int:
     return _emit(payload, args.json, human)
 
 
+def _autoapply_state() -> dict:
+    """Is anything going to write to the mouse behind the user's back?
+
+    `--autoapply` installs a systemd user unit that a udev rule starts every
+    time the mouse enumerates. When its baseline is stale that presents as
+    settings reverting on their own, with nothing in the panel or the CLI to
+    suggest why -- so `doctor` says out loud whether it is armed and what it
+    would restore.
+    """
+    unit = os.path.join(
+        os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+        "systemd",
+        "user",
+        "hskctl-apply.service",
+    )
+    state: dict = {"armed": os.path.exists(unit), "unit": unit,
+                   "baselinePath": SETTINGS_PATH}
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as fh:
+            state["baseline"] = json.load(fh).get("settings", {})
+    except (OSError, ValueError):
+        state["baseline"] = None
+    return state
+
+
 def cmd_doctor(args) -> int:
     """Read-only diagnostic: dump the raw bytes of every read command.
 
@@ -360,6 +436,7 @@ def cmd_doctor(args) -> int:
     except OSError as exc:
         access["error"] = str(exc)
     report["access"] = access
+    report["autoApply"] = _autoapply_state()
 
     try:
         session = open_session(profile, path)
@@ -398,6 +475,18 @@ def cmd_doctor(args) -> int:
         if not a.get("write"):
             print("  !! not writable -- every exchange needs O_RDWR.")
             print("     Run ./install.sh --udev, then replug the mouse or dongle.")
+        aa = p.get("autoApply") or {}
+        if aa.get("armed"):
+            print()
+            print("re-apply on reconnect: ARMED")
+            print(f"  unit:     {aa['unit']}")
+            print(f"  baseline: {aa['baselinePath']}")
+            for k, v in sorted((aa.get("baseline") or {}).items()):
+                print(f"    {k} = {v}")
+            print("  Every time the mouse enumerates, these are written back.")
+            print("  If a setting keeps reverting, this is why. Refresh it with")
+            print("  'hskctl save', or disable it:")
+            print(f"    rm {aa['unit']} && systemctl --user daemon-reload")
         print()
         print("read attempts (nothing below writes to the mouse):")
         for att in p["attempts"]:
@@ -867,6 +956,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     get_p = sub.add_parser("get", help="read one setting")
     get_p.add_argument("field")
+    get_p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="dump the bytes of the exchange",
+    )
     get_p.set_defaults(func=cmd_get)
 
     set_p = sub.add_parser("set", help="write one setting")

@@ -84,9 +84,11 @@ install_udev() {
 }
 
 install_autoapply() {
-  # A safety net while hskctl writes do not survive a power cycle. The mouse
-  # itself persists settings written by the vendor app, so this should become
-  # unnecessary once the difference between the two packets is found.
+  # Opt-in only. Writes do reach the mouse's own storage, so this is a safety
+  # net rather than the mechanism -- and an unattended one is worse than
+  # nothing: a baseline captured on a bad day gets restored on every reconnect,
+  # which reads as "my settings keep reverting". `hskctl set` now updates the
+  # baseline as it goes, so an armed service follows you instead of fighting.
   local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   info "Installing the re-apply service to $unit_dir"
   mkdir -p "$unit_dir"
@@ -122,11 +124,13 @@ case "${1:-}" in
     command -v python3 >/dev/null || die "python3 is required"
     install_udev
     link_cli
-    install_autoapply
     echo
     info "Done. Check it sees the mouse:"
     echo "     hskctl probe"
     echo "     hskctl status     # compare against the Windows app before writing"
+    echo
+    echo "     Settings persist on the mouse itself, so nothing else is needed."
+    echo "     ./install.sh --autoapply  adds a restore-on-reconnect safety net."
     ;;
   *) die "unknown option: $1" ;;
 esac

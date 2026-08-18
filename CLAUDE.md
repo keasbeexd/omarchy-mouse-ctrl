@@ -50,8 +50,16 @@ link flag, payload from `rx[5]`. **An ACK is not proof of success** — the
 firmware acknowledges a packet carrying the wrong link flag and then ignores
 it, replying with an all-zero payload. Sessions call `detect_link()` first.
 
-DPI is one block: `rx[5]` active stage, `rx[6]` an unidentified flag, then seven
-stages of seven bytes from `rx[7]` — X `u16be`, Y `u16be`, R, G, B.
+DPI is one block: `rx[5]` active stage, `rx[6]` **how many stages the mouse
+cycles**, then seven stages of seven bytes from `rx[7]` — X `u16be`, Y `u16be`,
+R, G, B. Both header bytes are decoded, not guessed: `hts_set_get_dpis_colors`
+writes `tx[5]` and `tx[6]` from two struct fields, and
+`hts_dpi_level_combo_SelectionChangeCommitted` sets the second from the "DPI
+level" combo and then clamps the first down to it.
+
+The battery reply is the same story: `hts_get_battery` copies `rx[5]` and
+`rx[6]` into a struct, and `battery_update_ui` reads the percentage out of
+`rx[6]` and shows the charging label when `rx[5] > 0`.
 `sleep` is the one exception to the byte-3 rule: it is a sub-command of opcode
 `0x02` carrying its selector at byte 6.
 
@@ -132,6 +140,25 @@ The giveaway was which controls worked: `Toggle.clicked()` and
 snapping were fine, while every MouseArea click was dead. Anything that looks
 like "this control does nothing but that one works" is worth checking for a
 shadowed id before suspecting the device. The service is now `id: hsk`.
+
+## Nothing may write to the mouse without the user seeing it
+
+`./install.sh --autoapply` installs a systemd user unit that a udev rule starts
+on every enumeration, and it writes a saved baseline back to the mouse. That
+was a reasonable safety net while writes did not survive a power cycle. Now
+that they do, an unattended one is actively harmful: the baseline is whatever
+the mouse held the day `save` ran — including a corrupted colour — and it gets
+reinstated forever. It presents as "my settings keep reverting", with nothing
+in the panel or the CLI to suggest why.
+
+Three rules follow. It is **opt-in**, never part of a bare `./install.sh`. A
+successful `set` **updates the baseline it would otherwise be fighting** (see
+`_refresh_baseline`) — but never creates one. And `doctor` **says out loud**
+whether it is armed and exactly what it would restore.
+
+Generalise it: any mechanism that writes to the device on its own has to be
+visible in `doctor`, or the next person debugging spends a day blaming the
+protocol.
 
 ## Only one thing may talk to the mouse at a time
 
@@ -227,10 +254,15 @@ docs/         how the protocol was decoded and how to verify it
    different length byte, so it is not a clean comparison. Treat the mechanism
    as unconfirmed; do not "simplify" the linked write away.
 
-3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
-   Confirm it reads 1 on the cable.
-4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the
-   stage count or an independent-XY flag; both would read 1 here.
+3. `charging` is `rx[5] > 0` — that much is decoded from `battery_update_ui`,
+   not inferred. It still reads 0 on the cable. If the offset is right and the
+   value is wrong, suspect the endpoint: with both the dongle and the cable
+   plugged in there are two answering nodes, and the dongle does not know the
+   mouse is charging. Check which path `doctor` selected before touching the
+   profile.
+4. `rx[6]` of the DPI reply is the stage count. Reads 1 on this mouse, which is
+   worth understanding — the panel offers seven. Writing it is untested, so the
+   field is read-only.
 5. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
    tuple, write takes a row index into the driver's 6-row table. Model the
    table to re-enable writing.

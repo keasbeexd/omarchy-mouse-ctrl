@@ -162,7 +162,8 @@
       "encoding": "u8",
       "type": "bool",
       "readOnly": true,
-      "_needsVerification": "byte 5 of the battery reply; observed 0 while discharging -- confirm it reads 1 on the cable"
+      "_note": "Read out of hts_get_battery + battery_update_ui: the reply carries two bytes, rx[5] and rx[6]. The app assigns rx[6] to b_percent and shows the charging label when rx[5] > 0. So the offsets are decoded, not guessed.",
+      "_needsVerification": "still observed 0 on the cable -- if it never reads non-zero, the endpoint being answered is the dongle rather than the mouse, not a wrong offset"
     },
     "connection": {
       "command": "connection",
@@ -236,7 +237,17 @@
       "encoding": "u8",
       "min": 1,
       "max": 7,
-      "_note": "observed 1; rx[6] is a second flag whose meaning is not established, so it is not mapped"
+      "_note": "rx[5]. hts_set_get_dpis_colors reads it into the struct field the level combo clamps, so it is the currently selected stage."
+    },
+    "dpiStageCount": {
+      "command": "dpi",
+      "offset": 6,
+      "encoding": "u8",
+      "min": 1,
+      "max": 7,
+      "readOnly": true,
+      "_note": "rx[6] -- how many DPI stages the mouse cycles through, not an unknown flag. hts_set_get_dpis_colors writes tx[6] from the struct field that hts_dpi_level_combo_SelectionChangeCommitted sets from the 'DPI level' combo, and that handler clamps the active stage down to it. Reads 1 on this mouse.",
+      "_needsVerification": "writing it is untested on hardware; read it, change the count, and check the mouse cycles that many stages before trusting the write"
     },
     "dpiStage1": {
       "command": "dpi",
