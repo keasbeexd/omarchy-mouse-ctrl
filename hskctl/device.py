@@ -259,6 +259,39 @@ class Session:
         buf = self._read(command)
         return self.profile.decode(name, buf)
 
+    def set_raw(self, name: str, raw: int) -> None:
+        """Write a raw wire value, bypassing the friendly-value table.
+
+        Needed to calibrate a mapping we do not know yet: you cannot ask for
+        "4000 Hz" until you have established which byte means 4000 Hz, so the
+        sweep has to address the register numerically.
+        """
+        if not self.profile.field_writable(name):
+            raise ProtocolError(f"{name!r} is read-only on this device")
+        self.detect_link()
+        command = self.profile.field_command(name)
+        spec = self.profile.field(name)
+        enc = spec.get("encoding", "u8")
+        width = {"u8": 1, "u16le": 2, "u16be": 2}.get(enc, 1)
+        order = "little" if enc == "u16le" else "big"
+        payload = int(raw).to_bytes(width, order)
+        packet = self.profile.build_request(
+            command, write=True, value_bytes=payload, wireless=self.wireless
+        )
+        self._exchange_checked(command, packet)
+
+    def get_raw(self, name: str) -> int:
+        command = self.profile.field_command(name)
+        reply = self._read(command)
+        spec = self.profile.field(name)
+        offset = self.profile.response_offset(command, spec)
+        enc = spec.get("encoding", "u8")
+        if enc == "u16le":
+            return int.from_bytes(reply[offset : offset + 2], "little")
+        if enc == "u16be":
+            return int.from_bytes(reply[offset : offset + 2], "big")
+        return reply[offset]
+
     def set(self, name: str, value: Any) -> None:
         """Write one setting.
 

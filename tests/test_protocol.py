@@ -250,10 +250,23 @@ class RealProfileTests(unittest.TestCase):
 
     def test_write_lands_the_value_at_the_command_value_offset(self):
         packet = self.profile.build_request(
-            "polling", write=True, value_bytes=self.profile.encode_value("pollingRate", 4000)
+            "polling",
+            write=True,
+            value_bytes=self.profile.encode_value("pollingRate", 1000),
         )
         self.assertEqual(packet[3], 0x02, "write must use the set opcode")
-        self.assertEqual(packet[5], 5, "4000 Hz encodes as raw 5 at byte 5")
+        # Measured on hardware: raw 1 clocks 1000 Hz.
+        self.assertEqual(packet[5], 1, "1000 Hz encodes as raw 1 at byte 5")
+
+    def test_only_measured_polling_rates_are_claimed(self):
+        """An unmeasured raw value must not decode to an invented rate."""
+        values = self.profile.data["fields"]["pollingRate"]["values"]
+        self.assertEqual(values, {"1": 1000})
+        reply = bytearray(65)
+        reply[1] = 0xA1
+        reply[5] = 4
+        # Falls through to the raw number rather than pretending to know.
+        self.assertEqual(self.profile.decode("pollingRate", bytes(reply)), 4)
 
     def test_sleep_uses_its_subcommand_and_big_endian_value(self):
         packet = self.profile.build_request(

@@ -206,8 +206,13 @@ def cmd_set(args) -> int:
     try:
         profile = load_profile(args.profile)
         session = open_session(profile, args.device)
-        session.set(args.field, value)
-        readback = session.get(args.field)
+        if getattr(args, "raw", False):
+            session.set_raw(args.field, int(args.value))
+            readback = session.get_raw(args.field)
+            value = int(args.value)
+        else:
+            session.set(args.field, value)
+            readback = session.get(args.field)
     except (NotDiscovered, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, field=args.field, requested=value)
 
@@ -500,6 +505,118 @@ def cmd_measure_polling(args) -> int:
     return _emit(payload, args.json, human)
 
 
+def _sample_polling(profile, seconds: float) -> float:
+    """Median report rate from the pointer node, in Hz. 0.0 if too few samples."""
+    import statistics
+    import time
+
+    from .hidraw import HidrawDevice, enumerate_devices
+
+    vids = {v.lower() for v in profile.match.get("vendorIds") or []}
+    pointer = None
+    for info in enumerate_devices():
+        if vids and f"{info.vendor_id:04x}" not in vids:
+            continue
+        if info.usage_page == 0x01 and info.usage == 0x02:
+            pointer = info
+            break
+    if pointer is None:
+        return 0.0
+
+    stamps: list[float] = []
+    with HidrawDevice(pointer.path) as dev:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if dev.read_input(64, timeout=0.2):
+                stamps.append(time.monotonic())
+    if len(stamps) < 20:
+        return 0.0
+    gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b > a]
+    median = statistics.median(gaps)
+    return (1.0 / median) if median else 0.0
+
+
+def cmd_calibrate_polling(args) -> int:
+    """Sweep the polling register and measure what each raw value actually does.
+
+    Static analysis gave us the command but not the meaning of its argument.
+    Instead of guessing the table, write each candidate and time the mouse's
+    own reports. The original value is restored at the end.
+    """
+    import time
+
+    try:
+        profile = load_profile(args.profile)
+        session = open_session(profile, args.device)
+        original = session.get_raw("pollingRate")
+    except (NotDiscovered, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json)
+
+    ladder = [125, 250, 500, 1000, 2000, 4000, 8000]
+    results: list[dict] = []
+    print(
+        f"Sweeping raw 0..{args.max_raw}. Keep the mouse moving the whole time "
+        f"(about {(args.max_raw + 1) * (args.seconds + 1):.0f} seconds).\n",
+        file=sys.stderr,
+    )
+    try:
+        for raw in range(args.max_raw + 1):
+            try:
+                session.set_raw("pollingRate", raw)
+            except (ProtocolError, OSError) as exc:
+                results.append({"raw": raw, "error": str(exc)})
+                continue
+            time.sleep(0.6)
+            readback = session.get_raw("pollingRate")
+            measured = _sample_polling(profile, args.seconds)
+            entry = {
+                "raw": raw,
+                "accepted": readback == raw,
+                "readback": readback,
+                "measuredHz": round(measured, 1),
+            }
+            if measured:
+                entry["nearestRate"] = min(ladder, key=lambda r: abs(r - measured))
+            results.append(entry)
+            print(
+                f"  raw {raw}: readback {readback}  "
+                f"{'~' + str(round(measured)) + ' Hz' if measured else 'no samples'}",
+                file=sys.stderr,
+            )
+    finally:
+        try:
+            session.set_raw("pollingRate", original)
+            print(f"\nrestored raw {original}", file=sys.stderr)
+        except (ProtocolError, OSError):
+            print(
+                f"\n!! could not restore raw {original} -- set it in the vendor app",
+                file=sys.stderr,
+            )
+
+    derived = {
+        str(r["raw"]): r["nearestRate"]
+        for r in results
+        if r.get("accepted") and r.get("nearestRate")
+    }
+    payload = {
+        "ok": bool(derived),
+        "original": original,
+        "results": results,
+        "derivedValues": derived,
+    }
+
+    def human(p):
+        print()
+        if not p["derivedValues"]:
+            print("No raw value produced a usable measurement.")
+            print("The mouse has to be moving throughout the sweep.")
+            return
+        print("Measured mapping -- paste into fields.pollingRate.values:")
+        print(json.dumps(p["derivedValues"], indent=2))
+
+    return _emit(payload, args.json, human)
+
+
 def cmd_profiles(args) -> int:
     names = list_profiles()
     payload = {"ok": True, "profiles": names}
@@ -541,6 +658,14 @@ def build_parser() -> argparse.ArgumentParser:
     measure.add_argument("--seconds", type=float, default=3.0)
     measure.set_defaults(func=cmd_measure_polling)
 
+    calib = sub.add_parser(
+        "calibrate-polling",
+        help="sweep the polling register and measure what each raw value means",
+    )
+    calib.add_argument("--seconds", type=float, default=2.0)
+    calib.add_argument("--max-raw", type=int, default=6)
+    calib.set_defaults(func=cmd_calibrate_polling)
+
     get_p = sub.add_parser("get", help="read one setting")
     get_p.add_argument("field")
     get_p.set_defaults(func=cmd_get)
@@ -548,6 +673,11 @@ def build_parser() -> argparse.ArgumentParser:
     set_p = sub.add_parser("set", help="write one setting")
     set_p.add_argument("field")
     set_p.add_argument("value")
+    set_p.add_argument(
+        "--raw",
+        action="store_true",
+        help="write the wire value directly, bypassing the friendly-value table",
+    )
     set_p.set_defaults(func=cmd_set)
 
     return parser
