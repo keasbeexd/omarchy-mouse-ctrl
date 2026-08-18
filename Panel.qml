@@ -86,7 +86,8 @@ Panel {
       // One step per press, matching the sensor's 50 DPI granularity; hold
       // shift-free repeat and it walks smoothly.
       var wanted = Model.clampDpi(row.dpi + direction * Model.DPI_STEP)
-      if (wanted !== row.dpi) hsk.set("dpiStage" + row.stage, wanted)
+      // Coalesced, like the step buttons -- holding an arrow key is one write.
+      if (wanted !== row.dpi) hsk.setSoon("dpiStage" + row.stage, wanted)
     } else if (row.kind === "pollingRate") {
       var options = Model.POLLING_RATES
       var current = hsk.value("pollingRate")
@@ -119,13 +120,6 @@ Panel {
     if (!row || row.kind !== "dpiStage") return
     if (!hsk.canWrite("dpiStage" + row.stage + "Color")) return
     hsk.set("dpiStage" + row.stage + "Color", Model.nextStageColor(row.color))
-  }
-
-  // Held while a slider is in use, and released a moment after the last move so
-  // a refresh cannot land between the final drag event and the commit.
-  function beginInteraction() {
-    hsk.suspended = true
-    interactionTimer.restart()
   }
 
   function scrollItemIntoView(item) {
@@ -182,7 +176,9 @@ Panel {
   }
 
   Connections {
-    target: mouse
+    // `hsk`, not `mouse` -- this one survived the rename and has been pointing
+    // at nothing ever since, so the cursor was never re-clamped on a refresh.
+    target: hsk
     function onChanged() { root.clampCursor() }
   }
 
@@ -309,6 +305,27 @@ Panel {
                 fontFamily: root.fontFamily
                 onClicked: hsk.refresh()
               }
+            }
+          }
+
+          // Says out loud that the mouse is being written to. Without it, the
+          // 200-odd milliseconds an exchange takes read as "my click did
+          // nothing", and the natural response -- click again -- is the one
+          // thing that makes it worse.
+          Rectangle {
+            visible: hsk.working
+            width: parent.width
+            implicitHeight: writingLabel.implicitHeight + Style.space(10)
+            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+            color: root.hoverFill
+
+            Text {
+              id: writingLabel
+              anchors.centerIn: parent
+              text: "󰏫  Writing to the mouse…"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
           }
 
@@ -542,6 +559,67 @@ Panel {
 
   // --- components ---------------------------------------------------------
 
+  // A repeat-capable step button. Holding it repeats, because stepping from
+  // 400 to 3200 in fifties is 56 clicks otherwise -- and repeats cost nothing,
+  // since the service coalesces them into a single write.
+  component StepButton: Rectangle {
+    id: stepButton
+    property string glyph: ""
+    property bool enabled: true
+    signal stepped()
+    signal hovered()
+
+    Layout.preferredWidth: Style.space(20)
+    Layout.preferredHeight: Style.space(20)
+    Layout.alignment: Qt.AlignVCenter
+    radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+    color: stepMouse.pressed && stepButton.enabled
+      ? root.selectedFill
+      : (stepMouse.containsMouse && stepButton.enabled ? root.hoverFill : "transparent")
+    border.width: 1
+    border.color: stepButton.enabled ? root.dim : "transparent"
+    opacity: stepButton.enabled ? 1 : 0.35
+
+    Text {
+      anchors.centerIn: parent
+      text: stepButton.glyph
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    MouseArea {
+      id: stepMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: stepButton.enabled
+      cursorShape: Qt.PointingHandCursor
+      onEntered: stepButton.hovered()
+      onPressed: {
+        stepButton.stepped()
+        repeatDelay.restart()
+      }
+      onReleased: { repeatDelay.stop(); repeatRun.stop() }
+      onCanceled: { repeatDelay.stop(); repeatRun.stop() }
+    }
+
+    Timer {
+      id: repeatDelay
+      interval: 400
+      onTriggered: repeatRun.start()
+    }
+
+    Timer {
+      id: repeatRun
+      interval: 60
+      repeat: true
+      onTriggered: {
+        if (!stepButton.enabled) { stop(); return }
+        stepButton.stepped()
+      }
+    }
+  }
+
   component StageRow: CursorSurface {
     id: stageRow
     property int stage: 0
@@ -566,6 +644,16 @@ Panel {
     readonly property bool rowHasCursor: {
       var row = root.currentRow()
       return root.cursorActive && row && row.kind === "dpiStage" && row.stage === stageRow.stage
+    }
+
+    // One click, one step. The service holds the value for a moment and writes
+    // once, so holding down "+" costs one exchange rather than one per click.
+    function nudge(delta) {
+      if (!hsk.canWrite("dpiStage" + stageRow.stage)) return
+      var wanted = Model.clampDpi(stageRow.dpi + delta)
+      if (wanted === stageRow.dpi) return
+      hsk.setSoon("dpiStage" + stageRow.stage, wanted)
+      root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
     }
 
     hasCursor: rowHasCursor
@@ -598,7 +686,11 @@ Panel {
           anchors.fill: parent
           anchors.margins: -Style.space(4)
           hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
+          // Refuse the click rather than queue it. Selecting a stage twice in a
+          // row is not something anyone means to do, and letting it queue is
+          // what produced "I have to wait a moment before the next click".
+          enabled: !hsk.busy
+          cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
           onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
           onClicked: hsk.setDpiStage(stageRow.stage)
         }
@@ -614,39 +706,37 @@ Panel {
         Layout.preferredWidth: Style.space(10)
       }
 
-      PanelSlider {
-        id: dpiSlider
-        bar: root.bar
-        Layout.fillWidth: true
-        Layout.alignment: Qt.AlignVCenter
-        minimum: Model.DPI_MIN
-        maximum: Model.DPI_MAX
-        step: Model.DPI_STEP
-        integer: true
-        value: stageRow.dpi
-        // Commit on release, not on every pixel of travel -- each write is a
-        // USB round trip, and the firmware rewrites the whole DPI block.
-        onMoved: function(v) {
-          root.beginInteraction()
-          root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
-        }
-        onReleased: function(v) {
-          var wanted = Model.clampDpi(v)
-          if (wanted !== stageRow.dpi) hsk.set("dpiStage" + stageRow.stage, wanted)
-          interactionTimer.restart()
-        }
+      Item { Layout.fillWidth: true }
+
+      // A stepper rather than a slider. A slider asks you to land a drag on a
+      // 50-DPI boundary, and every intermediate position is a value you did not
+      // want -- so it either writes constantly or it writes on release and the
+      // number lies until you let go. Two buttons and a number cannot be
+      // misread, and a click is exactly one step.
+      StepButton {
+        glyph: ""
+        enabled: hsk.canWrite("dpiStage" + stageRow.stage)
+                 && stageRow.dpi > Model.DPI_MIN
+        onStepped: stageRow.nudge(-Model.DPI_STEP)
+        onHovered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
       }
 
       Text {
-        // While dragging show where the knob is, so the number tracks the thumb
-        // even though nothing has been written yet.
-        text: Math.round(dpiSlider.dragging ? dpiSlider.liveValue : stageRow.dpi)
-        color: stageRow.split ? root.urgent : root.dim
+        text: stageRow.dpi
+        color: stageRow.split ? root.urgent : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        horizontalAlignment: Text.AlignRight
-        Layout.preferredWidth: Style.space(34)
+        horizontalAlignment: Text.AlignHCenter
+        Layout.preferredWidth: Style.space(40)
         Layout.alignment: Qt.AlignVCenter
+      }
+
+      StepButton {
+        glyph: ""
+        enabled: hsk.canWrite("dpiStage" + stageRow.stage)
+                 && stageRow.dpi < Model.DPI_MAX
+        onStepped: stageRow.nudge(Model.DPI_STEP)
+        onHovered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
       }
 
       // Colour swatch. Clicking steps through the firmware's stage palette.
@@ -666,7 +756,8 @@ Panel {
           anchors.fill: parent
           anchors.margins: -Style.space(3)
           hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
+          enabled: !hsk.busy
+          cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
           onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
           onClicked: hsk.set(
             "dpiStage" + stageRow.stage + "Color",
@@ -691,7 +782,8 @@ Panel {
       // and the stage label -- but that is most of the row, and clicking any of
       // it should select the stage rather than only the small radio glyph.
       z: -1
-      cursorShape: Qt.PointingHandCursor
+      enabled: !hsk.busy
+      cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
       onContainsMouseChanged: if (containsMouse) root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
       onClicked: hsk.setDpiStage(stageRow.stage)
     }

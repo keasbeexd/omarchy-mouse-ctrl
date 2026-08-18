@@ -20,8 +20,9 @@ Item {
   property string actionStatus: ""
   property bool refreshing: false
   property bool detected: false
-  // Set while the user is dragging a control. A refresh landing mid-drag would
-  // overwrite the value under their thumb.
+  // Set by anything that must not be interrupted by a refresh. The coalescing
+  // window guards itself (see refresh), so this is now only for callers that
+  // want to hold a refresh off for longer.
   property bool suspended: false
   property var writable: []
   property var unverified: []
@@ -90,6 +91,9 @@ Item {
     // queueing behind ourselves.
     if (suspended) return
     if (statusProcess.running || setProcess.running || _queue.length > 0) return
+    // A refresh clears `pending`, so one landing between a click and its write
+    // would snap the number back to the old value and then forward again.
+    if (Object.keys(_soon).length > 0) return
     refreshing = true
     statusProcess.command = [hskctl, "--json", "status"]
     statusProcess.running = true
@@ -123,6 +127,42 @@ Item {
       return
     }
     _run(job)
+  }
+
+  // Repeated input on the same field -- clicking "+" ten times -- must not
+  // become ten USB round trips. Each write is a read-modify-write of the whole
+  // DPI block and takes the device lock, so ten of them queue up and the panel
+  // spends two seconds visibly catching up. Only the last value matters, so
+  // hold it briefly and write once.
+  //
+  // The optimistic value goes into `pending` immediately, so the number on
+  // screen tracks every click even though the wire stays quiet.
+  property var _soon: ({})
+  readonly property bool writeQueued: Object.keys(_soon).length > 0 || _queue.length > 0
+  readonly property bool working: busy || writeQueued
+
+  function setSoon(field, value) {
+    var overlay = {}
+    for (var key in pending) overlay[key] = pending[key]
+    overlay[field] = value
+    pending = overlay
+
+    var soon = {}
+    for (var queued in _soon) soon[queued] = _soon[queued]
+    soon[field] = value
+    _soon = soon
+    coalesceTimer.restart()
+  }
+
+  Timer {
+    id: coalesceTimer
+    interval: 240
+    repeat: false
+    onTriggered: {
+      var soon = root._soon
+      root._soon = ({})
+      for (var field in soon) root.set(field, soon[field])
+    }
   }
 
   function _run(job) {

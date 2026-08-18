@@ -160,6 +160,40 @@ Generalise it: any mechanism that writes to the device on its own has to be
 visible in `doctor`, or the next person debugging spends a day blaming the
 protocol.
 
+## A read-modify-write must not echo a header byte back blindly
+
+`rx[6]` of the DPI block is the stage count, and the firmware writes **that
+many** stages out of a write packet. This mouse reported 0 — almost certainly
+zeroed by the legacy-packet incident — so it wrote none, and read-modify-write
+dutifully copied the 0 back on every attempt. Self-perpetuating, and invisible:
+the packet was byte-perfect, the mouse ACKed it and echoed the new value in the
+reply, and the very next read had the old one.
+
+What made it hard was that `activeDpiStage` kept working throughout. It lives
+at `tx[5]`, one byte earlier, outside the array — so "some writes to this exact
+command work and others don't" looked like a mapping bug for days.
+
+Setting the count to 7 fixed values and colours in one go, on hardware. The
+general rule: **a header byte that controls how the firmware interprets the
+block is not data to echo.** If it can take a value that cannot be true, the
+profile says so in `repairOnWrite` and the write repairs it. Blindly restating
+what you read is only safe for payload.
+
+## Zero is an answer
+
+Twice now a heuristic has treated a legitimate 0 as "the mouse did not reply",
+and both times it cost days.
+
+`detect_link` required a non-zero payload before believing the `connection`
+reply. But `0` means *wired* — so a mouse on the cable could never be detected,
+every command died with "it is probably asleep", and `charging` therefore could
+never be read while plugged in, which is the one time it matters. What makes a
+reply real is the **echoed opcode**, not whether the payload happens to be
+non-zero.
+
+The all-zero retry in `_read` is the acceptable version of this: it retries
+once and then returns what it got, rather than refusing outright.
+
 ## Only one thing may talk to the mouse at a time
 
 A command is a send followed by a read of the device's single reply buffer, so
@@ -175,6 +209,32 @@ right-click happens with the panel closed, so nothing else was in flight.
 
 `Service.qml` also queues writes behind an in-flight read rather than firing
 them concurrently, so a click during a refresh is delayed rather than lost.
+
+## Input must never be lost, and never look lost
+
+Each write is a read-modify-write of a 51-byte block plus a verification read,
+so it takes a couple of hundred milliseconds. Two failure modes follow, and the
+panel has to handle both:
+
+**Never drop input.** Clicking "+" ten times must not become ten USB round
+trips, and must not throw nine of them away either. `Service.setSoon` lays the
+new value into `pending` immediately — so the number tracks every click — and
+holds the write for 240ms, so only the last value goes to the mouse. Holding
+the key or the button repeats freely and still costs one exchange.
+
+**Never look unresponsive.** The panel shows "Writing to the mouse…" whenever
+anything is in flight or queued. Before that, the delay read as a dead click,
+and the natural response — clicking again — was the thing that made it worse.
+
+One-shot actions (selecting a stage, cycling a colour) are refused while an
+exchange is in flight rather than queued: nobody means to select a stage twice,
+and queueing it is what produced "I have to wait a moment before I can click
+again".
+
+The DPI control is a stepper, not a slider. A slider asks you to land a drag on
+a 50-DPI boundary, and every position it passes through is a value you did not
+ask for — so it either writes constantly or it writes on release and the number
+lies until you let go.
 
 ## Timing
 
@@ -254,28 +314,12 @@ docs/         how the protocol was decoded and how to verify it
    different length byte, so it is not a clean comparison. Treat the mechanism
    as unconfirmed; do not "simplify" the linked write away.
 
-3. `charging` is `rx[5] > 0` — that much is decoded from `battery_update_ui`,
-   not inferred. It still reads 0 on the cable. If the offset is right and the
-   value is wrong, suspect the endpoint: with both the dongle and the cable
-   plugged in there are two answering nodes, and the dongle does not know the
-   mouse is charging. Check which path `doctor` selected before touching the
-   profile.
-4. **`rx[6]` of the DPI reply is the stage count, and it reads 0 on the
-   hardware — this is the current lead for DPI writes being ignored.** The
-   symptoms all line up: the write is ACKed, the reply echoes the new value
-   back, and the very next read has the old one. `activeDpiStage` (`tx[5]`)
-   still applies, but nothing in the stage array does, and colours are refused
-   the same way. If the firmware writes `tx[6]` stages out of the packet, a
-   count of zero means it writes none — which is exactly what we see.
-   Read-modify-write copies that 0 straight back every time, so it is
-   self-perpetuating. It very likely got zeroed by the legacy-packet incident.
-   `dpiStageCount` is writable now so the theory can be tested:
-   `hskctl probe-write dpiStageCount 7`, then retry a DPI write. If that is it,
-   the DPI write should stop trusting a nonsensical count rather than echoing
-   it.
-5. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
+3. `charging` is `rx[5] > 0`, decoded from `battery_update_ui`. Reading it on
+   the cable was blocked by the `detect_link` bug ("Zero is an answer"), so it
+   is untested rather than wrong — confirm it now reads 1 while plugged in.
+4. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
    tuple, write takes a row index into the driver's 6-row table. Model the
    table to re-enable writing.
-4. `tools/analyze-driver.py` never got run against the older 2023 build
+5. `tools/analyze-driver.py` never got run against the older 2023 build
    (`HSK_Pro_4K_FWSW20230322.rar`). Diffing the two would cross-check the
    command table. Does not need hardware, only the archive.

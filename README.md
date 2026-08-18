@@ -18,6 +18,7 @@ vendor's mouse.
 | Transport + command table | decoded from the vendor binary |
 | Battery, connection, firmware | confirmed on hardware |
 | DPI — 7 stages, X/Y linked, LED colours | read and write confirmed on hardware |
+| DPI stage count (`rx[6]`) | decoded; a 0 here silently voids every stage write |
 | Polling rate, 250–4000 Hz | measured on hardware, not inferred |
 | Motion sync, angle snap, lift-off | confirmed on hardware |
 | Debounce | read-only — read and write are asymmetric |
@@ -160,6 +161,16 @@ hskctl status     # read everything
 hskctl doctor     # raw bytes of every read command; writes nothing
 ```
 
+When a write reads back wrong, ask what moved in the whole block rather than
+what happened to one field:
+
+```bash
+hskctl probe-write dpiStage1 1600   # read, write, read -- and diff
+```
+
+That is what found the stage-count bug: the packet was correct, the mouse
+acknowledged it and echoed the new value, and nothing in the block had changed.
+
 `set` always reads the field back and tells you if the mouse disagrees with what
 you asked for, so a mapping error surfaces immediately rather than silently
 landing somewhere else.
@@ -184,8 +195,13 @@ Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
 Bar widget: **left click** opens the panel, **right click** cycles DPI stage,
 **middle click** refreshes.
 
-Each DPI stage is its own row: a selector for the active stage, a slider for
-the DPI, and a swatch that cycles the stage's LED colour.
+Each DPI stage is its own row: a selector for the active stage, `−`/`+` buttons
+that step the DPI by 50 (hold to repeat), and a swatch that cycles the stage's
+LED colour.
+
+Rapid input is coalesced — hold `+` and the panel writes once, when you stop —
+and the panel says "Writing to the mouse…" while an exchange is in flight, so a
+200ms round trip does not read as a dead click.
 
 In the panel: `↑`/`↓` moves between rows, `←`/`→` nudges the value under the
 cursor by one step, `Enter` selects the stage, `c` cycles its colour, `1`–`7`

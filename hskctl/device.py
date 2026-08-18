@@ -276,18 +276,26 @@ class Session:
         spec = self.profile.data["commands"]["connection"]
         offset = spec.get("responseOffset", 5)
         packet = self.profile.build_request("connection", write=False)
+        opcode = packet[3] if len(packet) > 3 else None
 
         # Getting this wrong poisons everything after it: with the wrong flag
         # the firmware acknowledges and then ignores every command, so reads
         # come back as zeros and writes vanish. A mouse waking from sleep can
         # miss the first packet, so probe a few times before settling.
-        for attempt in range(3):
+        #
+        # What makes a reply real is the echoed opcode, NOT a non-zero payload.
+        # Requiring a non-zero payload here was a bug with a long reach: 0 is
+        # precisely what a mouse on the cable reports, so a wired mouse could
+        # never be detected and every command failed with "it is probably
+        # asleep" -- which is why charging never read while it was plugged in.
+        for _ in range(3):
             try:
                 reply = self._exchange_checked("connection", packet)
             except (OSError, ProtocolError):
                 time.sleep(0.08)
                 continue
-            if offset < len(reply) and any(reply[offset:]):
+            answered = len(reply) > offset and (opcode is None or reply[3] == opcode)
+            if answered:
                 self.wireless = reply[offset] != 0
                 self._link_detected = True
                 return self.wireless
@@ -458,6 +466,36 @@ class Session:
             data = bytes(data).hex(" ")
         self.trace.append({"step": label, "data": data})
 
+    def _repair_header(self, packet: bytearray, spec: dict) -> None:
+        """Refuse to echo back a header byte the mouse cannot have meant.
+
+        Read-modify-write is the right shape for a block command, but it has a
+        failure mode: a header byte that controls how the firmware *interprets*
+        the block gets copied back verbatim, so once it is wrong it stays
+        wrong, and it takes every subsequent write down with it.
+
+        That is not hypothetical. This mouse reported a DPI stage count of 0.
+        The firmware writes that many stages out of the packet, so it wrote
+        none -- while the active-stage byte beside it, outside the array, kept
+        working. Every DPI value and every stage colour was silently discarded,
+        and each write faithfully restored the 0 that caused it. Setting the
+        count to 7 fixed both in one go, confirmed on hardware.
+
+        Which bytes are load-bearing, which values are impossible and what to
+        substitute are all in the profile -- see `repairOnWrite`.
+        """
+        for fix in spec.get("repairOnWrite") or []:
+            offset = fix.get("offset")
+            if offset is None or offset >= len(packet):
+                continue
+            if packet[offset] in fix.get("invalid", []):
+                self._trace(
+                    f"repaired byte {offset}: {packet[offset]} -> {fix['value']}"
+                    f" ({fix.get('why', 'impossible value')})",
+                    bytes([packet[offset], fix["value"]]),
+                )
+                packet[offset] = fix["value"]
+
     def set(self, name: str, value: Any) -> None:
         """Write one setting.
 
@@ -487,6 +525,7 @@ class Session:
             end = min(end, len(current), len(packet))
             packet[start:end] = current[start:end]
             self._trace("after copying the current block", packet)
+            self._repair_header(packet, spec)
             self.profile.encode_into(packet, name, value)
             # A linked field rides in the same packet. DPI has independent X and
             # Y axes, but the vendor app keeps them equal unless you explicitly

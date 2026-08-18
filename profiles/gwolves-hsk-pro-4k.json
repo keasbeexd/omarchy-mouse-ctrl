@@ -133,7 +133,18 @@
       ],
       "_verified": "writes confirmed on hardware 2026-08-18",
       "settleMs": 140,
-      "_settleComment": "51 bytes of payload, against one for the scalar commands. At the vendor's 60ms the reply is sometimes not ready, which arrives as an all-zero payload and looks exactly like a command the mouse ignored -- so selecting a stage from the panel failed intermittently while the smaller commands were fine."
+      "_settleComment": "51 bytes of payload, against one for the scalar commands. At the vendor's 60ms the reply is sometimes not ready, which arrives as an all-zero payload and looks exactly like a command the mouse ignored -- so selecting a stage from the panel failed intermittently while the smaller commands were fine.",
+      "repairOnWrite": [
+        {
+          "offset": 6,
+          "invalid": [
+            0
+          ],
+          "value": 7,
+          "why": "stage count of 0 makes the firmware write no stages at all"
+        }
+      ],
+      "_repairComment": "rx[6] is the DPI stage count, and the firmware writes that many stages out of the packet. Read-modify-write copies it back verbatim, so a mouse reporting 0 -- as this one did, almost certainly zeroed by the legacy-packet incident -- discards every DPI value and every stage colour, restores the 0, and does it again next time. The active-stage byte beside it keeps working because it sits outside the array, which is exactly how the bug hid. Confirmed on hardware 2026-08-18: setting the count to 7 made both value and colour writes land immediately."
     },
     "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
     "sleep": {
