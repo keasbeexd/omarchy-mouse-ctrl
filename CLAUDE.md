@@ -72,7 +72,11 @@ Rules:
    and their colours at once, so `set` reads the mouse's own block, changes one
    field, and echoes the rest back untouched. Never synthesise a DPI packet
    from an empty buffer — the undecoded colour bytes would be zeroed.
-4. Blind writes to a HID device can brick it. Prefer reading. If you need a new
+4. **A write that reads back correctly is not necessarily persisted.** DPI
+   read back fine and still reverted on power-cycle, because the value was in
+   RAM until a second, differently-formatted write committed it. When adding a
+   setting, test it across a power cycle, not just a readback.
+5. Blind writes to a HID device can brick it. Prefer reading. If you need a new
    command, get it from the vendor binary or a capture — not from a guess.
 
 ## Verification needs hardware you probably do not have
@@ -159,9 +163,11 @@ docs/         how the protocol was decoded and how to verify it
    4000 Hz. Non-monotonic, so the profile holds an explicit map of exactly what
    was measured. 4K needs no special mode -- the vendor slider emits `1<<pos`,
    and positions 5 and 6 are the high-rate codes. Raw 8 and 16 are untested.
-2. DPI writes are confirmed on hardware -- 800, 1200 and 400 each read back
-   correctly. Still open: whether a write survives unplugging the dongle. The
-   command table has no explicit save/commit packet, so it may be implicit.
+2. DPI persistence needed a **second write**. The vendor sends the block twice:
+   `hts_set_get_dpis_colors` (current layout, 7 bytes per stage) and then
+   `hts_set_get_dpis_colors_O` (legacy layout, 5 bytes per stage). Only the
+   second survives a power cycle. `commands.dpi.mirrorTo` restates the values
+   in the legacy layout after every DPI write. **Confirm on hardware.**
 3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
    Confirm it reads 1 on the cable.
 4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the

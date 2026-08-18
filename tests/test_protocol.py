@@ -401,6 +401,24 @@ class RealProfileTests(unittest.TestCase):
             self.profile.build_request("sleep", write=False, wireless=True)[4], 0x02
         )
 
+    def test_dpi_mirrors_into_the_legacy_layout(self):
+        """The vendor writes the DPI block twice, and only the second persists.
+
+        hts_dpi_trackBar_MouseCaptureChanged calls hts_set_get_dpis_colors and
+        then hts_set_get_dpis_colors_O. Writing only the first survives until
+        the mouse is switched off, then reverts.
+        """
+        mirror = self.profile.data["commands"]["dpi"]["mirrorTo"]
+        self.assertEqual(mirror["command"], "dpiLegacy")
+        # Current layout is 7 bytes per stage (X, Y, RGB); legacy is 5 (DPI, RGB).
+        self.assertEqual(mirror["sourceStride"], 7)
+        self.assertEqual(mirror["targetStride"], 5)
+        self.assertEqual(mirror["stages"], 7)
+        legacy = self.profile.data["commands"]["dpiLegacy"]
+        self.assertEqual(int(legacy["set"].split()[3], 16), 0x03)
+        self.assertEqual(int(legacy["set"].split()[2], 16), 0x2B)
+        self.assertEqual(int(legacy["get"].split()[3], 16), 0x83)
+
     def test_commands_that_carry_a_block_are_read_modify_write(self):
         """DPI holds seven stages plus colours; a synthesised packet would zero
         everything this profile has not decoded."""

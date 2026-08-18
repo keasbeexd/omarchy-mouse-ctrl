@@ -259,6 +259,42 @@ class Session:
         buf = self._read(command)
         return self.profile.decode(name, buf)
 
+    def _mirror_block(self, mirror: dict) -> None:
+        """Write the same settings again in the firmware's legacy layout.
+
+        The vendor app sends the DPI block twice -- once in the current format
+        and once in an older, more compact one -- and it is the second write
+        that survives a power cycle. Writing only the first lands in RAM and is
+        lost when the mouse is switched off.
+
+        The two layouts differ, so this restates the values rather than copying
+        bytes: source stages are 7 bytes (X u16be, Y u16be, RGB), mirror stages
+        are 5 (DPI u16be, RGB).
+        """
+        source_cmd = mirror["from"]
+        target_cmd = mirror["command"]
+        source = self._read(source_cmd)
+        target = bytearray(self._read(target_cmd))
+        if not source or not target:
+            raise ProtocolError(f"could not read {target_cmd!r} to mirror into")
+
+        packet = bytearray(
+            self.profile.build_request(target_cmd, write=True, wireless=self.wireless)
+        )
+        start, end = mirror.get("payloadRange", [5, 65])
+        packet[start:end] = target[start:end]
+
+        s_first, s_stride = mirror["sourceFirst"], mirror["sourceStride"]
+        t_first, t_stride = mirror["targetFirst"], mirror["targetStride"]
+        for n in range(mirror["stages"]):
+            so, to = s_first + n * s_stride, t_first + n * t_stride
+            if so + 7 > len(source) or to + 5 > len(packet):
+                break
+            packet[to : to + 2] = source[so : so + 2]      # X DPI -> DPI
+            packet[to + 2 : to + 5] = source[so + 4 : so + 7]  # RGB
+        self.profile.checksum(packet)
+        self._exchange_checked(target_cmd, bytes(packet))
+
     def set_raw(self, name: str, raw: int) -> None:
         """Write a raw wire value, bypassing the friendly-value table.
 
@@ -326,6 +362,10 @@ class Session:
                 command, write=True, value_bytes=payload, wireless=self.wireless
             )
             self._exchange_checked(command, packet)
+        mirror = spec.get("mirrorTo")
+        if mirror:
+            self._mirror_block(mirror)
+
         if self.profile.has_command("commit"):
             time.sleep(self.profile.transport.get("settleMs", 60) / 1000.0)
             self._exchange(
