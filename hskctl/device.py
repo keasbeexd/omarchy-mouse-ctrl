@@ -126,24 +126,37 @@ class Session:
         return f"byte 1 = {reply[1]:#04x}, expected 0xa1"
 
     def _exchange_checked(self, command: str, packet: bytes) -> bytes:
-        """Send a request, and retry once on the other link flag.
+        """Send a request, retrying on the other link flag if it goes unheard.
 
         Byte 4 tells the firmware whether it is being addressed over the cable
-        or the dongle, and it stays silent when that is wrong. Rather than make
-        the user declare which link they are on, we try the current guess and
-        flip it once -- then remember which one worked.
+        or the dongle. A command that carries no link flag -- `connection`,
+        `sleep` -- must be left alone: flipping byte 4 on those corrupts the
+        packet, and for `sleep` that byte is part of the sub-command.
         """
         reply = self._exchange(packet)
         if self.profile.check_ack(reply):
             return reply
-        if self.profile.transport.get("wirelessFlagOffset") is None:
+
+        flag = self.profile.transport.get("wirelessFlagOffset")
+        carries_flag = (self.profile.data["commands"].get(command) or {}).get(
+            "linkFlag", True
+        )
+        if flag is None or not carries_flag:
+            # Nothing to flip. A silent mouse here is usually one that is
+            # asleep, and the packet we just sent is what wakes it, so try the
+            # identical packet again before giving up.
+            time.sleep(self.profile.transport.get("settleMs", 60) / 1000.0)
+            reply = self._exchange(packet)
+            if self.profile.check_ack(reply):
+                return reply
             raise ProtocolError(
-                f"the mouse did not acknowledge {command!r} ({self._describe_reply(reply)})"
+                f"the mouse did not acknowledge {command!r} "
+                f"({self._describe_reply(reply)})"
             )
+
         self.wireless = not self.wireless
         # Reuse the original packet and flip only the link flag, so a write
         # keeps its payload.
-        flag = self.profile.transport["wirelessFlagOffset"]
         flipped = bytearray(packet)
         flipped[flag] = 1 if self.wireless else 0
         self.profile.checksum(flipped)
@@ -171,27 +184,48 @@ class Session:
         """
         if self._link_detected:
             return self.wireless
-        self._link_detected = True
         if not self.profile.has_command("connection"):
+            self._link_detected = True
             return self.wireless
-        try:
-            reply = self._exchange_checked(
-                "connection",
-                self.profile.build_request("connection", write=False),
-            )
-        except (OSError, ProtocolError):
-            return self.wireless
+
         spec = self.profile.data["commands"]["connection"]
         offset = spec.get("responseOffset", 5)
-        if offset < len(reply):
-            # Non-zero means a wireless link; the cable reports 0.
-            self.wireless = reply[offset] != 0
-        return self.wireless
+        packet = self.profile.build_request("connection", write=False)
+
+        # Getting this wrong poisons everything after it: with the wrong flag
+        # the firmware acknowledges and then ignores every command, so reads
+        # come back as zeros and writes vanish. A mouse waking from sleep can
+        # miss the first packet, so probe a few times before settling.
+        for attempt in range(3):
+            try:
+                reply = self._exchange_checked("connection", packet)
+            except (OSError, ProtocolError):
+                time.sleep(0.08)
+                continue
+            if offset < len(reply) and any(reply[offset:]):
+                self.wireless = reply[offset] != 0
+                self._link_detected = True
+                return self.wireless
+            time.sleep(0.08)
+
+        raise ProtocolError(
+            "could not work out whether the mouse is on the cable or the dongle. "
+            "It is probably asleep -- move it and try again. (Guessing here would "
+            "make every later read return zeros.)"
+        )
 
     def _read(self, command: str) -> bytes:
         self.detect_link()
         packet = self.profile.build_request(command, write=False, wireless=self.wireless)
-        return self._exchange_checked(command, packet)
+        reply = self._exchange_checked(command, packet)
+        # A mouse that just woke answers the first packet with an empty payload.
+        # Reads are idempotent, so one more costs 60ms and never hurts.
+        if reply and not any(reply[5:]):
+            time.sleep(self.profile.transport.get("settleMs", 60) / 1000.0)
+            retry = self._exchange_checked(command, packet)
+            if retry and any(retry[5:]):
+                return retry
+        return reply
 
     def trial_read(self, command: str, wireless: bool) -> dict:
         """One read attempt, reporting exactly what went over the wire.

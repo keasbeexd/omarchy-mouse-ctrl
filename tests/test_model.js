@@ -17,6 +17,7 @@ const Model = {};
 new Function("exports", src + "\n;Object.assign(exports, {" +
   "POLLING_RATES, parseStatus, has, batteryGlyph, connectionGlyph, connectionLabel," +
   "summaryLine, barLabel, dpiStages, pollingOptions, isLow, buildRows, canWrite," +
+  "DPI_MIN, DPI_MAX, DPI_STEP, clampDpi, nextStageColor, STAGE_COLORS," +
   "toggleLabel, toggleDescription});")(Model);
 
 let passed = 0;
@@ -114,17 +115,19 @@ test("skips a dpi stage whose value is not mapped", () => {
 });
 
 console.log("dpiStages");
-test("returns only mapped stages within the configured count", () => {
+test("returns every stage that reported a value", () => {
+  // There is no trustworthy stage-count byte -- rx[6] reads 1 on a mouse with
+  // seven configured stages -- so show what the firmware actually returned
+  // rather than hiding real stages behind a guess.
   const stages = Model.dpiStages({
-    dpiStageCount: 3,
     dpiStage1: 800,
     dpiStage2: 1600,
     dpiStage3: 3200,
     dpiStage4: 6400,
     activeDpiStage: 2,
   });
-  assert.strictEqual(stages.length, 3);
-  assert.deepStrictEqual(stages.map((s) => s.dpi), [800, 1600, 3200]);
+  assert.strictEqual(stages.length, 4);
+  assert.deepStrictEqual(stages.map((s) => s.dpi), [800, 1600, 3200, 6400]);
   assert.strictEqual(stages[1].active, true);
   assert.strictEqual(stages[0].active, false);
 });
@@ -133,9 +136,9 @@ test("no mapped stages yields an empty list", () => {
   assert.deepStrictEqual(Model.dpiStages({}), []);
 });
 
-test("tolerates a missing stage count", () => {
-  const stages = Model.dpiStages({ dpiStage1: 400, dpiStage2: 800 });
-  assert.strictEqual(stages.length, 2);
+test("a stage with no value is skipped, not shown as blank", () => {
+  const stages = Model.dpiStages({ dpiStage1: 400, dpiStage3: 800 });
+  assert.deepStrictEqual(stages.map((s) => s.stage), [1, 3]);
 });
 
 console.log("isLow");
@@ -174,15 +177,60 @@ test("missing writable list means nothing is interactive", () => {
   assert.deepStrictEqual(Model.buildRows("ready", { pollingRate: 1000 }), []);
 });
 
+test("every DPI stage gets a row, with colour and selectability", () => {
+  const s = { activeDpiStage: 2 };
+  for (let i = 1; i <= 7; i++) {
+    s["dpiStage" + i] = i * 400;
+    s["dpiStage" + i + "Color"] = "#aa0000";
+  }
+  const writable = ["activeDpiStage"].concat(
+    [1, 2, 3, 4, 5, 6, 7].map((i) => "dpiStage" + i)
+  );
+  const rows = Model.buildRows("ready", s, writable);
+  assert.strictEqual(rows.length, 7);
+  assert.ok(rows.every((r) => r.kind === "dpiStage"));
+  assert.ok(rows.every((r) => r.selectable === true));
+  assert.strictEqual(rows[0].color, "#aa0000");
+});
+
+test("stage rows appear even when the active-stage selector is not writable", () => {
+  // The slider and colour are useful on their own.
+  const s = { dpiStage1: 400, dpiStage1Color: "#aa0000" };
+  const rows = Model.buildRows("ready", s, ["dpiStage1"]);
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].selectable, false);
+});
+
+test("clampDpi snaps to the sensor's 50 DPI steps and range", () => {
+  assert.strictEqual(Model.clampDpi(1637), 1650);
+  assert.strictEqual(Model.clampDpi(-5), 50);
+  assert.strictEqual(Model.clampDpi(99999), 26000);
+});
+
+test("colour cycling wraps and tolerates an unknown colour", () => {
+  assert.strictEqual(Model.nextStageColor("#aa0000"), "#ffa500");
+  assert.strictEqual(
+    Model.nextStageColor(Model.STAGE_COLORS[Model.STAGE_COLORS.length - 1]),
+    Model.STAGE_COLORS[0]
+  );
+  assert.strictEqual(Model.nextStageColor("nonsense"), Model.STAGE_COLORS[0]);
+});
+
+test("a stage whose axes disagree is flagged", () => {
+  const s = { dpiStage1: 400, dpiStage1Y: 800 };
+  assert.strictEqual(Model.dpiStages(s)[0].split, true);
+  const t = { dpiStage1: 400, dpiStage1Y: 400 };
+  assert.strictEqual(Model.dpiStages(t)[0].split, false);
+});
+
 test("builds one row per writable control", () => {
   const rows = Model.buildRows("ready", {
-    dpiStageCount: 2,
     dpiStage1: 800,
     dpiStage2: 1600,
     activeDpiStage: 1,
     pollingRate: 1000,
     motionSync: true,
-  }, ["activeDpiStage", "pollingRate", "motionSync"]);
+  }, ["activeDpiStage", "dpiStage1", "dpiStage2", "pollingRate", "motionSync"]);
   assert.deepStrictEqual(rows.map((r) => r.kind), [
     "dpiStage",
     "dpiStage",
@@ -247,7 +295,6 @@ test("parseStatus defaults writable to empty when absent", () => {
 test("dpiStages handles all seven stages", () => {
   const s = {};
   for (let i = 1; i <= 7; i++) s["dpiStage" + i] = i * 400;
-  s.dpiStageCount = 7;
   assert.strictEqual(Model.dpiStages(s).length, 7);
 });
 

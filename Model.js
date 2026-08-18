@@ -108,20 +108,43 @@ function barLabel(settings, showBattery) {
 // whatever stages reported a value, so a partial mapping still renders.
 function dpiStages(settings) {
   var stages = []
-  // With no stage count reported, show every stage that has a value rather
-  // than guessing a number and hiding real ones.
-  var count = has(settings, "dpiStageCount") ? settings.dpiStageCount : 7
   for (var i = 1; i <= 7; i++) {
     var key = "dpiStage" + i
     if (!has(settings, key)) continue
-    if (i > count) continue
     stages.push({
       stage: i,
       dpi: settings[key],
-      active: has(settings, "activeDpiStage") && settings.activeDpiStage === i
+      y: has(settings, key + "Y") ? settings[key + "Y"] : settings[key],
+      color: has(settings, key + "Color") ? settings[key + "Color"] : "",
+      active: has(settings, "activeDpiStage") && settings.activeDpiStage === i,
+      // The axes should track together; surface it when they do not so a
+      // split stage is visible rather than silently odd.
+      split: has(settings, key + "Y") && settings[key + "Y"] !== settings[key]
     })
   }
   return stages
+}
+
+// The sensor steps in 50 DPI increments.
+var DPI_MIN = 50
+var DPI_MAX = 26000
+var DPI_STEP = 50
+
+function clampDpi(value) {
+  var v = Math.round(value / DPI_STEP) * DPI_STEP
+  return Math.max(DPI_MIN, Math.min(DPI_MAX, v))
+}
+
+// Stage colours the firmware ships with, offered as a cycle so a colour can be
+// changed from the panel without a full picker.
+var STAGE_COLORS = [
+  "#aa0000", "#ffa500", "#ffff00", "#00ff00",
+  "#00ffff", "#0000ff", "#800080", "#ffffff"
+]
+
+function nextStageColor(current) {
+  var i = STAGE_COLORS.indexOf(String(current || "").toLowerCase())
+  return STAGE_COLORS[(i + 1) % STAGE_COLORS.length]
 }
 
 function pollingOptions(current) {
@@ -157,11 +180,18 @@ function buildRows(state, settings, writable) {
   // Only writable settings become cursor stops. A DPI stage the profile can
   // read but not yet write is still shown -- it just is not selectable, so
   // the panel never offers an action that would come back as an error.
-  if (canWrite(writable, "activeDpiStage")) {
-    var stages = dpiStages(settings)
-    for (var i = 0; i < stages.length; i++) {
-      rows.push({ kind: "dpiStage", stage: stages[i].stage, dpi: stages[i].dpi })
-    }
+  // One row per stage, whether or not the active-stage selector is writable --
+  // the slider and colour are useful on their own.
+  var stages = dpiStages(settings)
+  for (var i = 0; i < stages.length; i++) {
+    if (!canWrite(writable, "dpiStage" + stages[i].stage)) continue
+    rows.push({
+      kind: "dpiStage",
+      stage: stages[i].stage,
+      dpi: stages[i].dpi,
+      color: stages[i].color,
+      selectable: canWrite(writable, "activeDpiStage")
+    })
   }
   if (canWrite(writable, "pollingRate")) rows.push({ kind: "pollingRate" })
   if (canWrite(writable, "liftOffDistance")) rows.push({ kind: "liftOffDistance" })

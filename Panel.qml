@@ -72,7 +72,12 @@ Panel {
   function adjustCurrent(direction) {
     var row = currentRow()
     if (!row) return
-    if (row.kind === "pollingRate") {
+    if (row.kind === "dpiStage") {
+      // One step per press, matching the sensor's 50 DPI granularity; hold
+      // shift-free repeat and it walks smoothly.
+      var wanted = Model.clampDpi(row.dpi + direction * Model.DPI_STEP)
+      if (wanted !== row.dpi) mouse.set("dpiStage" + row.stage, wanted)
+    } else if (row.kind === "pollingRate") {
       var options = Model.POLLING_RATES
       var current = mouse.value("pollingRate")
       var index = options.indexOf(current)
@@ -89,9 +94,21 @@ Panel {
   function activateCursor() {
     var row = currentRow()
     if (!row) return
-    if (row.kind === "dpiStage") mouse.setDpiStage(row.stage)
-    else if (row.kind === "toggle") mouse.toggle(row.field)
-    else adjustCurrent(1)
+    if (row.kind === "dpiStage") {
+      if (row.selectable) mouse.setDpiStage(row.stage)
+    } else if (row.kind === "toggle") {
+      mouse.toggle(row.field)
+    } else {
+      adjustCurrent(1)
+    }
+  }
+
+  // `c` cycles the colour of the stage under the cursor.
+  function cycleCurrentColor() {
+    var row = currentRow()
+    if (!row || row.kind !== "dpiStage") return
+    if (!mouse.canWrite("dpiStage" + row.stage + "Color")) return
+    mouse.set("dpiStage" + row.stage + "Color", Model.nextStageColor(row.color))
   }
 
   function scrollItemIntoView(item) {
@@ -112,10 +129,16 @@ Panel {
 
   function scrollCursorIntoView() {
     var row = currentRow()
-    if (!row) return
-    if (row.kind === "dpiStage" && stageColumn && row.stage - 1 < stageColumn.children.length) {
-      scrollItemIntoView(stageColumn.children[row.stage - 1])
+    if (!row || row.kind !== "dpiStage" || !stageColumn) return
+    // Index by position among the stage rows, not by stage number -- a profile
+    // that omits a stage would otherwise scroll to the wrong row.
+    var seen = 0
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].kind !== "dpiStage") continue
+      if (rows[i].stage === row.stage) break
+      seen++
     }
+    if (seen < stageColumn.children.length) scrollItemIntoView(stageColumn.children[seen])
   }
 
   function setCursor(index) {
@@ -220,7 +243,8 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        if (t === "r" || t === "R") mouse.refresh()
+        if (t === "c" || t === "C") root.cycleCurrentColor()
+        else if (t === "r" || t === "R") mouse.refresh()
         else if (t === "d" || t === "D") mouse.cycleDpiStage()
         else if (t === "m" || t === "M") mouse.toggle("motionSync")
         else if (t >= "1" && t <= "6") mouse.setDpiStage(parseInt(t, 10))
@@ -359,7 +383,7 @@ Panel {
             Column {
               id: stageColumn
               width: parent.width
-              spacing: Style.space(6)
+              spacing: Style.space(4)
 
               Repeater {
                 model: root.dpiStages
@@ -368,7 +392,9 @@ Panel {
                   width: stageColumn.width
                   stage: modelData.stage
                   dpi: modelData.dpi
+                  swatch: modelData.color
                   isActive: modelData.active
+                  split: modelData.split
                 }
               }
             }
@@ -507,7 +533,9 @@ Panel {
     id: stageRow
     property int stage: 0
     property int dpi: 0
+    property string swatch: ""
     property bool isActive: false
+    property bool split: false
 
     readonly property bool rowHasCursor: {
       var row = root.currentRow()
@@ -519,9 +547,9 @@ Panel {
     foreground: root.foreground
     fill: root.hoverFill
     currentFill: root.selectedFill
-    implicitHeight: stageInner.implicitHeight + Style.spacing.xl
+    implicitHeight: stageInner.implicitHeight + Style.spacing.lg
 
-    Row {
+    RowLayout {
       id: stageInner
       anchors.left: parent.left
       anchors.right: parent.right
@@ -530,49 +558,113 @@ Panel {
       anchors.rightMargin: Style.space(6)
       spacing: Style.space(8)
 
+      // Selector. Filled when this is the stage the mouse is currently using.
       Text {
-        text: stageRow.isActive ? "󰄲" : "󰄱"
+        text: stageRow.isActive ? "\uf111" : "\uf10c"
         color: stageRow.isActive ? root.foreground : root.dim
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        width: Style.space(22)
+        font.pixelSize: Style.font.caption
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredWidth: Style.space(14)
         horizontalAlignment: Text.AlignHCenter
-        anchors.verticalCenter: parent.verticalCenter
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -Style.space(4)
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
+          onClicked: mouse.setDpiStage(stageRow.stage)
+        }
       }
 
       Text {
-        text: "Stage " + stageRow.stage
+        text: stageRow.stage
         color: root.foreground
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
+        font.pixelSize: Style.font.caption
         font.bold: stageRow.isActive
-        anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - Style.space(22) - Style.space(8) - dpiText.width - Style.space(8)
-        elide: Text.ElideRight
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredWidth: Style.space(10)
+      }
+
+      PanelSlider {
+        id: dpiSlider
+        bar: root.bar
+        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignVCenter
+        minimum: Model.DPI_MIN
+        maximum: Model.DPI_MAX
+        step: Model.DPI_STEP
+        integer: true
+        value: stageRow.dpi
+        // Commit on release, not on every pixel of travel -- each write is a
+        // USB round trip, and the firmware rewrites the whole DPI block.
+        onMoved: function(v) { root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage)) }
+        onReleased: function(v) {
+          var wanted = Model.clampDpi(v)
+          if (wanted !== stageRow.dpi) mouse.set("dpiStage" + stageRow.stage, wanted)
+        }
       }
 
       Text {
-        id: dpiText
-        text: stageRow.dpi + " DPI"
-        color: root.dim
+        // While dragging show where the knob is, so the number tracks the thumb
+        // even though nothing has been written yet.
+        text: Math.round(dpiSlider.dragging ? dpiSlider.liveValue : stageRow.dpi)
+        color: stageRow.split ? root.urgent : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        anchors.verticalCenter: parent.verticalCenter
+        horizontalAlignment: Text.AlignRight
+        Layout.preferredWidth: Style.space(34)
+        Layout.alignment: Qt.AlignVCenter
+      }
+
+      // Colour swatch. Clicking steps through the firmware's stage palette.
+      Rectangle {
+        id: swatchBox
+        visible: stageRow.swatch !== "" && mouse.canWrite("dpiStage" + stageRow.stage + "Color")
+        Layout.preferredWidth: Style.space(14)
+        Layout.preferredHeight: Style.space(14)
+        Layout.alignment: Qt.AlignVCenter
+        radius: Style.cornerRadius > 0 ? Style.space(3) : 0
+        color: stageRow.swatch
+        border.width: 1
+        border.color: swatchMouse.containsMouse ? root.foreground : root.dim
+
+        MouseArea {
+          id: swatchMouse
+          anchors.fill: parent
+          anchors.margins: -Style.space(3)
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
+          onClicked: mouse.set(
+            "dpiStage" + stageRow.stage + "Color",
+            Model.nextStageColor(stageRow.swatch)
+          )
+        }
+
+        PanelToolTip {
+          visible: swatchMouse.containsMouse
+          text: "Cycle stage colour"
+          fontFamily: root.fontFamily
+        }
       }
     }
 
     MouseArea {
       id: stageMouse
       anchors.fill: parent
+      acceptedButtons: Qt.LeftButton
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onEntered: root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
-      onClicked: mouse.setDpiStage(stageRow.stage)
+      // Sits behind the slider and swatch, so it only catches the row's margins.
+      z: -1
+      onContainsMouseChanged: if (containsMouse) root.setCursor(root.rowIndexOf("dpiStage", stageRow.stage))
     }
 
     PanelToolTip {
-      visible: stageMouse.containsMouse && !stageRow.isActive
-      text: "Switch to stage " + stageRow.stage
+      visible: stageRow.split && stageMouse.containsMouse
+      text: "X and Y axes differ on this stage"
       fontFamily: root.fontFamily
     }
   }

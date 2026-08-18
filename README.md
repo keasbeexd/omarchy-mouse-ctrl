@@ -169,8 +169,12 @@ Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
 Bar widget: **left click** opens the panel, **right click** cycles DPI stage,
 **middle click** refreshes.
 
-In the panel: `↑`/`↓` moves, `←`/`→` changes the value under the cursor, `1`–`7`
-jumps to a DPI stage, `d` cycles DPI, `m` toggles Motion Sync, `r` refreshes.
+Each DPI stage is its own row: a selector for the active stage, a slider for
+the DPI, and a swatch that cycles the stage's LED colour.
+
+In the panel: `↑`/`↓` moves between rows, `←`/`→` nudges the value under the
+cursor by one step, `Enter` selects the stage, `c` cycles its colour, `1`–`7`
+jumps to a stage, `d` cycles DPI, `m` toggles Motion Sync, `r` refreshes.
 
 The panel only renders controls for settings the profile can actually write, so
 it never offers an action that comes back as an error.

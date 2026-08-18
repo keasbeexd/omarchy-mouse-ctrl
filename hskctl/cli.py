@@ -225,11 +225,17 @@ def cmd_set(args) -> int:
         "field": args.field,
         "requested": value,
         "value": readback,
+        "link": "dongle" if session.wireless else "wired",
     }
     if not ok:
+        # "reads back 0" on its own sends people hunting for a mapping bug. The
+        # usual cause is a mouse that was asleep when the packet landed, which
+        # looks identical unless the message says so.
         payload["error"] = (
-            f"wrote {value!r} but the mouse reads back {readback!r} -- "
-            f"the field mapping in the profile is probably wrong"
+            f"wrote {value!r} to {args.field} but the mouse reads back "
+            f"{readback!r} (link: {payload['link']}). If that is 0 or blank the "
+            f"mouse was probably asleep -- move it and try again. If it is a "
+            f"different real value, the mapping in the profile is wrong."
         )
     return _emit(payload, args.json, lambda p: print(f"{p['field']} = {p['value']}"))
 
