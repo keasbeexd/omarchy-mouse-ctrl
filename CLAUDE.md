@@ -183,8 +183,11 @@ docs/         how the protocol was decoded and how to verify it
    app caching UI state, NOT the persistence mechanism; do not conclude from
    them that the mouse has no flash. Prime suspects: `tx[5]` and `tx[6]`,
    which the vendor fills from its own struct (`arg1[1]`, `arg1[0]`) while
-   read-modify-write copies them back from the reply, where they may not mean
-   the same thing.
+   read-modify-write copies them back from the reply. **Ruled out:** the read
+   path stores arg1[1]=rx[5] and arg1[0]=rx[6], the write path sends
+   tx[5]=arg1[1] and tx[6]=arg1[0] -- perfectly symmetric, so copying them
+   back from the reply is exactly what the vendor does. Two theories have now
+   been wrong; get evidence before proposing a third.
 3. `charging` reads byte 5 of the battery reply; observed 0 while discharging.
    Confirm it reads 1 on the cable.
 4. `rx[6]` of the DPI reply is an unidentified flag (observed 1). Probably the
