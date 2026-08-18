@@ -65,9 +65,9 @@ install_udev() {
 }
 
 install_autoapply() {
-  # The mouse has no save-to-flash command. The vendor's Windows app works
-  # around this by storing settings in files and pushing them back when the
-  # mouse reconnects; this is the same idea as a systemd user unit.
+  # A safety net while hskctl writes do not survive a power cycle. The mouse
+  # itself persists settings written by the vendor app, so this should become
+  # unnecessary once the difference between the two packets is found.
   local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   info "Installing the re-apply service to $unit_dir"
   mkdir -p "$unit_dir"

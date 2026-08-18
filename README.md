@@ -22,7 +22,7 @@ vendor's mouse.
 | Motion sync, angle snap, lift-off | confirmed on hardware |
 | Debounce | read-only — read and write are asymmetric |
 | Sleep timer | readable; unit not established |
-| Persistence across power-cycle | the mouse has no flash — see below |
+| Persistence of hskctl writes | **open** — see below |
 
 `hskctl fields` marks anything still unverified, and `hskctl doctor` dumps the
 raw bytes of every read command when something looks wrong.
@@ -98,14 +98,15 @@ inferred from the binary:
 Note it is not one formula. Raw 1..6 divide a 1000 Hz base; 32 and 64 are
 high-rate codes. `hskctl calibrate-polling` reproduces this in about 20 seconds.
 
-## Settings do not survive a power cycle
+## Settings written by hskctl do not survive a power cycle — yet
 
-The mouse has no save-to-flash command, and the vendor's Windows software does
-not rely on one: `in_Queue_Close` / `in_Queue_Open` read and write *local
-files*, and the app pushes settings back when the mouse reconnects. That is
-what its tray icon and process watcher are for.
+The mouse itself persists fine: its settings follow it between machines. So a
+write from the vendor app reaches flash and a write from `hskctl` does not, and
+something differs between the two packets. Under investigation — the suspects
+are bytes 5 and 6, which the vendor fills from its own state rather than from a
+read-back.
 
-This does the same thing with systemd instead:
+Until that is settled, there is a safety net:
 
 ```bash
 hskctl save                 # record the current settings as your baseline
