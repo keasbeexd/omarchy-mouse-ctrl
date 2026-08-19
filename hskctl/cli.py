@@ -618,7 +618,10 @@ def cmd_watch_battery(args) -> int:
 
     if not args.json:
         print(f"Sampling every {args.interval}s. Ctrl-C to stop.\n")
-        print(f"  {'time':<10} {'raw':>4} {'vendor':>7}  charging")
+        header = f"  {'time':<10} {'raw':>4} {'vendor':>7}  charging"
+        if args.raw:
+            header += "  reply bytes"
+        print(header)
 
     try:
         while True:
@@ -626,10 +629,17 @@ def cmd_watch_battery(args) -> int:
             entry: dict = {"time": stamp}
             try:
                 session = open_session(profile, args.device)
-                raw = session.get_raw("batteryPercent")
-                charging = session.get("charging")
-                entry.update({"raw": raw, "charging": bool(charging),
-                              "vendor": _vendor_battery(raw, bool(charging))})
+                # The whole reply, not just the byte we decode. "Are we even
+                # watching the right byte?" is a fair question and this answers
+                # it with data: the battery reply declares two payload bytes,
+                # so if the percentage is stuck while something else moves,
+                # that shows up here rather than in an argument.
+                reply = session._read("battery")
+                raw = reply[6] if len(reply) > 6 else 0
+                charging = bool(reply[5]) if len(reply) > 5 else False
+                entry.update({"raw": raw, "charging": charging,
+                              "vendor": _vendor_battery(raw, charging),
+                              "reply": bytes(reply[:10]).hex(" ")})
             except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
                 entry["error"] = str(exc)
             samples.append(entry)
@@ -638,8 +648,11 @@ def cmd_watch_battery(args) -> int:
                 if "error" in entry:
                     print(f"  {stamp:<10} {'--':>4} {'--':>7}  {entry['error']}")
                 else:
-                    print(f"  {stamp:<10} {entry['raw']:>4} {entry['vendor']:>6}% "
-                          f"  {'yes' if entry['charging'] else 'no'}")
+                    line = (f"  {stamp:<10} {entry['raw']:>4} {entry['vendor']:>6}% "
+                            f"  {'yes' if entry['charging'] else 'no':<4}")
+                    if args.raw:
+                        line += f"  {entry['reply']}"
+                    print(line)
 
             if deadline is not None and _time.monotonic() >= deadline:
                 break
@@ -655,12 +668,32 @@ def cmd_watch_battery(args) -> int:
         return 0
 
     readings = [s["raw"] for s in samples if "raw" in s]
-    if len(readings) >= 2:
-        print(f"\n  {len(readings)} readings, {min(readings)}..{max(readings)}, "
-              f"{len(set(readings))} distinct")
-        if len(set(readings)) == 1:
-            print("  It never moved. Either the window was too short, or the byte "
-                  "is not tracking the battery.")
+    if len(readings) < 2:
+        return 0
+
+    print(f"\n  {len(readings)} readings, {min(readings)}..{max(readings)}, "
+          f"{len(set(readings))} distinct")
+
+    # Which byte of the reply actually moved. If the percentage is pinned but
+    # another byte is varying, we are decoding the wrong offset -- and that is
+    # worth knowing without having to take anyone's word for it.
+    replies = [bytes.fromhex(s["reply"]) for s in samples if "reply" in s]
+    if len(replies) >= 2:
+        width = min(len(r) for r in replies)
+        moved = [i for i in range(width) if len({r[i] for r in replies}) > 1]
+        if moved:
+            print("  bytes that varied: " + ", ".join(
+                f"rx[{i}] {min(r[i] for r in replies)}..{max(r[i] for r in replies)}"
+                for i in moved))
+        else:
+            print("  no byte of the reply changed at all")
+
+    if len(set(readings)) == 1:
+        print()
+        print("  The percentage held steady for this whole run. That is normal")
+        print("  near a full charge -- lithium cells sit at the top of their")
+        print("  range for a long time -- so a short window proves little. If")
+        print("  it is still pinned after a few hours off the cable, come back.")
     return 0
 
 
@@ -1100,6 +1133,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="seconds between samples (default 60)")
     watch.add_argument("--duration", type=float, default=0.0,
                        help="stop after this many seconds (default: until Ctrl-C)")
+    watch.add_argument("--raw", action="store_true",
+                       help="show the raw bytes of each battery reply")
     watch.set_defaults(func=cmd_watch_battery)
 
     measure = sub.add_parser(
