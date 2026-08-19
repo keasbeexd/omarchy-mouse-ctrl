@@ -361,7 +361,7 @@ bin/hskctl                                     launcher for the bundled CLI
 hskctl/       hidraw.py protocol.py device.py cli.py
 profiles/     the decoded protocol, as data
 install.sh    udev rule, self-contained -- no external files
-tools/        analyze-driver.py, make-preview.py
+tools/        analyze-driver.py
 tests/        protocol, view-model and packaging tests
 docs/         how the protocol was decoded and how to verify it
 ```

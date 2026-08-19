@@ -199,7 +199,7 @@ install.sh                                        udev rule, self-contained
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
 profiles/        the decoded protocol -- data, not code
-tools/           vendor-driver analysis, preview rendering
+tools/           vendor-driver analysis
 tests/           protocol, view-model and packaging tests
 docs/            how the protocol was decoded, and how to verify it
 ```

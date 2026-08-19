@@ -9,20 +9,16 @@ the current commit, and a maintainer applies `approved-for-listing`. Listing is
 
 ## Before submitting
 
-**1. Replace `preview.png` with a real screenshot.**
-
-The one in the repository is a *mockup*, drawn by `tools/make-preview.py` from
-`Panel.qml`'s layout so the repo was complete before anyone could screenshot it.
-It is accurate, but it is a drawing, and the listing deserves the real thing —
-your bar, your theme, your DPI stages.
+**1. `preview.png` is a real screenshot** of the panel, not a rendering. It was
+a drawn mockup for a while; if you ever need to retake it:
 
 ```bash
-hyprshot -m region -o . -f preview.png     # or grim/slurp, or your usual tool
+hyprshot -m region -o . -f preview.png     # or grim/slurp
 ```
 
-Frame it like the mockup: enough of the bar to show the widget in context, the
-panel open beside it, 1280×800 or wider. Then delete `tools/make-preview.py` if
-you would rather not carry it.
+Frame enough of the bar to show the widget in context, and the whole panel
+including the sensor toggles at the bottom. Wider is better — listing cards are
+landscape, so a tall narrow crop gets letterboxed.
 
 **2. Check that the remote matches what you tested.** This is what got the
 first submission rejected: the pushed tree had a truncated `install.sh` and was
