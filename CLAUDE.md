@@ -141,24 +141,40 @@ snapping were fine, while every MouseArea click was dead. Anything that looks
 like "this control does nothing but that one works" is worth checking for a
 shadowed id before suspecting the device. The service is now `id: hsk`.
 
+## The repository is the product, so test the repository
+
+This plugin was rejected from omarchyplugins.com for a defect no unit test
+could have seen:
+
+> the documented `install.sh --udev` path is a no-op because `install.sh` has
+> no argument dispatcher and the referenced udev rule is absent, while all
+> device exchanges require read-write hidraw access
+
+Both halves were true of the *pushed* tree and false of every file under test.
+A plugin is distributed by cloning a repository, so the repository — not the
+importable code — is what ships. `tests/test_packaging.py` now asserts against
+the tree on disk: `install.sh` parses, dispatches every flag its own help text
+advertises, and references no path the tree does not contain; the manifest's
+entry points resolve; the README's links and commands are real.
+
+Two habits follow. **A script must not depend on a file it could ship
+without** — the udev rule is a heredoc inside `install.sh`, not a separate
+file, precisely because the separate file is what went missing. And **anything
+the README tells a user to type is a test case.**
+
 ## Nothing may write to the mouse without the user seeing it
 
-`./install.sh --autoapply` installs a systemd user unit that a udev rule starts
-on every enumeration, and it writes a saved baseline back to the mouse. That
-was a reasonable safety net while writes did not survive a power cycle. Now
-that they do, an unattended one is actively harmful: the baseline is whatever
-the mouse held the day `save` ran — including a corrupted colour — and it gets
-reinstated forever. It presents as "my settings keep reverting", with nothing
-in the panel or the CLI to suggest why.
+There used to be a systemd unit, started by a udev rule, that re-applied a
+saved baseline every time the mouse enumerated. It was written while writes
+were not surviving a power cycle. Once they did, it stopped being a safety net
+and became a machine that silently undid your changes — restoring whatever the
+mouse held the day `save` ran, including a colour corrupted by an earlier bug.
 
-Three rules follow. It is **opt-in**, never part of a bare `./install.sh`. A
-successful `set` **updates the baseline it would otherwise be fighting** (see
-`_refresh_baseline`) — but never creates one. And `doctor` **says out loud**
-whether it is armed and exactly what it would restore.
-
-Generalise it: any mechanism that writes to the device on its own has to be
-visible in `doctor`, or the next person debugging spends a day blaming the
-protocol.
+It is gone, and the general rule is worth keeping: **nothing writes to the
+device unless the user asked for it.** `hskctl save` and `hskctl apply` remain
+as an explicit manual backup and restore. If you are ever tempted to add
+something that writes on its own, it has to be opt-in, it has to be visible in
+`doctor`, and you should probably not add it.
 
 ## A read-modify-write must not echo a header byte back blindly
 
@@ -271,8 +287,8 @@ inputs are legal before deciding what to test.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests    # 30 tests
-node tests/test_model.js                 # 33 tests
+python3 -m unittest discover -s tests    # 67 tests
+node tests/test_model.js                 # 40 tests
 ```
 
 The Python suite deliberately pins the decoded protocol: the +0x80 rule across
@@ -292,8 +308,9 @@ manifest.json Panel.qml Service.qml Model.js   the Omarchy plugin
 bin/hskctl                                     launcher for the bundled CLI
 hskctl/       hidraw.py protocol.py device.py cli.py
 profiles/     the decoded protocol, as data
-tools/        analyze-driver.py, capture-usbmon.sh, decode-capture.py
-tests/        protocol + view-model tests
+install.sh    udev rule, self-contained -- no external files
+tools/        analyze-driver.py, make-preview.py
+tests/        protocol, view-model and packaging tests
 docs/         how the protocol was decoded and how to verify it
 ```
 
@@ -323,3 +340,7 @@ docs/         how the protocol was decoded and how to verify it
 5. `tools/analyze-driver.py` never got run against the older 2023 build
    (`HSK_Pro_4K_FWSW20230322.rar`). Diffing the two would cross-check the
    command table. Does not need hardware, only the archive.
+6. The USB-capture route (`capture-usbmon.sh`, `decode-capture.py`) was removed
+   -- static analysis of the vendor binary answered everything and the capture
+   path was never used. `docs/PROTOCOL-DISCOVERY.md` describes the method for
+   anyone profiling a different mouse; the scripts are in git history.

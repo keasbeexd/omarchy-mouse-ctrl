@@ -96,106 +96,48 @@ those are computed in code rather than stored as constants. For the remainder,
 capture — which is now a much shorter job, because you already know what a
 valid packet looks like.
 
-## Step 2 — capture the vendor app
+## Step 2 — capture the vendor app, if step 1 was not enough
 
-Two routes, depending on where you can run the Windows software.
+It was enough here: every command, offset and encoding in `profiles/` came out
+of the binary, and no packet capture was ever needed. The helper scripts that
+existed for this route were removed rather than shipped unused — they are in
+git history if you want them. What follows is the method, for anyone profiling
+a mouse whose driver is less readable.
 
-### Route A — Wine, on this machine (preferred)
-
-Wine passes HID through to the Linux kernel, so `usbmon` sees everything, and
-you stay on one machine.
-
-```bash
-sudo ./tools/capture-usbmon.sh devices     # confirm the bus
-sudo ./tools/capture-usbmon.sh start
-```
-
-Now launch the G-Wolves app under Wine and let it read the mouse once. Then,
-for each setting, **change exactly one thing** and mark it:
+Run the vendor software with the mouse attached and watch the bus. Under Wine,
+HID passes through to the Linux kernel, so `usbmon` sees everything without a
+second machine:
 
 ```bash
-./tools/capture-usbmon.sh mark pollingRate=1000
-./tools/capture-usbmon.sh mark pollingRate=4000
-./tools/capture-usbmon.sh mark dpiStage1=400
-./tools/capture-usbmon.sh mark dpiStage1=1600
-./tools/capture-usbmon.sh mark dpiStage1=3200
-./tools/capture-usbmon.sh mark motionSync=1
-./tools/capture-usbmon.sh mark motionSync=0
-./tools/capture-usbmon.sh mark liftOffDistance=1
-./tools/capture-usbmon.sh mark liftOffDistance=2
+sudo modprobe usbmon
+lsusb -d 33e4:                       # find the bus number
+sudo tcpdump -i usbmon<BUS> -w capture.pcapng
 ```
 
-Use the field names from `hskctl fields` on the left of the `=`. That is what
-lets the decoder emit a profile directly.
+On a real Windows machine, USBPcap plus Wireshark gives the same thing.
 
-```bash
-sudo ./tools/capture-usbmon.sh stop
-```
-
-### Route B — a real Windows machine
-
-Install [Wireshark](https://www.wireshark.org/) with **USBPcap**, then:
-
-1. Start Wireshark, pick the USBPcap interface the mouse is on.
-2. In the filter bar: `usb.transfer_type == 0x02 || usbhid.data` — control
-   transfers plus HID data. Widen it if you see nothing.
-3. Change one setting in the G-Wolves app; note the frame number and what you
-   changed.
-4. Repeat for every setting and value.
-5. `File → Export Packet Dissections → As JSON`.
-
-Then build a labels file by hand — one line per change, `<epoch> <label>`:
-
-```
-1755400000.0 pollingRate=1000
-1755400020.0 pollingRate=4000
-```
-
-Or skip timestamps entirely and paste the packet bytes into a labelled hexdump,
-one packet per line, which the decoder also accepts:
-
-```
-pollingRate=1000: 08 05 00 00 01 03 20 00 ...
-pollingRate=4000: 08 05 00 00 01 05 20 00 ...
-```
-
----
+The discipline matters more than the tooling: **change exactly one setting at a
+time and write down what you changed and when.** A capture of somebody clicking
+around is nearly useless; a capture where you know that packet 41 was
+"pollingRate 1000 → 4000" decodes itself.
 
 ## Step 3 — decode
 
-```bash
-./tools/decode-capture.py capture.json --labels capture.labels
-```
+Line the packets up against your notes. You are looking for:
 
-The decoder does four things:
+- **A constant prefix.** Report id, length, opcode. Opcodes usually cluster —
+  here every read opcode is its write opcode plus `0x80`.
+- **The byte that changed** when you changed one setting. That is your value
+  offset, and repeating the same change from different starting values tells
+  you the encoding (`u8`, `u16be`, an index into a table).
+- **A checksum**, or the absence of one. Try the obvious candidates — sum of
+  the payload, XOR, sum negated — against several packets before concluding
+  there is one. This mouse has none.
+- **Packets you did not cause.** Battery polling and connection state show up
+  unbidden and will confuse a naive diff.
 
-1. **Separates config packets from pointer motion.** It does this by
-   repetition, not by frequency — motion reports are near-unique, config
-   packets repeat. It prints the length groups and its scoring so you can
-   override with `--length` if it picks wrong.
-2. **Finds the checksum.** It tries `sum8`, `sum8_complement`, `xor8` and
-   `sum8_minus_55` over every plausible range and reports what holds across
-   every packet. Ranges too short to be meaningful are rejected.
-3. **Attributes bytes to settings.** A byte that moves only when you changed
-   `pollingRate` is the polling-rate byte. A byte that moves for *every*
-   setting is the checksum or a sequence counter, and gets flagged rather than
-   mapped.
-4. **Infers the encoding.** If `dpiStage1=1600` shows a raw `32`, it proposes
-   `"scale": 50`. If the values do not divide evenly it proposes an explicit
-   enum instead.
-
-When the output looks right:
-
-```bash
-./tools/decode-capture.py capture.json --labels capture.labels \
-    --emit-profile ~/.config/hskctl/profiles/gwolves-hsk-pro-4k.json
-```
-
-Only high-confidence attributions are written. Merge them into the shipped
-profile by hand, keeping the `from`, `min`, `max` and `values` metadata that
-the panel uses for its controls.
-
----
+Write what you find into a new `profiles/*.json` and let the engine interpret
+it. Resist putting any of it in Python.
 
 ## Step 4 — verify before trusting
 

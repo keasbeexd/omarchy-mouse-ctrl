@@ -18,7 +18,7 @@ new Function("exports", src + "\n;Object.assign(exports, {" +
   "POLLING_RATES, parseStatus, has, batteryGlyph, connectionGlyph, connectionLabel," +
   "summaryLine, barLabel, dpiStages, pollingOptions, isLow, buildRows, canWrite," +
   "DPI_MIN, DPI_MAX, DPI_STEP, clampDpi, nextStageColor, STAGE_COLORS," +
-  "toggleLabel, toggleDescription});")(Model);
+  "toggleLabel, toggleDescription, isPermissionError});")(Model);
 
 let passed = 0;
 function test(name, fn) {
@@ -315,6 +315,34 @@ test("option values match what ButtonGroup compares against", () => {
   // String(mouse.value("pollingRate")). These must line up exactly.
   const options = Model.pollingOptions(1000);
   assert.ok(options.some((o) => String(o.value) === String(1000)));
+});
+
+
+// A missing udev rule is the most common first-run failure, and the panel
+// shows a completely different screen for it -- with the command to fix it --
+// so the classifier has to be right about both directions.
+test("permission failures are recognised however they surface", () => {
+  const messages = [
+    "[Errno 13] Permission denied: '/dev/hidraw6'",
+    "could not open /dev/hidraw6: Permission denied",
+    "EACCES opening the config endpoint",
+    "operation not permitted",
+  ];
+  for (const m of messages) {
+    assert.strictEqual(Model.isPermissionError(m), true, m);
+  }
+});
+
+test("a missing mouse is not mistaken for a missing udev rule", () => {
+  const messages = [
+    "no candidate HID node found",
+    "the mouse did not acknowledge 'dpi' (byte 1 = 0x00, expected 0xa1)",
+    "another hskctl is talking to the mouse",
+    "",
+  ];
+  for (const m of messages) {
+    assert.strictEqual(Model.isPermissionError(m), false, m);
+  }
 });
 
 console.log(`\n${passed} passed`);

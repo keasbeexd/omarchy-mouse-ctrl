@@ -24,13 +24,19 @@ of `hts_send_cmd` and the `HTS_*_CMD` byte arrays), then confirmed setting by
 setting against real hardware.
 
 **Dependencies.** Python 3.9+ and nothing else. No pip packages, no daemon, no
-libratbag. The CLI the widget drives is bundled inside the plugin, so
-`omarchy plugin add` is sufficient to install it.
+background service, no libratbag. The CLI the widget drives is bundled inside
+the plugin, so `omarchy plugin add` plus the udev rule is the whole install.
 
-**Permissions.** It talks to `/dev/hidraw*` directly. A udev rule
-(`install.sh --udev`, shipped in the repo) grants the logged-in user access via
-`uaccess` so nothing needs `sudo`. Without the rule the widget still reads and
-displays, but writes fail — the panel reports that rather than failing silently.
+**Permissions.** It talks to `/dev/hidraw*` directly, and this is a hard
+requirement rather than a convenience: every exchange is a HID feature report,
+and the hidraw ioctls that carry those need the node opened read-write, so
+without access the plugin cannot even read the battery. `install.sh --udev`
+installs a rule scoped to G-Wolves' vendor id that grants access via `uaccess`
+— the same mechanism used for sound cards and webcams — and it prints the exact
+rule text before asking for `sudo`. The rule is a heredoc inside the script,
+not a separate file, so it cannot go missing from a clone. When access is
+absent the panel says so explicitly and shows the command to fix it, rather
+than reporting a raw EACCES.
 
 **Safety.** Only the mouse's own configuration registers are written. The
 firmware's factory-reset opcode is deliberately not bound to any control, and a
@@ -48,4 +54,8 @@ interpreted by a generic engine — there is no device-specific code. The vendor
 application matches 14 product IDs across the HSK range, so other variants very
 likely work; adding one is a profile, not a patch.
 
-96 tests (58 Python, 38 JS) pin the decoded protocol and the view model.
+107 tests (67 Python, 40 JS) pin the decoded protocol, the view model, and the
+repository's own packaging — `install.sh` parses and handles every flag it
+documents, nothing references a file the tree does not ship, and the README's
+links and commands resolve. Those last ones were added after an earlier
+submission was rejected for a truncated `install.sh` in the pushed tree.

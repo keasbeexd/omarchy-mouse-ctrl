@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Optional extras for the HSK Mouse plugin.
+# Setup for the HSK Mouse plugin.
 #
-# You do NOT need this to use the plugin. `omarchy plugin add` clones the
-# whole repo -- CLI included -- into ~/.config/omarchy/plugins/, and the widget
-# runs the copy of hskctl bundled beside it.
-#
-# What this adds:
-#   --udev       let your user write to the mouse without sudo   (recommended)
-#   --autoapply  re-apply saved settings whenever the mouse reconnects
+#   --udev       grant your user access to the mouse            (REQUIRED)
 #   --link       put `hskctl` on your PATH for use in a terminal
 #   --plugin     copy the plugin into place by hand, if you cloned it yourself
 #   --dev        symlink this checkout into the plugins dir, for hacking on it
 #   --uninstall  undo --link and --plugin
 #
 # With no arguments it does --udev and --link.
+#
+# The udev rule is not optional polish. Every exchange with the mouse is a HID
+# feature report, and the hidraw ioctls that carry those need the node opened
+# read-write -- so without the rule the plugin cannot even read the battery.
+#
+# This script is deliberately self-contained: the rule is a heredoc below
+# rather than a separate file, because a plugin is distributed by cloning a
+# repository and a file that must be present is a file that can go missing.
 
 set -euo pipefail
 
@@ -27,6 +29,46 @@ VENDOR_ID="33e4"
 info() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m warn:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+udev_rule_text() {
+  cat <<RULE
+# G-Wolves HSK (vendor id $VENDOR_ID) -- installed by the omarchy-hsk plugin.
+#
+# Configuring the mouse means sending HID *feature* reports, and the hidraw
+# ioctls for those (HIDIOCSFEATURE / HIDIOCGFEATURE) require the device node to
+# be opened read-write. The default mode on /dev/hidraw* is root-only, so
+# without this rule hskctl and the Omarchy panel cannot talk to the mouse at
+# all -- not even to read the battery.
+#
+# uaccess hands read-write to whoever is logged in at the seat, which is the
+# same mechanism your sound card and webcam use. It is scoped to this vendor id.
+KERNEL=="hidraw*", ATTRS{idVendor}=="$VENDOR_ID", MODE="0660", TAG+="uaccess"
+RULE
+}
+
+install_udev() {
+  info "Granting your user access to hidraw devices with vendor id $VENDOR_ID"
+  echo
+  udev_rule_text | sed 's/^/    /'
+  echo
+  read -r -p "Write this to $UDEV_RULE (needs sudo)? [y/N] " reply
+  if [[ ! "$reply" =~ ^[Yy] ]]; then
+    warn "Skipped. The plugin will not be able to reach the mouse until this"
+    warn "rule exists -- rerun './install.sh --udev' when you are ready."
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  udev_rule_text >"$tmp"
+  sudo install -m 0644 "$tmp" "$UDEV_RULE"
+  rm -f "$tmp"
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger
+  info "Installed $UDEV_RULE"
+  info "Now unplug and replug the mouse or its dongle -- the rule applies when"
+  info "the device next appears, not to one that is already plugged in."
+}
 
 link_cli() {
   info "Linking hskctl into $BIN_DIR"
@@ -64,73 +106,29 @@ link_plugin() {
   warn "Auto-reload on save may not follow the symlink; use 'omarchy-shell shell rescanPlugins' after edits."
 }
 
-install_udev() {
-  # The vendor id is known from the driver, so this needs no device present.
-  info "Granting your user access to hidraw devices with vendor id $VENDOR_ID"
-  local tmp
-  tmp="$(mktemp)"
-  cp "$REPO_DIR/install/60-gwolves-hsk.rules" "$tmp"
-  echo; cat "$tmp"; echo
-  read -r -p "Write this to $UDEV_RULE (needs sudo)? [y/N] " reply
-  if [[ "$reply" =~ ^[Yy] ]]; then
-    sudo install -m 0644 "$tmp" "$UDEV_RULE"
-    sudo udevadm control --reload-rules
-    sudo udevadm trigger
-    info "Installed. Unplug and replug the mouse or its dongle."
-  else
-    info "Skipped -- hskctl will need sudo to change settings."
-  fi
-  rm -f "$tmp"
-}
-
-install_autoapply() {
-  # Opt-in only. Writes do reach the mouse's own storage, so this is a safety
-  # net rather than the mechanism -- and an unattended one is worse than
-  # nothing: a baseline captured on a bad day gets restored on every reconnect,
-  # which reads as "my settings keep reverting". `hskctl set` now updates the
-  # baseline as it goes, so an armed service follows you instead of fighting.
-  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  info "Installing the re-apply service to $unit_dir"
-  mkdir -p "$unit_dir"
-  install -m 0644 "$REPO_DIR/install/hskctl-apply.service" "$unit_dir/hskctl-apply.service"
-  systemctl --user daemon-reload 2>/dev/null || warn "could not reload the user daemon"
-
-  info "Saving your current settings as the ones to restore"
-  "$REPO_DIR/bin/hskctl" save || warn "could not read the mouse -- run 'hskctl save' once it is connected"
-
-  echo
-  info "Re-apply is armed. Whenever the mouse reappears, systemd runs 'hskctl apply'."
-  echo "     Change a setting, then run 'hskctl save' to make it the new baseline."
-  echo "     Test it now with:  systemctl --user start hskctl-apply.service"
-}
-
 uninstall() {
   rm -f "$BIN_DIR/hskctl"
   rm -rf "$PLUGIN_DIR"
-  rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/hskctl-apply.service"
-  systemctl --user daemon-reload 2>/dev/null || true
   info "Removed the symlink and $PLUGIN_DIR"
   info "Left in place: $UDEV_RULE (remove with sudo if you want)"
 }
 
 case "${1:-}" in
   --udev)      install_udev ;;
-  --autoapply) install_autoapply ;;
   --link)      link_cli ;;
   --plugin)    copy_plugin ;;
   --dev)       link_plugin ;;
   --uninstall) uninstall ;;
+  -h|--help)   awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}" ;;
   "")
     command -v python3 >/dev/null || die "python3 is required"
     install_udev
     link_cli
     echo
     info "Done. Check it sees the mouse:"
-    echo "     hskctl probe"
-    echo "     hskctl status     # compare against the Windows app before writing"
-    echo
-    echo "     Settings persist on the mouse itself, so nothing else is needed."
-    echo "     ./install.sh --autoapply  adds a restore-on-reconnect safety net."
+    echo "     hskctl probe      # finds the config endpoint"
+    echo "     hskctl status     # reads every setting"
+    echo "     hskctl doctor     # if either of those looks wrong"
     ;;
-  *) die "unknown option: $1" ;;
+  *) die "unknown option: $1 (try --help)" ;;
 esac

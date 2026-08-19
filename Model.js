@@ -214,3 +214,17 @@ function toggleDescription(field) {
   if (field === "rippleControl") return "Smooth jitter at high DPI"
   return ""
 }
+
+// Does this hskctl error mean "you lack permission" rather than "no mouse"?
+// Matched on the message because the failure surfaces from several layers --
+// open(2) returning EACCES, an ioctl refusing, or hskctl's own doctor advice --
+// and they do not share an exit code.
+function isPermissionError(message) {
+  var text = String(message || "").toLowerCase()
+  if (text === "") return false
+  return text.indexOf("permission denied") >= 0
+      || text.indexOf("errno 13") >= 0
+      || text.indexOf("eacces") >= 0
+      || text.indexOf("not permitted") >= 0
+      || (text.indexOf("udev") >= 0 && text.indexOf("hidraw") >= 0)
+}

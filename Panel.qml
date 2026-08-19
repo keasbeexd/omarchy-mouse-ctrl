@@ -32,6 +32,14 @@ Panel {
   readonly property bool needsSetup: hsk.state === "undiscovered"
   readonly property bool hasError: hsk.state === "error"
 
+  // Missing permissions is by far the most common first-run failure, and the
+  // rawest form of it -- EACCES opening /dev/hidraw* -- is unreadable to
+  // anyone who has not just read the udev docs. Every exchange needs the node
+  // opened read-write, so this is not a degraded mode: nothing works at all,
+  // including the battery. Say so, and say what to run.
+  readonly property bool looksLikePermissions: root.hasError
+    && Model.isPermissionError(hsk.lastError)
+
   readonly property color barIconColor: hsk.lowBattery
     ? root.urgent
     : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55))
@@ -365,7 +373,8 @@ Panel {
                 width: parent.width
                 text: root.needsSetup
                   ? (hsk.detected ? "Mouse found, protocol not mapped" : "Mouse not detected")
-                  : "hskctl unavailable"
+                  : (root.looksLikePermissions ? "No permission to reach the mouse"
+                                               : "hskctl unavailable")
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -376,6 +385,10 @@ Panel {
               Text {
                 width: parent.width
                 text: {
+                  if (root.looksLikePermissions)
+                    return "Configuring the mouse uses HID feature reports, and those need "
+                         + "read-write access to /dev/hidraw*, which is root-only by default. "
+                         + "Install the udev rule, then unplug and replug the mouse or its dongle."
                   if (root.hasError) return hsk.lastError
                   if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
                   return "hskctl can see the device but does not know its config protocol yet. "
@@ -389,8 +402,11 @@ Panel {
 
               Text {
                 width: parent.width
-                visible: root.needsSetup
-                text: "hskctl probe"
+                visible: root.needsSetup || root.looksLikePermissions
+                text: root.looksLikePermissions
+                  ? "~/.config/omarchy/plugins/io.github.keasbeexd.hsk/install.sh --udev"
+                  : "hskctl probe"
+                wrapMode: Text.WrapAnywhere
                 color: root.foreground
                 font.family: "monospace"
                 font.pixelSize: Style.font.caption

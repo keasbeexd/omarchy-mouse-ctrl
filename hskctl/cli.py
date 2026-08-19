@@ -208,39 +208,6 @@ def _coerce(text: str) -> Any:
         return text
 
 
-def _refresh_baseline(field: str, value: Any) -> None:
-    """Keep the re-apply baseline in step with a successful write.
-
-    `hskctl apply` exists to restore settings when the mouse reappears, and it
-    is armed by a udev rule. A baseline that is never updated therefore turns
-    into a machine that silently undoes your changes: you set 1600, the mouse
-    reconnects, and systemd puts the old value back. Worse, whatever the mouse
-    happened to hold the day `save` ran -- including a corrupted colour -- gets
-    reinstated forever.
-
-    So a write updates the baseline it would otherwise be fighting. Only if one
-    already exists: this never creates the file, because a user who has not
-    opted in should not acquire a baseline as a side effect of setting DPI.
-    """
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError):
-        return
-    settings = doc.get("settings")
-    if not isinstance(settings, dict) or field not in settings:
-        return
-    if settings[field] == value:
-        return
-    settings[field] = value
-    try:
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=2)
-            fh.write("\n")
-    except OSError:
-        pass
-
-
 def _print_trace(session) -> None:
     """Dump every byte that crossed the wire, to stderr.
 
@@ -279,8 +246,6 @@ def cmd_set(args) -> int:
         _print_trace(session)
 
     ok = str(readback) == str(value)
-    if ok and not getattr(args, "raw", False):
-        _refresh_baseline(args.field, readback)
     payload = {
         "ok": ok,
         "field": args.field,
@@ -452,31 +417,6 @@ def cmd_probe_write(args) -> int:
     return _emit(payload, args.json, human)
 
 
-def _autoapply_state() -> dict:
-    """Is anything going to write to the mouse behind the user's back?
-
-    `--autoapply` installs a systemd user unit that a udev rule starts every
-    time the mouse enumerates. When its baseline is stale that presents as
-    settings reverting on their own, with nothing in the panel or the CLI to
-    suggest why -- so `doctor` says out loud whether it is armed and what it
-    would restore.
-    """
-    unit = os.path.join(
-        os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
-        "systemd",
-        "user",
-        "hskctl-apply.service",
-    )
-    state: dict = {"armed": os.path.exists(unit), "unit": unit,
-                   "baselinePath": SETTINGS_PATH}
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as fh:
-            state["baseline"] = json.load(fh).get("settings", {})
-    except (OSError, ValueError):
-        state["baseline"] = None
-    return state
-
-
 def cmd_doctor(args) -> int:
     """Read-only diagnostic: dump the raw bytes of every read command.
 
@@ -524,7 +464,6 @@ def cmd_doctor(args) -> int:
     except OSError as exc:
         access["error"] = str(exc)
     report["access"] = access
-    report["autoApply"] = _autoapply_state()
 
     try:
         session = open_session(profile, path)
@@ -561,20 +500,14 @@ def cmd_doctor(args) -> int:
             f"readable={a.get('read')}  writable={a.get('write')}"
         )
         if not a.get("write"):
-            print("  !! not writable -- every exchange needs O_RDWR.")
-            print("     Run ./install.sh --udev, then replug the mouse or dongle.")
-        aa = p.get("autoApply") or {}
-        if aa.get("armed"):
-            print()
-            print("re-apply on reconnect: ARMED")
-            print(f"  unit:     {aa['unit']}")
-            print(f"  baseline: {aa['baselinePath']}")
-            for k, v in sorted((aa.get("baseline") or {}).items()):
-                print(f"    {k} = {v}")
-            print("  Every time the mouse enumerates, these are written back.")
-            print("  If a setting keeps reverting, this is why. Refresh it with")
-            print("  'hskctl save', or disable it:")
-            print(f"    rm {aa['unit']} && systemctl --user daemon-reload")
+            # Not a warning -- this is fatal. Feature-report ioctls need the
+            # node opened read-write, so without it nothing below will work,
+            # including the reads.
+            print("  !! NOT WRITABLE -- nothing can talk to the mouse.")
+            print("     Every exchange is a HID feature report, and those need")
+            print("     O_RDWR even to read. Install the udev rule:")
+            print("       ./install.sh --udev")
+            print("     then unplug and replug the mouse or its dongle.")
         print()
         print("read attempts (nothing below writes to the mouse):")
         for att in p["attempts"]:
@@ -899,11 +832,14 @@ SETTINGS_PATH = os.path.join(
 def cmd_save(args) -> int:
     """Record the mouse's current writable settings to disk.
 
-    The mouse does not keep DPI across a power cycle. Neither does the vendor's
-    Windows software rely on it to: `in_Queue_Close` and `in_Queue_Open` call
-    ReadFileProlie/WriteFileProlie, so the app stores settings in local files
-    and pushes them back when the mouse reconnects. This is the same approach,
-    without needing a tray icon.
+    A manual backup, not a sync mechanism. Settings live in the mouse's own
+    storage and survive a power cycle, so nothing needs to restore them -- but
+    a snapshot is worth having before you experiment, and `apply` puts it back.
+
+    This was once wired to a systemd unit that re-applied it on every
+    reconnect. That was written when writes were not persisting, and once they
+    were it became a machine for silently undoing your changes. It is gone. If
+    you want these values back on the mouse, ask for them.
     """
     try:
         profile = load_profile(args.profile)

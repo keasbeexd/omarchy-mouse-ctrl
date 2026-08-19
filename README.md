@@ -12,22 +12,33 @@ over raw HID, using a protocol recovered from that Windows app.
 
 ## Install
 
+Two steps. **Both are required** — the second is not optional polish.
+
 ```bash
 omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
 omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
-Then add the **HSK Mouse** widget to your bar.
-
-One more step, and it matters — a udev rule, so changing settings does not need
-`sudo`. Replug the mouse or its dongle afterwards.
-
 ```bash
 ~/.config/omarchy/plugins/io.github.keasbeexd.hsk/install.sh --udev
 ```
 
-Requires Python 3.9+. Nothing else — no pip packages, no daemon, no libratbag.
-The CLI it drives ships inside the plugin.
+Then **unplug and replug** the mouse or its dongle, and add the **HSK Mouse**
+widget to your bar.
+
+Why the second step matters: configuring the mouse means sending HID *feature*
+reports, and the hidraw ioctls that carry those need the device node opened
+read-write. `/dev/hidraw*` is root-only by default, so without the rule the
+plugin cannot reach the mouse at all — not even to read the battery. The rule
+grants access to whoever is logged in at the seat (the same `uaccess` mechanism
+your sound card uses), scoped to G-Wolves' vendor id and nothing else. The
+script shows you exactly what it will write before asking for `sudo`.
+
+If something looks wrong, `hskctl doctor` says in the first few lines whether
+permissions are the problem.
+
+Requires Python 3.9+. Nothing else — no pip packages, no daemon, no background
+service, no libratbag. The CLI the widget drives ships inside the plugin.
 
 ## What it does
 
@@ -153,14 +164,14 @@ Settings live on the mouse itself and follow it between machines.
 ```bash
 git clone https://github.com/keasbeexd/omarchy-hsk.git
 cd omarchy-hsk
-./install.sh --dev       # symlink into ~/.config/omarchy/plugins
 ./install.sh --udev      # permissions; replug afterwards
+./install.sh --dev       # symlink into ~/.config/omarchy/plugins
 omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 58 tests
-node tests/test_model.js                 # 38 tests
+python3 -m unittest discover -s tests    # 67 tests
+node tests/test_model.js                 # 40 tests
 ```
 
 The Python suite pins the decoded protocol rather than the implementation: the
@@ -169,13 +180,19 @@ one byte, the measured polling map, read-only fields refusing writes, and
 factory reset staying unreachable. If a change breaks one of those, the change
 is very probably wrong.
 
+It also checks the repository itself — that `install.sh` parses and dispatches
+every flag its own help text advertises, that nothing references a file the
+tree does not contain, and that the README's links and commands are real. Those
+exist because a truncated `install.sh` shipped once and no test noticed.
+
 ```
 manifest.json  Panel.qml  Service.qml  Model.js   the plugin
+install.sh                                        udev rule, self-contained
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
 profiles/        the decoded protocol -- data, not code
-tools/           driver analysis and capture helpers
-tests/           protocol and view-model tests
+tools/           vendor-driver analysis, preview rendering
+tests/           protocol, view-model and packaging tests
 docs/            how the protocol was decoded, and how to verify it
 ```
 

@@ -24,16 +24,32 @@ Frame it like the mockup: enough of the bar to show the widget in context, the
 panel open beside it, 1280×800 or wider. Then delete `tools/make-preview.py` if
 you would rather not carry it.
 
-**2. Validate locally.** The marketplace runs its own check, but this catches a
-bad manifest before a maintainer sees it.
+**2. Check that the remote matches what you tested.** This is what got the
+first submission rejected: the pushed tree had a truncated `install.sh` and was
+missing a file it referenced, neither of which was true locally. Reviewers read
+the remote, not your working copy.
+
+```bash
+git fetch origin
+git diff --stat origin/main HEAD     # must be empty
+git status --short                   # must be empty
+```
+
+**3. Validate locally.** The marketplace runs its own check; this catches a bad
+manifest before a maintainer sees it.
 
 ```bash
 omarchy plugin validate
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests   # includes the packaging checks
 node tests/test_model.js
 ```
 
-**3. Check the repository is public**, and that `manifest.json`, `README.md`,
+The packaging tests exist because of that rejection — they assert that
+`install.sh` parses and handles every flag it documents, that nothing
+references a file the tree does not ship, and that the README's links and
+commands are real.
+
+**4. Check the repository is public**, and that `manifest.json`, `README.md`,
 `LICENSE` and `preview.png` are all at the root.
 
 ## The submission
