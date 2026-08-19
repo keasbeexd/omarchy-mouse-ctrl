@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.keasbeexd.hsk",
   "name": "HSK Mouse",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Marc (@keasbee)",
   "license": "MIT",
   "description": "Battery, DPI, polling rate and sensor settings for the G-Wolves HSK Pro 4K, in the Omarchy bar.",
