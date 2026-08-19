@@ -114,6 +114,24 @@ class ManifestTests(unittest.TestCase):
     def test_version_is_a_release_number(self):
         self.assertRegex(self.manifest["version"], r"^\d+\.\d+\.\d+$")
 
+    def test_the_cli_reports_the_manifest_version(self):
+        """One version number, everywhere it is shown.
+
+        These were a literal in hskctl/__init__.py and a field in the manifest,
+        and they drifted: the manifest said 1.0.1 while `hskctl --version`
+        still claimed 0.1.0. The panel now shows this number too, so a wrong
+        one is worse than none -- it is what someone reports a bug against.
+        """
+        from hskctl import __version__
+        self.assertEqual(__version__, self.manifest["version"])
+
+    def test_the_cli_prints_it(self):
+        result = subprocess.run(
+            [os.path.join(ROOT, "bin", "hskctl"), "--version"],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertIn(self.manifest["version"], result.stdout + result.stderr)
+
     def test_settings_schema_matches_its_defaults(self):
         widget = self.manifest["barWidget"]
         keys = {entry["key"] for entry in widget["schema"]}

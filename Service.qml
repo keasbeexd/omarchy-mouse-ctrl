@@ -46,6 +46,26 @@ Item {
     return configured !== "" ? configured : bundledHskctl
   }
 
+  // Read straight out of the manifest the marketplace displays, so the number
+  // on screen is the one that was published. "Which build am I actually
+  // running?" is not answerable from the panel otherwise, and after a plugin
+  // directory and a checkout drift apart it is the first thing you want.
+  property string pluginVersion: ""
+
+  Component.onCompleted: {
+    var request = new XMLHttpRequest()
+    request.onreadystatechange = function() {
+      if (request.readyState !== XMLHttpRequest.DONE) return
+      root.pluginVersion = Model.manifestVersion(request.responseText)
+    }
+    try {
+      request.open("GET", Qt.resolvedUrl("manifest.json"))
+      request.send()
+    } catch (e) {
+      root.pluginVersion = ""   // a missing manifest just hides the label
+    }
+  }
+
   readonly property bool busy: statusProcess.running || setProcess.running
   readonly property bool ready: state === "ready"
   readonly property bool lowBattery: Model.isLow(effectiveValues, lowBatteryPercent)

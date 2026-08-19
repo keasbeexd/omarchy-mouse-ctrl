@@ -228,3 +228,16 @@ function isPermissionError(message) {
       || text.indexOf("not permitted") >= 0
       || (text.indexOf("udev") >= 0 && text.indexOf("hidraw") >= 0)
 }
+
+// Pull the version out of the plugin manifest. Returns "" for anything
+// unreadable, because a label that cannot be trusted is worse than no label.
+function manifestVersion(raw) {
+  var text = String(raw || "").trim()
+  if (text === "") return ""
+  try {
+    var version = JSON.parse(text).version
+    return typeof version === "string" ? version : ""
+  } catch (e) {
+    return ""
+  }
+}

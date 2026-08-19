@@ -18,7 +18,7 @@ new Function("exports", src + "\n;Object.assign(exports, {" +
   "POLLING_RATES, parseStatus, has, batteryGlyph, connectionGlyph, connectionLabel," +
   "summaryLine, barLabel, dpiStages, pollingOptions, isLow, buildRows, canWrite," +
   "DPI_MIN, DPI_MAX, DPI_STEP, clampDpi, nextStageColor, STAGE_COLORS," +
-  "toggleLabel, toggleDescription, isPermissionError});")(Model);
+  "toggleLabel, toggleDescription, isPermissionError, manifestVersion});")(Model);
 
 let passed = 0;
 function test(name, fn) {
@@ -342,6 +342,21 @@ test("a missing mouse is not mistaken for a missing udev rule", () => {
   ];
   for (const m of messages) {
     assert.strictEqual(Model.isPermissionError(m), false, m);
+  }
+});
+
+
+// The panel reads its version out of the bundled manifest. Anything it cannot
+// read has to come back as "" so the label hides rather than lying.
+test("the version is read out of the manifest", () => {
+  assert.strictEqual(
+    Model.manifestVersion('{"id":"x","version":"1.0.1"}'), "1.0.1");
+});
+
+test("an unreadable manifest hides the label rather than guessing", () => {
+  for (const raw of ["", "   ", "{not json", "[]", '{"id":"x"}', '{"version":3}',
+                     null, undefined]) {
+    assert.strictEqual(Model.manifestVersion(raw), "", JSON.stringify(raw));
   }
 });
 

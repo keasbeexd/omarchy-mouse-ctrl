@@ -570,6 +570,48 @@ Panel {
               }
             }
           }
+
+          // --- footer -----------------------------------------------------
+          // Which build is actually running. Read from manifest.json rather
+          // than hardcoded, so it is by construction the version that was
+          // published -- a hardcoded one drifts, and a version label you
+          // cannot trust is worse than none. Hovering shows the firmware and
+          // the CLI in use, which is the rest of "what am I running".
+
+          Item {
+            visible: hsk.pluginVersion !== ""
+            width: parent.width
+            implicitHeight: versionLabel.implicitHeight + Style.space(6)
+
+            Text {
+              id: versionLabel
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              text: "v" + hsk.pluginVersion
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+
+              MouseArea {
+                id: versionMouse
+                anchors.fill: parent
+                anchors.margins: -Style.space(4)
+                hoverEnabled: true
+              }
+
+              PanelToolTip {
+                visible: versionMouse.containsMouse
+                text: {
+                  var parts = ["HSK Mouse v" + hsk.pluginVersion]
+                  if (hsk.has("firmwareVersion"))
+                    parts.push("firmware " + hsk.value("firmwareVersion"))
+                  if (hsk.devicePath !== "") parts.push(hsk.devicePath)
+                  return parts.join("  ·  ")
+                }
+                fontFamily: root.fontFamily
+              }
+            }
+          }
         }
       }
     }

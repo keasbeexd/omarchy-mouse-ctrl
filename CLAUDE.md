@@ -176,6 +176,18 @@ as an explicit manual backup and restore. If you are ever tempted to add
 something that writes on its own, it has to be opt-in, it has to be visible in
 `doctor`, and you should probably not add it.
 
+## One version number
+
+`manifest.json` owns it -- the marketplace displays that field, so it is the
+one that is true. `hskctl/__init__.py` reads it at import and the panel reads
+it over XMLHttpRequest for the footer label. They drifted once already (the
+manifest said 1.0.1 while `hskctl --version` still said 0.1.0), which is
+harmless right up until someone reports a bug against the wrong build.
+
+A version label that might be wrong is worse than no label, so
+`Model.manifestVersion` returns `""` for anything it cannot parse and the
+footer hides itself.
+
 ## A read-modify-write must not echo a header byte back blindly
 
 `rx[6]` of the DPI block is the stage count, and the firmware writes **that
@@ -287,8 +299,8 @@ inputs are legal before deciding what to test.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests    # 67 tests
-node tests/test_model.js                 # 40 tests
+python3 -m unittest discover -s tests    # 69 tests
+node tests/test_model.js                 # 42 tests
 ```
 
 The Python suite deliberately pins the decoded protocol: the +0x80 rule across

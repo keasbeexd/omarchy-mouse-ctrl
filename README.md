@@ -67,6 +67,10 @@ write, when you stop — and the panel says *Writing to the mouse…* whenever a
 exchange is in flight, because a write is a real USB round trip and silence
 reads as a dead click.
 
+The version of the plugin you are running is in the bottom-right of the panel;
+hover it for the firmware version and which hidraw node is in use. `hskctl
+--version` reports the same number.
+
 **Keyboard:** `↑`/`↓` between rows, `←`/`→` to adjust the row under the cursor,
 `Enter` to select a stage, `c` to cycle its colour, `1`–`7` to switch straight
 to a stage, `d` to cycle DPI, `m` for motion sync, `r` to refresh.
@@ -170,8 +174,8 @@ omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 67 tests
-node tests/test_model.js                 # 40 tests
+python3 -m unittest discover -s tests    # 69 tests
+node tests/test_model.js                 # 42 tests
 ```
 
 The Python suite pins the decoded protocol rather than the implementation: the
