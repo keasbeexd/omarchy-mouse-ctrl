@@ -44,6 +44,7 @@ function parseStatus(raw) {
     settings: parsed.settings || {},
     writable: parsed.writable || [],
     unverified: parsed.unverified || [],
+    version: typeof parsed.version === "string" ? parsed.version : "",
     error: String(parsed.error || "")
   }
 }
@@ -229,8 +230,12 @@ function isPermissionError(message) {
       || (text.indexOf("udev") >= 0 && text.indexOf("hidraw") >= 0)
 }
 
-// Pull the version out of the plugin manifest. Returns "" for anything
+// Pull the version out of a plugin manifest. Returns "" for anything
 // unreadable, because a label that cannot be trusted is worse than no label.
+//
+// Kept for the manifest path, but the version the panel actually shows now
+// comes through parseStatus: hskctl reads the same manifest and reports it in
+// its JSON, which is a channel we know works in the shell.
 function manifestVersion(raw) {
   var text = String(raw || "").trim()
   if (text === "") return ""

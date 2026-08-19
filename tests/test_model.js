@@ -360,4 +360,27 @@ test("an unreadable manifest hides the label rather than guessing", () => {
   }
 });
 
+
+// The footer version rides in hskctl's JSON, because fetching manifest.json
+// from QML failed silently in the shell. It has to survive the error payload
+// too -- knowing which build is misbehaving matters most when it is failing.
+test("the version comes through a successful status", () => {
+  const parsed = Model.parseStatus(JSON.stringify(
+    { ok: true, state: "ready", version: "1.1.0", settings: {} }));
+  assert.strictEqual(parsed.version, "1.1.0");
+});
+
+test("the version comes through an error status", () => {
+  const parsed = Model.parseStatus(JSON.stringify(
+    { ok: false, state: "error", version: "1.1.0", error: "no mouse" }));
+  assert.strictEqual(parsed.version, "1.1.0");
+  assert.strictEqual(parsed.error, "no mouse");
+});
+
+test("an older hskctl without a version does not break the panel", () => {
+  const parsed = Model.parseStatus(JSON.stringify(
+    { ok: true, state: "ready", settings: {} }));
+  assert.strictEqual(parsed.version, "");
+});
+
 console.log(`\n${passed} passed`);

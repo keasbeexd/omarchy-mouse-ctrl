@@ -46,25 +46,16 @@ Item {
     return configured !== "" ? configured : bundledHskctl
   }
 
-  // Read straight out of the manifest the marketplace displays, so the number
-  // on screen is the one that was published. "Which build am I actually
-  // running?" is not answerable from the panel otherwise, and after a plugin
-  // directory and a checkout drift apart it is the first thing you want.
+  // Which build is running, for the panel footer. It comes back in hskctl's
+  // own JSON, and hskctl reads it from the manifest -- so it is the version
+  // that was published, reported by the copy of the CLI sitting beside this
+  // QML. That matters: the usual reason the footer is interesting at all is a
+  // plugin directory and a checkout having drifted apart.
+  //
+  // This was an XMLHttpRequest against manifest.json. It failed silently in
+  // the shell -- no error, no label, nothing to debug -- so it now rides the
+  // one channel this plugin already depends on working.
   property string pluginVersion: ""
-
-  Component.onCompleted: {
-    var request = new XMLHttpRequest()
-    request.onreadystatechange = function() {
-      if (request.readyState !== XMLHttpRequest.DONE) return
-      root.pluginVersion = Model.manifestVersion(request.responseText)
-    }
-    try {
-      request.open("GET", Qt.resolvedUrl("manifest.json"))
-      request.send()
-    } catch (e) {
-      root.pluginVersion = ""   // a missing manifest just hides the label
-    }
-  }
 
   readonly property bool busy: statusProcess.running || setProcess.running
   readonly property bool ready: state === "ready"
@@ -128,6 +119,7 @@ Item {
     values = parsed.settings || {}
     writable = parsed.writable || []
     unverified = parsed.unverified || []
+    if (parsed.version !== "") pluginVersion = parsed.version
     pending = ({})
     lastError = parsed.ok ? "" : parsed.error
     changed()

@@ -179,8 +179,15 @@ something that writes on its own, it has to be opt-in, it has to be visible in
 ## One version number
 
 `manifest.json` owns it -- the marketplace displays that field, so it is the
-one that is true. `hskctl/__init__.py` reads it at import and the panel reads
-it over XMLHttpRequest for the footer label. They drifted once already (the
+one that is true. `hskctl/__init__.py` reads it at import, and the panel takes
+it from `hskctl --json status`, which reports the same number.
+
+The panel originally fetched `manifest.json` with an XMLHttpRequest. It failed
+silently in the shell: no error, no label, nothing to debug -- and because the
+label hides when it cannot be trusted, the symptom was simply an absent
+footer. **Do not add a second way for the QML to read files.** Anything the
+panel needs from disk should come back through `hskctl --json`, which is the
+one channel this plugin already depends on and already reports errors through. They drifted once already (the
 manifest said 1.0.1 while `hskctl --version` still said 0.1.0), which is
 harmless right up until someone reports a bug against the wrong build.
 
@@ -300,7 +307,7 @@ inputs are legal before deciding what to test.
 
 ```bash
 python3 -m unittest discover -s tests    # 69 tests
-node tests/test_model.js                 # 42 tests
+node tests/test_model.js                 # 45 tests
 ```
 
 The Python suite deliberately pins the decoded protocol: the +0x80 rule across

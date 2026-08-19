@@ -119,6 +119,7 @@ def cmd_status(args) -> int:
             "detected": bool(candidates),
             "candidatePath": candidates[0].info.path if candidates else None,
             "settings": {},
+            "version": __version__,
         }
         return _emit(
             payload,
@@ -138,11 +139,17 @@ def cmd_status(args) -> int:
         session = open_session(profile, args.device)
         settings = session.read_all()
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
-        return _fail(str(exc), args.json, state="error", model=profile.model, settings={})
+        return _fail(str(exc), args.json, state="error", model=profile.model,
+                     settings={}, version=__version__)
 
     payload = {
         "ok": True,
         "state": "ready",
+        # The panel reads its footer label from here. It used to fetch
+        # manifest.json over XMLHttpRequest, which failed silently in the
+        # shell and left the label hidden with nothing to debug. This rides
+        # the one channel already proven to work: a process, JSON on stdout.
+        "version": __version__,
         "model": profile.model,
         "profileStatus": profile.status,
         "device": session.info.path,
@@ -160,7 +167,7 @@ def cmd_status(args) -> int:
     }
 
     def human(p):
-        print(f"{p['model']}  ({p['device']})\n")
+        print(f"{p['model']}  ({p['device']})   hskctl {p['version']}\n")
         for key, value in p["settings"].items():
             label = FRIENDLY_LABELS.get(key, key)
             if key == "batteryPercent":

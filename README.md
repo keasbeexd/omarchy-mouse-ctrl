@@ -175,7 +175,7 @@ omarchy plugin enable io.github.keasbeexd.hsk
 
 ```bash
 python3 -m unittest discover -s tests    # 69 tests
-node tests/test_model.js                 # 42 tests
+node tests/test_model.js                 # 45 tests
 ```
 
 The Python suite pins the decoded protocol rather than the implementation: the
