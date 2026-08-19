@@ -603,5 +603,39 @@ class ReportDescriptorTests(unittest.TestCase):
         self.assertEqual(parsed["feature_report_ids"], [])
 
 
+class VendorBatteryRenderingTests(unittest.TestCase):
+    """What the Windows app would show, so ours can be compared against it.
+
+    Read out of `get_Battery_empty`, which branches on product id. The 5x07 /
+    5x08 family -- the HSK Pro 4K among them -- takes a path where the byte is
+    already a percentage and the app only rounds it down to a multiple of five.
+    The other family runs the byte through a four-segment piecewise curve, so
+    "the byte is a percentage" is a fact about this model, not the protocol.
+    """
+
+    def render(self, raw, charging=False):
+        from hskctl.cli import _vendor_battery
+        return _vendor_battery(raw, charging)
+
+    def test_the_byte_is_a_percentage_rounded_down_to_five(self):
+        self.assertEqual(self.render(97), 95)
+        self.assertEqual(self.render(94), 90)
+        self.assertEqual(self.render(90), 90)
+        self.assertEqual(self.render(1), 0)
+
+    def test_a_full_battery_reads_full(self):
+        self.assertEqual(self.render(100), 100)
+
+    def test_but_shows_95_while_charging(self):
+        # So it does not sit at 100% for an hour on the cable.
+        self.assertEqual(self.render(100, charging=True), 95)
+
+    def test_it_never_exceeds_the_raw_reading(self):
+        # Rounding down, never up -- a battery meter that flatters itself is
+        # worse than one that does not.
+        for raw in range(0, 101):
+            self.assertLessEqual(self.render(raw), raw)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

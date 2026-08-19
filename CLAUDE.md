@@ -58,8 +58,10 @@ writes `tx[5]` and `tx[6]` from two struct fields, and
 level" combo and then clamps the first down to it.
 
 The battery reply is the same story: `hts_get_battery` copies `rx[5]` and
-`rx[6]` into a struct, and `battery_update_ui` reads the percentage out of
-`rx[6]` and shows the charging label when `rx[5] > 0`.
+`rx[6]` into a struct, and `battery_update_ui` shows the charging label when
+`rx[5] > 0`. The percentage it *displays*, though, is not `rx[6]` — it is
+`get_Battery_empty(rx[6], rx[5])`, and that function branches on product id.
+See "The battery byte is a percentage only on half the range" below.
 `sleep` is the one exception to the byte-3 rule: it is a sub-command of opcode
 `0x02` carrying its selector at byte 6.
 
@@ -246,6 +248,39 @@ Refusing to guess matters more than it sounds. The old code returned a session
 regardless, and `status` then printed a screen of zeros **as if they were
 readings** — which is worse than an error, because it looks like data.
 
+## The battery byte is a percentage only on half the range
+
+`get_Battery_empty` has two paths, chosen by product id.
+
+The **5407/5408, 5707/5708, 5807/5808, 5907/5908** family — which includes this
+mouse — takes the simple one: the byte is already a percentage, and the app
+merely rounds it down to a multiple of 5. A full battery reads 100, and the app
+shows 95 instead while charging, presumably so it does not sit at 100% for an
+hour.
+
+The **5403/5404, 5703/5704, 5803/5804** family runs the byte through a
+four-segment piecewise curve instead:
+
+| raw | displayed |
+|-----|-----------|
+| ≤ 40 | `raw / 2` |
+| 41–70 | `(raw-40) * 25/30 + 20` |
+| 71–90 | `(raw-70) * 30/20 + 45` |
+| 91–99 | `(raw-90) * 25/10 + 76` |
+
+then rounded down to a multiple of 5. That is a voltage-ish quantity being
+mapped to a perceived state of charge, and reading it as a percentage would be
+wrong by up to twenty points.
+
+So **"the battery byte is a percentage" is a fact about this model, not about
+the protocol.** Adding a profile for another HSK means checking which branch
+its product id takes first.
+
+`hskctl` reports the byte unrounded, which is why it can say 97 where the
+vendor app says 95. That is a deliberate difference, not drift —
+`_vendor_battery` in the CLI reproduces the app's rendering so the two can be
+compared, and `hskctl watch-battery` prints both.
+
 ## Zero is an answer
 
 Twice now a heuristic has treated a legitimate 0 as "the mouse did not reply",
@@ -339,7 +374,7 @@ inputs are legal before deciding what to test.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests    # 69 tests
+python3 -m unittest discover -s tests    # 78 tests
 node tests/test_model.js                 # 45 tests
 ```
 
@@ -384,15 +419,19 @@ docs/         how the protocol was decoded and how to verify it
    as unconfirmed; do not "simplify" the linked write away.
 
 3. `charging` is `rx[5] > 0`, decoded from `battery_update_ui`. Reading it on
-   the cable was blocked by the `detect_link` bug ("Zero is an answer"), so it
-   is untested rather than wrong — confirm it now reads 1 while plugged in.
-4. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
+   the cable was blocked by two separate bugs ("Zero is an answer", then "The
+   link flag belongs to the endpoint"), so it is still untested rather than
+   wrong — confirm it reads 1 while plugged in.
+4. Whether the battery byte is monotonic and well-behaved over a real
+   discharge has not been checked. `hskctl watch-battery` exists to answer it;
+   nobody has left it running yet.
+5. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
    tuple, write takes a row index into the driver's 6-row table. Model the
    table to re-enable writing.
-5. `tools/analyze-driver.py` never got run against the older 2023 build
+6. `tools/analyze-driver.py` never got run against the older 2023 build
    (`HSK_Pro_4K_FWSW20230322.rar`). Diffing the two would cross-check the
    command table. Does not need hardware, only the archive.
-6. The USB-capture route (`capture-usbmon.sh`, `decode-capture.py`) was removed
+7. The USB-capture route (`capture-usbmon.sh`, `decode-capture.py`) was removed
    -- static analysis of the vendor binary answered everything and the capture
    path was never used. `docs/PROTOCOL-DISCOVERY.md` describes the method for
    anyone profiling a different mouse; the scripts are in git history.

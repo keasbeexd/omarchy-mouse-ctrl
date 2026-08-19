@@ -87,7 +87,13 @@ hskctl status                    # everything the mouse reports
 hskctl set pollingRate 4000
 hskctl set dpiStage1 1600
 hskctl doctor                    # raw bytes of every read; writes nothing
+hskctl watch-battery             # sample the battery over time; writes nothing
 ```
+
+On the battery reading: `hskctl` reports the byte the mouse sends, which for
+this model is a percentage. The Windows app rounds it down to a multiple of 5
+before displaying it, so hskctl can read 97 where the app shows 95 — the same
+value, shown with one fewer step of rounding. `watch-battery` prints both.
 
 `--json` on any command gives parseable output, including on failure.
 
@@ -178,7 +184,7 @@ omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 74 tests
+python3 -m unittest discover -s tests    # 78 tests
 node tests/test_model.js                 # 45 tests
 ```
 

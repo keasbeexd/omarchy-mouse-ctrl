@@ -171,7 +171,8 @@
       "min": 0,
       "max": 100,
       "readOnly": true,
-      "offset": 6
+      "offset": 6,
+      "_note": "rx[6], and for this model it really is a percentage. get_Battery_empty branches on product id: the 5407/5408, 5707/5708, 5807/5808 and 5907/5908 family -- the HSK Pro 4K among them -- takes a path that only rounds the byte down to a multiple of 5 before display. The other family (5403/5404, 5703/5704, 5803/5804) runs it through a four-segment piecewise curve instead: raw/2 up to 40, then (raw-40)*25/30+20, (raw-70)*30/20+45 and (raw-90)*25/10+76. So 'the byte is a percentage' is a fact about this model, not about the protocol -- do not carry it to another profile without checking which branch that product id takes. hskctl reports the byte unrounded, which is why it can read 97 where the vendor app shows 95."
     },
     "charging": {
       "command": "battery",

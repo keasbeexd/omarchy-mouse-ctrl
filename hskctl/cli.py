@@ -593,6 +593,95 @@ def cmd_doctor(args) -> int:
     return _emit(report, args.json, human)
 
 
+def cmd_watch_battery(args) -> int:
+    """Sample the battery over time, so the reading can be judged rather than guessed.
+
+    A single number tells you nothing about whether it is right. What tells you
+    is whether it *moves sensibly*: monotonically down while in use, up on the
+    cable, and in steps the hardware plausibly reports. This prints one line per
+    sample and never writes to the mouse.
+
+    Both the raw byte and the vendor's rendering of it are shown, because the
+    Windows app does not display the byte directly and comparing against it is
+    the obvious sanity check.
+    """
+    import datetime
+    import time as _time
+
+    try:
+        profile = load_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    samples: list[dict] = []
+    deadline = None if args.duration <= 0 else _time.monotonic() + args.duration
+
+    if not args.json:
+        print(f"Sampling every {args.interval}s. Ctrl-C to stop.\n")
+        print(f"  {'time':<10} {'raw':>4} {'vendor':>7}  charging")
+
+    try:
+        while True:
+            stamp = datetime.datetime.now().strftime("%H:%M:%S")
+            entry: dict = {"time": stamp}
+            try:
+                session = open_session(profile, args.device)
+                raw = session.get_raw("batteryPercent")
+                charging = session.get("charging")
+                entry.update({"raw": raw, "charging": bool(charging),
+                              "vendor": _vendor_battery(raw, bool(charging))})
+            except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+                entry["error"] = str(exc)
+            samples.append(entry)
+
+            if not args.json:
+                if "error" in entry:
+                    print(f"  {stamp:<10} {'--':>4} {'--':>7}  {entry['error']}")
+                else:
+                    print(f"  {stamp:<10} {entry['raw']:>4} {entry['vendor']:>6}% "
+                          f"  {'yes' if entry['charging'] else 'no'}")
+
+            if deadline is not None and _time.monotonic() >= deadline:
+                break
+            _time.sleep(args.interval)
+    except KeyboardInterrupt:
+        if not args.json:
+            print()
+
+    payload = {"ok": True, "samples": samples}
+    if args.json:
+        json.dump(payload, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+
+    readings = [s["raw"] for s in samples if "raw" in s]
+    if len(readings) >= 2:
+        print(f"\n  {len(readings)} readings, {min(readings)}..{max(readings)}, "
+              f"{len(set(readings))} distinct")
+        if len(set(readings)) == 1:
+            print("  It never moved. Either the window was too short, or the byte "
+                  "is not tracking the battery.")
+    return 0
+
+
+def _vendor_battery(raw: int, charging: bool) -> int:
+    """What the Windows app would display for this raw byte.
+
+    Read out of `get_Battery_empty`. It branches on product id: the 5407/5408,
+    5707/5708, 5807/5808 and 5907/5908 family -- which includes the HSK Pro 4K
+    -- takes the simple path, where the byte really is a percentage and the app
+    merely rounds it down to a multiple of 5. The other family runs it through
+    a four-segment piecewise curve instead, so do not assume this holds for a
+    mouse you have not checked.
+
+    The one oddity is at the top: a full battery reads 100, but the app shows
+    95 while charging, presumably so it does not sit at 100% for an hour.
+    """
+    if raw == 100:
+        return 95 if charging else 100
+    return (raw // 5) * 5
+
+
 def cmd_measure_polling(args) -> int:
     """Time the mouse's input reports to measure the real polling rate.
 
@@ -1002,6 +1091,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fix.add_argument("--default", type=int, default=800)
     fix.set_defaults(func=cmd_fix_dpi)
+
+    watch = sub.add_parser(
+        "watch-battery",
+        help="sample the battery over time (read-only) to judge the reading",
+    )
+    watch.add_argument("--interval", type=float, default=60.0,
+                       help="seconds between samples (default 60)")
+    watch.add_argument("--duration", type=float, default=0.0,
+                       help="stop after this many seconds (default: until Ctrl-C)")
+    watch.set_defaults(func=cmd_watch_battery)
 
     measure = sub.add_parser(
         "measure-polling", help="time the mouse's reports to measure real Hz"
