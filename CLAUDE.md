@@ -38,7 +38,7 @@ hts_send_cmd(tx, rx):
 | 1 | `0xA1` in replies — the acknowledgement |
 | 2 | payload length |
 | 3 | opcode — **read opcode = write opcode + 0x80** |
-| 4 | link flag: `1` on the dongle, `0` on the cable |
+| 4 | link flag -- see below; **not** simply "where the mouse is" |
 | 5+ | value |
 
 VID `33e4`, 14 product ids. The config endpoint is identified by a vendor usage
@@ -214,6 +214,38 @@ block is not data to echo.** If it can take a value that cannot be true, the
 profile says so in `repairOnWrite` and the write repairs it. Blindly restating
 what you read is only safe for payload.
 
+## The link flag belongs to the endpoint, not to the mouse
+
+Byte 4 says which transport *this packet* is addressed over. That is a fact
+about the hidraw node you opened. It is **not** the same question the
+`connection` command answers, which is where the mouse currently is — and
+using the second to decide the first breaks the moment they disagree.
+
+They disagree exactly when you plug the cable in while the dongle is still in.
+The mouse leaves the RF link, `connection` reports 0, every packet then goes to
+*the dongle* carrying flag 0, and the firmware acknowledges and discards all of
+it. Every field reads back 0 and nothing says why:
+
+```
+Battery 0%   Polling rate 0 Hz   Lift-off 0   dpiStage1 0   ...
+```
+
+Two rules come out of this. **Establish the flag by probing, not by asking**:
+send `transport.linkProbe` on each flag and keep whichever answers with a
+payload that is not all zeros. The probe is `dpi` because a working mouse
+cannot have an all-zero DPI block, while battery, motion sync and angle snap
+can all legitimately read 0.
+
+And **pick the endpoint that answers, not the one that scores highest**.
+Ranking reads descriptors, so it cannot tell a dongle whose mouse is awake from
+one whose mouse has moved to the cable — they are the same descriptors. Only a
+reply distinguishes them, so `open_session` walks the candidates in rank order
+and takes the first that is alive. `doctor` prints that sweep.
+
+Refusing to guess matters more than it sounds. The old code returned a session
+regardless, and `status` then printed a screen of zeros **as if they were
+readings** — which is worse than an error, because it looks like data.
+
 ## Zero is an answer
 
 Twice now a heuristic has treated a legitimate 0 as "the mouse did not reply",
@@ -285,8 +317,9 @@ toggles, being small, were fine throughout.
 
 ## Diagnosing a misbehaving mouse
 
-`hskctl doctor` sends every read opcode on both link flags and prints the raw
-request and reply for each. It writes nothing. Use it before theorising: it
+`hskctl doctor` first sweeps every candidate endpoint on both link flags and
+says which ones answer with data, then dumps every read opcode on the live one
+with the raw request and reply. It writes nothing. Use it before theorising: it
 distinguishes "the mouse answered 0" from "the mouse never answered", which
 look identical in the panel.
 

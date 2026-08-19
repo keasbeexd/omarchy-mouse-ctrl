@@ -11,16 +11,23 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hskctl.device import Session  # noqa: E402
+from hskctl.protocol import ProtocolError  # noqa: E402
 from hskctl.protocol import load_profile  # noqa: E402
 
 PROFILE = "gwolves-hsk-pro-4k"
+
+
+class FakeInfo:
+    """Just enough HidrawInfo for the code under test to name the device."""
+    path = "/dev/hidraw-test"
+    vidpid = "33e4:5807"
 
 
 def bare_session():
     """A Session with no device behind it -- enough to exercise the logic."""
     session = Session.__new__(Session)
     session.profile = load_profile(PROFILE)
-    session.info = None
+    session.info = FakeInfo()
     session.wireless = False
     session._link_detected = False
     session.trace = None
@@ -69,39 +76,98 @@ class StageCountRepairTests(unittest.TestCase):
 
 
 class LinkDetectionTests(unittest.TestCase):
-    """A wired mouse reports 0, and 0 is an answer.
+    """Which link flag an endpoint wants is a fact about the endpoint.
 
-    detect_link used to require a non-zero payload before believing the reply.
-    That is precisely what a mouse on the cable sends, so a wired mouse could
-    never be detected: every command died with "it is probably asleep", which
-    is why charging never read while it was plugged in. The echoed opcode is
-    what makes a reply real.
+    It used to be read off the `connection` command, which answers a different
+    question -- whether the mouse is currently on RF or on a cable. Plug the
+    cable in while the dongle is still in and the two disagree: `connection`
+    says "wired", every packet then goes to the dongle carrying flag 0, the
+    firmware acknowledges and discards all of it, and every single setting
+    reads back 0 with nothing to explain why. That is what the user saw.
+
+    So the flag is now established by probing: send a read on each flag and
+    keep whichever answers with data.
     """
 
-    def replying(self, payload_byte):
+    OPCODE = 0x83   # the dpi read, which the profile names as the link probe
+
+    def answering_on(self, live_flag):
+        """A fake endpoint that only returns data on one link flag."""
         session = bare_session()
-        opcode = session.profile.build_request("connection", write=False)[3]
+        session.calls = []
 
-        def fake(command, packet):
-            return bytes([0x00, 0xA1, 0x01, opcode, 0x00, payload_byte]) + b"\x00" * 59
+        def fake_exchange(packet, command=None):
+            flag = bool(packet[4])
+            session.calls.append(flag)
+            header = bytes([0x00, 0xA1, 0x33, self.OPCODE, packet[4]])
+            if flag != live_flag:
+                # The firmware ACKs the wrong flag and then ignores the packet.
+                return header + b"\x00" * 60
+            return header + b"\x01\x07\x01\x90" + b"\x00" * 56
 
-        session._exchange_checked = fake
+        session._exchange = fake_exchange
         return session
 
-    def test_the_cable_is_detected_even_though_it_reports_zero(self):
-        session = self.replying(0)
-        self.assertFalse(session.detect_link())
-        self.assertTrue(session._link_detected)
-
-    def test_the_dongle_is_still_detected(self):
-        session = self.replying(1)
+    def test_the_dongle_is_found(self):
+        session = self.answering_on(True)
         self.assertTrue(session.detect_link())
 
-    def test_a_reply_that_echoes_no_opcode_is_not_believed(self):
+    def test_the_cable_is_found(self):
+        session = self.answering_on(False)
+        self.assertFalse(session.detect_link())
+
+    def test_it_tries_the_other_flag_rather_than_believing_the_first_ack(self):
+        session = self.answering_on(False)
+        session.wireless = True          # start on the wrong guess
+        self.assertFalse(session.detect_link())
+        self.assertIn(True, session.calls, "should have tried the dongle first")
+        self.assertIn(False, session.calls, "should have then tried the cable")
+
+    def test_the_answer_is_cached(self):
+        session = self.answering_on(True)
+        session.detect_link()
+        before = len(session.calls)
+        session.detect_link()
+        self.assertEqual(len(session.calls), before, "should not re-probe")
+
+    def test_an_endpoint_that_only_acks_is_rejected(self):
+        """The dongle with the mouse on the cable does exactly this.
+
+        Refusing is the whole point: returning a guess here is what produced a
+        status page full of zeros presented as real readings.
+        """
         session = bare_session()
-        session._exchange_checked = lambda command, packet: b"\x00" * 65
-        with self.assertRaises(Exception):
+        session._exchange = lambda packet, command=None: (
+            bytes([0x00, 0xA1, 0x33, self.OPCODE, packet[4]]) + b"\x00" * 60
+        )
+        with self.assertRaises(ProtocolError) as caught:
             session.detect_link()
+        self.assertIn("cable", str(caught.exception))
+
+    def test_a_silent_endpoint_is_rejected(self):
+        session = bare_session()
+        session._exchange = lambda packet, command=None: b"\x00" * 65
+        with self.assertRaises(ProtocolError):
+            session.detect_link()
+
+
+class LegacyLinkDetectionTests(unittest.TestCase):
+    """Profiles with no linkProbe still fall back to asking the mouse."""
+
+    def session_without_probe(self, payload_byte):
+        session = bare_session()
+        session.profile.data["transport"].pop("linkProbe", None)
+        opcode = session.profile.build_request("connection", write=False)[3]
+        session._exchange_checked = lambda command, packet: (
+            bytes([0x00, 0xA1, 0x01, opcode, 0x00, payload_byte]) + b"\x00" * 59
+        )
+        return session
+
+    def test_zero_still_means_wired_rather_than_no_answer(self):
+        self.assertFalse(self.session_without_probe(0).detect_link())
+
+    def test_one_still_means_dongle(self):
+        self.assertTrue(self.session_without_probe(1).detect_link())
 
 
 if __name__ == "__main__":

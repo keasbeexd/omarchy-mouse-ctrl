@@ -137,7 +137,11 @@ Two things that are easy to get wrong, and cost real time here:
 
 **An ACK is not success.** The firmware acknowledges a packet carrying the wrong
 link flag and then ignores it, replying with an all-zero payload — identical to
-a command it never received.
+a command it never received. And that link flag describes *the endpoint you
+opened*, not where the mouse is: plug the cable in while the dongle is still
+in and the two disagree, at which point every setting reads back 0. `hskctl`
+establishes it by probing both flags on every candidate node and keeping the
+one that answers with real data.
 
 **The DPI block has a header that changes how it is parsed.** `rx[5]` is the
 active stage and `rx[6]` is how many stages the firmware will take out of a
@@ -174,7 +178,7 @@ omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 69 tests
+python3 -m unittest discover -s tests    # 74 tests
 node tests/test_model.js                 # 45 tests
 ```
 

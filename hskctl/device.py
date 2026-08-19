@@ -255,20 +255,65 @@ class Session:
             f"Try `hskctl probe`."
         )
 
+    def probe_link(self, wireless: bool) -> bool:
+        """Does this endpoint answer with real data when addressed this way?
+
+        Byte 4 tells the firmware which transport the packet is addressed
+        over, and it is a property of *the endpoint we opened*, not of where
+        the mouse happens to be. Get it wrong and the firmware acknowledges the
+        packet and then ignores it, answering with an all-zero payload -- which
+        is indistinguishable from a mouse that is simply switched off.
+
+        So do not deduce it. Send a read on each flag and keep whichever one
+        comes back with a payload that is not all zeros.
+        """
+        spec = self.profile.transport.get("linkProbe") or {}
+        command = spec.get("command")
+        if not command or not self.profile.has_command(command):
+            return False
+        offset = spec.get("payloadFrom", 5)
+        packet = self.profile.build_request(command, write=False, wireless=wireless)
+        try:
+            reply = self._exchange(packet, command)
+        except (OSError, ProtocolError):
+            return False
+        return bool(reply) and self.profile.check_ack(reply) and any(reply[offset:])
+
     def detect_link(self) -> bool:
-        """Ask the mouse which link it is on, and set the flag accordingly.
+        """Work out which link flag this endpoint answers on.
 
-        This has to be explicit. The firmware acknowledges a packet carrying the
-        *wrong* link flag -- it replies 0xA1 and echoes the header -- and then
-        ignores it, answering with an all-zero payload. So an ACK is not proof
-        the command was honoured, and retrying only on a missing ACK never
-        corrects the flag: reads come back as zeros and writes vanish silently.
-
-        `connection` is the one command that carries no link flag at all, so it
-        answers the question regardless of which link we are on.
+        This used to ask the mouse over the `connection` command, which was
+        wrong in a way that took a while to see: `connection` reports whether
+        the mouse is currently linked over RF or sitting on a cable, which is a
+        different question from which flag *this endpoint* wants. Plug the
+        cable in while the dongle is still in and the two disagree -- the reply
+        says "wired", every packet then goes to the dongle carrying flag 0, the
+        firmware ACKs and discards all of it, and every setting reads back 0
+        with nothing to say why.
         """
         if self._link_detected:
             return self.wireless
+
+        if self.profile.transport.get("linkProbe"):
+            # Two rounds, because a sleeping mouse misses the first packet --
+            # and the packet itself is what wakes it.
+            for round_index in range(2):
+                for flag in (self.wireless, not self.wireless):
+                    if self.probe_link(flag):
+                        self.wireless = flag
+                        self._link_detected = True
+                        return self.wireless
+                if round_index == 0:
+                    time.sleep(0.12)
+            raise ProtocolError(
+                f"{self.info.path} acknowledges but answers with empty data on "
+                f"both link flags. Either the mouse is asleep -- move it and try "
+                f"again -- or this is the dongle while the mouse is on the "
+                f"cable, in which case the mouse is a different node. "
+                f"`hskctl doctor` lists every candidate and which one is alive."
+            )
+
+        # Older profiles with no probe defined fall back to asking.
         if not self.profile.has_command("connection"):
             self._link_detected = True
             return self.wireless
@@ -278,24 +323,16 @@ class Session:
         packet = self.profile.build_request("connection", write=False)
         opcode = packet[3] if len(packet) > 3 else None
 
-        # Getting this wrong poisons everything after it: with the wrong flag
-        # the firmware acknowledges and then ignores every command, so reads
-        # come back as zeros and writes vanish. A mouse waking from sleep can
-        # miss the first packet, so probe a few times before settling.
-        #
-        # What makes a reply real is the echoed opcode, NOT a non-zero payload.
-        # Requiring a non-zero payload here was a bug with a long reach: 0 is
-        # precisely what a mouse on the cable reports, so a wired mouse could
-        # never be detected and every command failed with "it is probably
-        # asleep" -- which is why charging never read while it was plugged in.
+        # What makes a reply real is the echoed opcode, NOT a non-zero payload:
+        # 0 is precisely what a mouse on the cable reports, so requiring
+        # non-zero here made a wired mouse undetectable.
         for _ in range(3):
             try:
                 reply = self._exchange_checked("connection", packet)
             except (OSError, ProtocolError):
                 time.sleep(0.08)
                 continue
-            answered = len(reply) > offset and (opcode is None or reply[3] == opcode)
-            if answered:
+            if len(reply) > offset and (opcode is None or reply[3] == opcode):
                 self.wireless = reply[offset] != 0
                 self._link_detected = True
                 return self.wireless
@@ -555,6 +592,12 @@ class Session:
             )
 
 
+def _new_session(profile: Profile, info: HidrawInfo) -> Session:
+    return Session(
+        profile, info, wireless=bool(profile.transport.get("defaultWireless"))
+    )
+
+
 def open_session(profile: Profile, path: str | None = None) -> Session:
     # Every caller that reaches the device goes through here, so this is the
     # one place the lock has to be taken.
@@ -565,7 +608,9 @@ def open_session(profile: Profile, path: str | None = None) -> Session:
         info = describe(path)
         if info is None:
             raise DeviceNotFound(f"{path} is not a readable hidraw node")
-        return Session(profile, info)
+        # An explicit path is an instruction, not a suggestion -- do not go
+        # looking elsewhere when someone has named a node.
+        return _new_session(profile, info)
 
     candidates = rank_candidates(profile)
     if not candidates:
@@ -581,4 +626,28 @@ def open_session(profile: Profile, path: str | None = None) -> Session:
             f"hskctl will not talk to it. Run `hskctl probe --json` and follow "
             f"docs/PROTOCOL-DISCOVERY.md."
         )
-    return Session(profile, best.info)
+
+    if not profile.transport.get("linkProbe"):
+        return _new_session(profile, best.info)
+
+    # Ranking is static: it reads descriptors, so it cannot tell a dongle whose
+    # mouse is awake from one whose mouse has just moved onto the cable and is
+    # now a different node entirely. Both look identical, and the second
+    # answers every command with zeros. So take the highest-scoring endpoint
+    # that actually *replies with data*, not simply the highest-scoring one.
+    failures: list[str] = []
+    for candidate in candidates:
+        session = _new_session(profile, candidate.info)
+        try:
+            session.detect_link()
+            return session
+        except (OSError, ProtocolError) as exc:
+            failures.append(f"  {candidate.info.path} ({candidate.info.vidpid}): {exc}")
+
+    raise DeviceNotFound(
+        "Found candidate nodes, but none of them answered with any data:\n"
+        + "\n".join(failures)
+        + "\n\nThe mouse may be asleep -- move it and try again. If it is on the "
+        "cable, check the cable carries data rather than only power. "
+        "`hskctl doctor` shows the raw exchange with every candidate."
+    )

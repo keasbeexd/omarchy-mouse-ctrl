@@ -454,7 +454,30 @@ def cmd_doctor(args) -> int:
         report["error"] = "no candidate HID node found"
         return _emit(report, args.json, lambda p: print(p["error"]))
 
-    path = args.device or candidates[0].info.path
+    # Which candidate is *alive* is not something the descriptors can answer.
+    # A dongle whose mouse has moved onto the cable looks identical to one
+    # whose mouse is awake, and it acknowledges every command while returning
+    # nothing -- so sweep them and say which ones actually reply with data.
+    report["liveness"] = []
+    if not args.device:
+        for candidate in candidates:
+            entry = {"path": candidate.info.path, "vidpid": candidate.info.vidpid,
+                     "wired": False, "dongle": False, "error": None}
+            try:
+                probe = open_session(profile, candidate.info.path)
+                for flag, key in ((False, "wired"), (True, "dongle")):
+                    entry[key] = probe.probe_link(flag)
+            except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+                entry["error"] = str(exc)
+            report["liveness"].append(entry)
+
+        alive = [e for e in report["liveness"] if e["wired"] or e["dongle"]]
+        if alive:
+            path = alive[0]["path"]
+        else:
+            path = candidates[0].info.path
+    else:
+        path = args.device
     report["device"] = path
 
     # Permissions matter more than anything else here: every exchange needs the
@@ -515,6 +538,21 @@ def cmd_doctor(args) -> int:
             print("     O_RDWR even to read. Install the udev rule:")
             print("       ./install.sh --udev")
             print("     then unplug and replug the mouse or its dongle.")
+        if p.get("liveness"):
+            print()
+            print("which candidates actually answer with data:")
+            for entry in p["liveness"]:
+                if entry["error"]:
+                    state = f"ERROR {entry['error'].splitlines()[0]}"
+                elif entry["wired"] or entry["dongle"]:
+                    flags = [n for n in ("wired", "dongle") if entry[n]]
+                    state = "ALIVE on " + " and ".join(flags)
+                else:
+                    state = "acknowledges but returns no data"
+                print(f"  {entry['path']:<16} {entry['vidpid']}  {state}")
+            if not any(e["wired"] or e["dongle"] for e in p["liveness"]):
+                print("  !! nothing answered. The mouse is asleep, or on a cable")
+                print("     that carries power but not data.")
         print()
         print("read attempts (nothing below writes to the mouse):")
         for att in p["attempts"]:

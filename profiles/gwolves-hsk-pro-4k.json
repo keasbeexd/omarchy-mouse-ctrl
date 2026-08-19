@@ -58,7 +58,13 @@
       "kind": "none",
       "offset": null,
       "range": null
-    }
+    },
+    "defaultWireless": true,
+    "linkProbe": {
+      "command": "dpi",
+      "payloadFrom": 5
+    },
+    "_linkProbeComment": "Byte 4 says which transport the packet is addressed over -- it is a property of the endpoint you opened, NOT of where the mouse currently is. The `connection` reply answers a different question (is the mouse linked over RF or sitting on the cable), and using it to pick byte 4 breaks the moment those disagree: plug the cable in while the dongle is still in, connection reports 0, every packet then goes to the dongle with the wrong flag, and the firmware ACKs and ignores all of it -- so every field reads 0 and nothing says why. Instead, probe: send this read on each flag and keep whichever answers with a payload that is not all zeros. dpi is the right probe because a working mouse cannot have an all-zero DPI block, whereas battery, motion sync and angle snap can all legitimately read 0."
   },
   "commands": {
     "_comment": "Byte 2 is the payload length, byte 3 the opcode, byte 4 the link flag, byte 5 onwards the value. The read opcode is always the write opcode + 0x80. Commands whose opcode already has the high bit set are read-only.",
