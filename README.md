@@ -184,7 +184,7 @@ omarchy plugin enable io.github.keasbeexd.hsk
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 78 tests
+python3 -m unittest discover -s tests    # 93 tests
 node tests/test_model.js                 # 45 tests
 ```
 
@@ -193,6 +193,12 @@ The Python suite pins the decoded protocol rather than the implementation: the
 one byte, the measured polling map, read-only fields refusing writes, and
 factory reset staying unreachable. If a change breaks one of those, the change
 is very probably wrong.
+
+It also refuses to do anything irreversible on a guess: the device lock cannot
+be written through a symlink, automatic device selection requires a node that
+matches the vendor and product ids the profile declares (a `--device` you name
+yourself is readable but needs `--force-unmatched` to write), and any field the
+profile marks unverified is read-only until someone confirms it on hardware.
 
 It also checks the repository itself — that `install.sh` parses and dispatches
 every flag its own help text advertises, that nothing references a file the

@@ -167,7 +167,7 @@ Work up in this order, least to most risky:
 2. `motionSync`, `angleSnap`, `rippleControl` — single bits
 3. `liftOffDistance`, `debounceMs`
 4. `dpiStage1`…`dpiStage6` — these rewrite stored config
-5. `sleepMinutes`
+5. `sleepSeconds`
 
 When every field round-trips and survives unplugging the mouse, set
 `"status": "verified"`.

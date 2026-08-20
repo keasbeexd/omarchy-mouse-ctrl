@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import atexit
+import errno
 import fcntl
 import os
+import stat
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .hidraw import HidrawDevice, HidrawInfo, enumerate_devices
@@ -27,11 +30,18 @@ class Candidate:
     info: HidrawInfo
     score: int
     reasons: list[str]
+    # Does this node match what the profile actually declares, rather than
+    # merely looking plausible? Scoring answers "worth showing the user";
+    # this answers "safe to send vendor commands to unprompted".
+    identified: bool = False
+    unmatched: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         d = self.info.as_dict()
         d["score"] = self.score
         d["reasons"] = self.reasons
+        d["identified"] = self.identified
+        d["unmatched"] = self.unmatched
         return d
 
 
@@ -85,8 +95,30 @@ def rank_candidates(profile: Profile | None = None) -> list[Candidate]:
             score += 10
             reasons.append("device name looks like a G-Wolves node")
 
+        # Identification is a conjunction of everything the profile declares,
+        # not a score. A score is a ranking heuristic and will happily elect
+        # the best of a bad field; sending vendor-specific feature reports to
+        # the wrong device is not something to do on a heuristic.
+        unmatched: list[str] = []
+        if want_vids and f"{info.vendor_id:04x}" not in want_vids:
+            unmatched.append(f"vendor id {info.vendor_id:04x} is not in the profile")
+        if want_pids and f"{info.product_id:04x}" not in want_pids:
+            unmatched.append(f"product id {info.product_id:04x} is not in the profile")
+        if want_page is not None and info.usage_page != want_page:
+            unmatched.append(
+                f"usage page {info.usage_page if info.usage_page is None else f'0x{info.usage_page:04x}'}"
+                f" is not the profile's 0x{want_page:04x}"
+            )
+        if match.get("requireFeatureReport") and not info.feature_report_ids:
+            unmatched.append("no feature report, which the profile requires")
+        if want_iface is not None and info.interface != want_iface:
+            unmatched.append(f"interface {info.interface} is not {want_iface}")
+
         if score > 0:
-            results.append(Candidate(info, score, reasons))
+            results.append(
+                Candidate(info, score, reasons, identified=not unmatched,
+                          unmatched=unmatched)
+            )
 
     results.sort(key=lambda c: (-c.score, c.info.path))
     return results
@@ -103,11 +135,91 @@ class DeviceBusy(ProtocolError):
 _LOCK_HANDLE = None
 
 
-def _lock_path() -> str:
+class UnsafeLockPath(ProtocolError):
+    pass
+
+
+def _lock_dir() -> str:
+    """A directory only this user can write to, for the lock file.
+
+    `$XDG_RUNTIME_DIR` is the right answer: systemd creates it 0700 and owned
+    by the user. The fallback matters more than it looks, though, because
+    without one a cron job or a bare login shell has nowhere to put the lock.
+
+    The old fallback was `/tmp/hskctl-<uid>.lock` opened with `open(path, "w")`
+    -- a predictable path in a world-writable directory, opened in a mode that
+    follows symlinks and truncates. Anyone with a local account could create
+    that symlink first and have hskctl truncate a file of their choosing, with
+    hskctl's privileges, the moment it next ran.
+
+    So: a per-user directory created 0700, verified to be a real directory
+    that we own, and never reused if it is anything else.
+    """
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     if runtime and os.path.isdir(runtime):
-        return os.path.join(runtime, "hskctl.lock")
-    return os.path.join("/tmp", f"hskctl-{os.getuid()}.lock")
+        return runtime
+
+    path = os.path.join(tempfile.gettempdir(), f"hskctl-{os.getuid()}")
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+
+    # lstat, not stat -- the question is what the name itself is, and a stat
+    # through a symlink answers about the target instead.
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode):
+        raise UnsafeLockPath(f"{path} exists and is not a directory; refusing to use it")
+    if info.st_uid != os.getuid():
+        raise UnsafeLockPath(
+            f"{path} is owned by uid {info.st_uid}, not you. Someone else got "
+            f"there first -- remove it, or set XDG_RUNTIME_DIR."
+        )
+    if info.st_mode & 0o077:
+        raise UnsafeLockPath(
+            f"{path} is accessible to other users (mode "
+            f"{stat.S_IMODE(info.st_mode):04o}); refusing to use it"
+        )
+    return path
+
+
+def _lock_path() -> str:
+    return os.path.join(_lock_dir(), "hskctl.lock")
+
+
+def _open_lock_file(path: str):
+    """Open the lock file without following a symlink and without truncating.
+
+    O_NOFOLLOW makes the open fail outright if the final component is a
+    symlink, which is the actual attack. Truncation is dropped because a lock
+    file has no contents worth clearing -- `open(path, "w")` was destroying
+    data for no reason at all.
+    """
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            # O_NOFOLLOW reports a symlink as ELOOP, which reads like a
+            # filesystem fault rather than what it is.
+            raise UnsafeLockPath(
+                f"{path} is a symbolic link. hskctl will not write through it: "
+                f"a lock file in a shared directory is a predictable name, and "
+                f"following that link is how a local user gets hskctl to "
+                f"truncate a file of their choosing. Delete it."
+            ) from exc
+        raise
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise UnsafeLockPath(f"{path} is not a regular file; refusing to use it")
+        if info.st_uid != os.getuid():
+            raise UnsafeLockPath(
+                f"{path} is owned by uid {info.st_uid}, not you; refusing to use it"
+            )
+    except BaseException:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, "r+b")
 
 
 def acquire_device_lock(timeout: float = 6.0) -> None:
@@ -126,7 +238,7 @@ def acquire_device_lock(timeout: float = 6.0) -> None:
     if _LOCK_HANDLE is not None:
         return
     path = _lock_path()
-    handle = open(path, "w")
+    handle = _open_lock_file(path)
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -164,6 +276,12 @@ class Session:
     # Which link the mouse is on. Established by detect_link() before the first
     # exchange, because an ACK alone does not prove the flag was right.
     wireless: bool = False
+    # False when the node was named explicitly and does not match the profile.
+    # Reads are allowed -- that is how you profile a new device -- but writes
+    # are not, because a vendor feature report aimed at the wrong hardware is
+    # exactly the kind of blind write that bricks things.
+    identified: bool = True
+    allow_unidentified_writes: bool = False
     _link_detected: bool = False
 
     # -- low level -----------------------------------------------------------
@@ -459,6 +577,17 @@ class Session:
         self.profile.checksum(packet)
         self._exchange_checked(target_cmd, bytes(packet))
 
+    def _guard_write(self) -> None:
+        if self.identified or self.allow_unidentified_writes:
+            return
+        raise ProtocolError(
+            f"{self.info.path} does not match the {self.profile.model} profile "
+            f"({self.info.vidpid}), so hskctl will not write to it. Reads are "
+            f"allowed so you can profile it; if you are certain, pass "
+            f"--force-unmatched. Sending vendor feature reports to the wrong "
+            f"device can leave it unusable."
+        )
+
     def set_raw(self, name: str, raw: int) -> None:
         """Write a raw wire value, bypassing the friendly-value table.
 
@@ -468,6 +597,7 @@ class Session:
         """
         if not self.profile.field_writable(name):
             raise ProtocolError(f"{name!r} is read-only on this device")
+        self._guard_write()
         self.detect_link()
         command = self.profile.field_command(name)
         spec = self.profile.field(name)
@@ -542,6 +672,7 @@ class Session:
         """
         if not self.profile.field_writable(name):
             raise ProtocolError(f"{name!r} is read-only on this device")
+        self._guard_write()
         self.detect_link()
         command = self.profile.field_command(name)
         spec = self.profile.data["commands"][command]
@@ -592,9 +723,11 @@ class Session:
             )
 
 
-def _new_session(profile: Profile, info: HidrawInfo) -> Session:
+def _new_session(profile: Profile, info: HidrawInfo, identified: bool = True) -> Session:
     return Session(
-        profile, info, wireless=bool(profile.transport.get("defaultWireless"))
+        profile, info,
+        wireless=bool(profile.transport.get("defaultWireless")),
+        identified=identified,
     )
 
 
@@ -609,8 +742,11 @@ def open_session(profile: Profile, path: str | None = None) -> Session:
         if info is None:
             raise DeviceNotFound(f"{path} is not a readable hidraw node")
         # An explicit path is an instruction, not a suggestion -- do not go
-        # looking elsewhere when someone has named a node.
-        return _new_session(profile, info)
+        # looking elsewhere when someone has named a node. It is not a licence
+        # to write to it, though: if it does not match the profile, reads work
+        # and writes need --force-unmatched.
+        matched = [c for c in rank_candidates(profile) if c.info.path == path and c.identified]
+        return _new_session(profile, info, identified=bool(matched))
 
     candidates = rank_candidates(profile)
     if not candidates:
@@ -626,6 +762,29 @@ def open_session(profile: Profile, path: str | None = None) -> Session:
             f"hskctl will not talk to it. Run `hskctl probe --json` and follow "
             f"docs/PROTOCOL-DISCOVERY.md."
         )
+
+    # Only nodes that match what the profile declares are eligible for
+    # automatic selection. Ranking is a heuristic -- a device with a vendor
+    # usage page and a feature report scores 35 here without matching a single
+    # declared id -- and "best of whatever is plugged in" is not a basis for
+    # sending vendor commands to somebody's hardware.
+    eligible = [c for c in candidates if c.identified]
+    if not eligible:
+        listing = "\n".join(
+            f"  {c.info.path}  {c.info.vidpid}  {c.info.name!r}\n"
+            f"      {'; '.join(c.unmatched)}"
+            for c in candidates[:5]
+        )
+        raise DeviceNotFound(
+            f"No HID node matches the {profile.model} profile. The closest "
+            f"were:\n{listing}\n\n"
+            f"hskctl will not pick one of these on its own -- a vendor feature "
+            f"report sent to the wrong device can leave it unusable. If you "
+            f"know which node it is, name it with --device; `hskctl probe` "
+            f"lists every candidate and why each one was rejected."
+        )
+    candidates = eligible
+    best = candidates[0]
 
     if not profile.transport.get("linkProbe"):
         return _new_session(profile, best.info)

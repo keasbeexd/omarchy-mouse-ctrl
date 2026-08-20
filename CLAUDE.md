@@ -281,6 +281,55 @@ vendor app says 95. That is a deliberate difference, not drift —
 `_vendor_battery` in the CLI reproduces the app's rendering so the two can be
 compared, and `hskctl watch-battery` prints both.
 
+## What the security review found, and what it means generally
+
+v1.3.1 was rejected by omarchyplugins.com for three things, none of them a
+protocol bug. They were all the same mistake in different places: **doing
+something irreversible on the strength of a guess.**
+
+**The lock file.** `/tmp/hskctl-<uid>.lock`, opened with `open(path, "w")` --
+a predictable name in a world-writable directory, opened in a mode that follows
+symlinks and truncates. Any local user could pre-create that symlink and have
+hskctl destroy a file of their choosing. It now lives in a 0700 directory we
+verify we own, is opened `O_NOFOLLOW` without truncation, and refuses anything
+that is not a regular file belonging to us. Truncation was never needed: a lock
+file has no contents.
+
+**Device selection.** `rank_candidates` scores nodes, and `open_session` took
+the top one. But a device with a vendor usage page and a feature report scores
+35 *without matching a single id the profile declares* -- so hskctl could send
+vendor feature reports to somebody's keyboard. Scoring is now a ranking
+heuristic for `probe` only; `Candidate.identified` is a conjunction of
+everything the profile declares, and automatic selection considers nothing
+else. An explicitly named `--device` may be read but not written without
+`--force-unmatched`.
+
+**Writable-but-unverified fields.** The profile marked `dpiStageCount` and the
+sleep timer `_needsVerification` and shipped them writable anyway. That is the
+same shape as the blind write that corrupted a real mouse here. `field_writable`
+now returns False for anything carrying the marker, and a test enforces that no
+field is ever both.
+
+The general rule: **a heuristic may decide what to show a user; only a
+verified fact may decide what to write to their hardware.**
+
+## The battery reply is fully confirmed
+
+`charging` is `rx[5] > 0`. Watched on hardware 2026-08-19: 0, then 1 within one
+sample of the cable going in, then 0 again when it came out. `rx[4]` stayed 1
+throughout, so the mouse keeps its RF link while charging -- plugging in does
+not move it to the wired endpoint.
+
+The percentage was confirmed the slow way: 100 down to 81 across a night, about
+2.4 points an hour, implying roughly 40 hours from full. Every earlier
+observation had been at or near full, where the byte legitimately does not
+move, so it looked broken for as long as it was only ever sampled there. A
+fifteen-minute window could not have distinguished that from a dead reading.
+
+The technique worth keeping: when a value looks stuck, find something in the
+*same reply* that should change, and check whether it does. The charging flag
+flipping is what proved the read path was live rather than cached.
+
 ## Zero is an answer
 
 Twice now a heuristic has treated a legitimate 0 as "the mouse did not reply",
@@ -374,7 +423,7 @@ inputs are legal before deciding what to test.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests    # 78 tests
+python3 -m unittest discover -s tests    # 93 tests
 node tests/test_model.js                 # 45 tests
 ```
 
@@ -397,7 +446,7 @@ hskctl/       hidraw.py protocol.py device.py cli.py
 profiles/     the decoded protocol, as data
 install.sh    udev rule, self-contained -- no external files
 tools/        analyze-driver.py
-tests/        protocol, view-model and packaging tests
+tests/        protocol, view-model, packaging and safety tests
 docs/         how the protocol was decoded and how to verify it
 ```
 
@@ -418,20 +467,19 @@ docs/         how the protocol was decoded and how to verify it
    different length byte, so it is not a clean comparison. Treat the mechanism
    as unconfirmed; do not "simplify" the linked write away.
 
-3. `charging` is `rx[5] > 0`, decoded from `battery_update_ui`. Reading it on
-   the cable was blocked by two separate bugs ("Zero is an answer", then "The
-   link flag belongs to the endpoint"), so it is still untested rather than
-   wrong — confirm it reads 1 while plugged in.
-4. Whether the battery byte is monotonic and well-behaved over a real
-   discharge has not been checked. `hskctl watch-battery` exists to answer it;
-   nobody has left it running yet.
-5. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
+3. `dpiStageCount` is **read-only** until someone confirms what changing it
+   does. The write itself is proven -- setting it to 7 is what unstuck DPI --
+   but nobody has set it to 3 and checked the mouse then cycles three stages.
+   Nothing is lost meanwhile: the only write that matters is the automatic
+   `repairOnWrite` on the dpi command, which does not go through
+   `field_writable`.
+4. `debounce` read and write are asymmetric -- read returns byte 0 of a 4-byte
    tuple, write takes a row index into the driver's 6-row table. Model the
    table to re-enable writing.
-6. `tools/analyze-driver.py` never got run against the older 2023 build
+5. `tools/analyze-driver.py` never got run against the older 2023 build
    (`HSK_Pro_4K_FWSW20230322.rar`). Diffing the two would cross-check the
    command table. Does not need hardware, only the archive.
-7. The USB-capture route (`capture-usbmon.sh`, `decode-capture.py`) was removed
+6. The USB-capture route (`capture-usbmon.sh`, `decode-capture.py`) was removed
    -- static analysis of the vendor binary answered everything and the capture
    path was never used. `docs/PROTOCOL-DISCOVERY.md` describes the method for
    anyone profiling a different mouse; the scripts are in git history.

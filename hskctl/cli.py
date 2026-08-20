@@ -29,9 +29,22 @@ FRIENDLY_LABELS = {
     "liftOffDistance": "Lift-off distance",
     "debounceMs": "Debounce (raw)",
     "angleSnap": "Angle snapping",
-    "sleepMinutes": "Sleep timer (raw)",
+    "sleepSeconds": "Sleep timer",
     "firmwareVersion": "Firmware",
 }
+
+
+def _session(args, profile, path=None):
+    """Open a session, carrying the user's explicit override if they gave one.
+
+    The override exists because profiling a device the profile does not know
+    about requires writing to it -- and refusing that outright would make the
+    tool unable to grow. It is deliberately awkward to reach.
+    """
+    session = open_session(profile, path if path is not None else args.device)
+    if getattr(args, "force_unmatched", False):
+        session.allow_unidentified_writes = True
+    return session
 
 
 def _emit(payload: dict, as_json: bool, human) -> int:
@@ -136,7 +149,7 @@ def cmd_status(args) -> int:
         )
 
     try:
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
         settings = session.read_all()
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, state="error", model=profile.model,
@@ -174,6 +187,11 @@ def cmd_status(args) -> int:
                 value = f"{value}%"
             elif key == "pollingRate":
                 value = f"{value} Hz"
+            elif key == "sleepSeconds":
+                # Seconds, confirmed by timing the mouse. Show minutes too --
+                # nobody thinks in 240-second units.
+                value = (f"{value} s ({value / 60:.0f} min)" if value >= 60
+                         else f"{value} s")
             elif key == "debounceMs":
                 # Not milliseconds: this is byte 0 of a 4-byte tuple indexed by
                 # a row in the driver's table. Do not imply a unit.
@@ -191,7 +209,7 @@ def cmd_status(args) -> int:
 def cmd_get(args) -> int:
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
         if getattr(args, "verbose", False):
             session.trace = []
         value = session.get(args.field)
@@ -236,7 +254,7 @@ def cmd_set(args) -> int:
     value = _coerce(args.value)
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
         if getattr(args, "verbose", False):
             session.trace = []
         if getattr(args, "raw", False):
@@ -350,7 +368,7 @@ def cmd_probe_write(args) -> int:
     """
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
         command = profile.field_command(args.field)
         before = bytes(session._read(command))
     except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
@@ -464,7 +482,7 @@ def cmd_doctor(args) -> int:
             entry = {"path": candidate.info.path, "vidpid": candidate.info.vidpid,
                      "wired": False, "dongle": False, "error": None}
             try:
-                probe = open_session(profile, candidate.info.path)
+                probe = _session(args, profile, candidate.info.path)
                 for flag, key in ((False, "wired"), (True, "dongle")):
                     entry[key] = probe.probe_link(flag)
             except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
@@ -496,7 +514,7 @@ def cmd_doctor(args) -> int:
     report["access"] = access
 
     try:
-        session = open_session(profile, path)
+        session = _session(args, profile, path)
     except (DeviceBusy, DeviceNotFound, ProtocolError) as exc:
         report["ok"] = False
         report["error"] = str(exc)
@@ -614,6 +632,7 @@ def cmd_watch_battery(args) -> int:
         return _fail(str(exc), args.json)
 
     samples: list[dict] = []
+    started = _time.monotonic()
     deadline = None if args.duration <= 0 else _time.monotonic() + args.duration
 
     if not args.json:
@@ -626,9 +645,10 @@ def cmd_watch_battery(args) -> int:
     try:
         while True:
             stamp = datetime.datetime.now().strftime("%H:%M:%S")
-            entry: dict = {"time": stamp}
+            entry: dict = {"time": stamp,
+                           "elapsed": round(_time.monotonic() - started, 1)}
             try:
-                session = open_session(profile, args.device)
+                session = _session(args, profile, args.device)
                 # The whole reply, not just the byte we decode. "Are we even
                 # watching the right byte?" is a fair question and this answers
                 # it with data: the battery reply declares two payload bytes,
@@ -688,12 +708,30 @@ def cmd_watch_battery(args) -> int:
         else:
             print("  no byte of the reply changed at all")
 
-    if len(set(readings)) == 1:
+    # Whether it moved is the easy question. Whether it moved at a *plausible
+    # rate* is the one that would catch a bad reading, and that needs the clock.
+    timed = [s for s in samples if "raw" in s]
+    hours = (timed[-1]["elapsed"] - timed[0]["elapsed"]) / 3600.0 if timed else 0.0
+    drop = timed[0]["raw"] - timed[-1]["raw"] if timed else 0
+
+    if len(set(readings)) > 1 and hours > 0 and drop > 0:
+        rate = drop / hours
+        print(f"  fell {drop} points over {hours:.1f}h -> {rate:.1f} %/hour")
+        print(f"  at that rate a full charge lasts about {100 / rate:.0f} hours")
+        print("  Sanity-check that against the rated life. An order of magnitude")
+        print("  out either way is worth investigating.")
+    elif len(set(readings)) == 1:
         print()
-        print("  The percentage held steady for this whole run. That is normal")
-        print("  near a full charge -- lithium cells sit at the top of their")
-        print("  range for a long time -- so a short window proves little. If")
-        print("  it is still pinned after a few hours off the cable, come back.")
+        if any(s.get("charging") for s in samples):
+            print("  It was charging during this run, so a steady reading says")
+            print("  nothing about discharge.")
+        print(f"  Held at {readings[0]} for {hours:.1f}h. Near a full charge that")
+        print("  is expected -- the byte has 1% resolution and lithium cells sit")
+        print("  at the top of their range for a long time. An idle mouse draws")
+        print("  far less than one in use, too.")
+        print()
+        print("  To make this test able to fail: run it off the cable, while")
+        print("  using the mouse, starting from below full.")
     return 0
 
 
@@ -843,7 +881,7 @@ def cmd_calibrate_polling(args) -> int:
 
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
         original = session.get_raw("pollingRate")
     except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
@@ -947,7 +985,7 @@ def cmd_fix_dpi(args) -> int:
     """
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
@@ -1010,7 +1048,7 @@ def cmd_save(args) -> int:
     """
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
         settings = session.read_all()
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
@@ -1046,7 +1084,7 @@ def cmd_apply(args) -> int:
 
     try:
         profile = load_profile(args.profile)
-        session = open_session(profile, args.device)
+        session = _session(args, profile, args.device)
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
 
@@ -1091,6 +1129,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Configure a G-Wolves HSK Pro 4K (and friends) from Linux.",
     )
     parser.add_argument("--version", action="version", version=f"hskctl {__version__}")
+    parser.add_argument(
+        "--force-unmatched",
+        action="store_true",
+        help="allow writes to a --device that does not match the profile "
+             "(for profiling new hardware; can brick the wrong device)",
+    )
     parser.add_argument("--profile", help="device profile name", default=None)
     parser.add_argument("--device", help="force a specific /dev/hidrawN", default=None)
     parser.add_argument("--json", action="store_true", help="machine-readable output")

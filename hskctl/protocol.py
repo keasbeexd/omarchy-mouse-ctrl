@@ -269,10 +269,24 @@ class Profile:
         return spec.get("command") or spec["from"]
 
     def field_writable(self, name: str) -> bool:
+        """Can this field be written -- and should it be?
+
+        `_needsVerification` marks a mapping nobody has confirmed against real
+        hardware. Writing through one is exactly the class of blind write that
+        corrupted a mouse earlier in this project, so the marker now closes the
+        write path rather than merely printing a warning nobody reads. The
+        profile shipped `dpiStageCount` and the sleep timer as writable while
+        declaring their mappings unverified, which is a contradiction the code
+        should not have allowed to exist.
+
+        Verify it on hardware and delete the marker. That is the only route.
+        """
         if not self.has_field(name):
             return False
         spec = self.data["fields"][name]
         if spec.get("readOnly"):
+            return False
+        if spec.get("_needsVerification"):
             return False
         return self.can_write(self.field_command(name))
 

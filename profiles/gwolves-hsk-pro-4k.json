@@ -172,7 +172,8 @@
       "max": 100,
       "readOnly": true,
       "offset": 6,
-      "_note": "rx[6], and for this model it really is a percentage. get_Battery_empty branches on product id: the 5407/5408, 5707/5708, 5807/5808 and 5907/5908 family -- the HSK Pro 4K among them -- takes a path that only rounds the byte down to a multiple of 5 before display. The other family (5403/5404, 5703/5704, 5803/5804) runs it through a four-segment piecewise curve instead: raw/2 up to 40, then (raw-40)*25/30+20, (raw-70)*30/20+45 and (raw-90)*25/10+76. So 'the byte is a percentage' is a fact about this model, not about the protocol -- do not carry it to another profile without checking which branch that product id takes. hskctl reports the byte unrounded, which is why it can read 97 where the vendor app shows 95."
+      "_note": "rx[6], and for this model it really is a percentage. get_Battery_empty branches on product id: the 5407/5408, 5707/5708, 5807/5808 and 5907/5908 family -- the HSK Pro 4K among them -- takes a path that only rounds the byte down to a multiple of 5 before display. The other family (5403/5404, 5703/5704, 5803/5804) runs it through a four-segment piecewise curve instead: raw/2 up to 40, then (raw-40)*25/30+20, (raw-70)*30/20+45 and (raw-90)*25/10+76. So 'the byte is a percentage' is a fact about this model, not about the protocol -- do not carry it to another profile without checking which branch that product id takes. hskctl reports the byte unrounded, which is why it can read 97 where the vendor app shows 95.",
+      "_verified": "Discharge confirmed on hardware 2026-08-19: 100 -> 81 across a night on the dongle, about 2.4 points/hour, implying roughly 40 hours from full. Monotonic, right direction, plausible magnitude."
     },
     "charging": {
       "command": "battery",
@@ -180,8 +181,7 @@
       "encoding": "u8",
       "type": "bool",
       "readOnly": true,
-      "_note": "Read out of hts_get_battery + battery_update_ui: the reply carries two bytes, rx[5] and rx[6]. The app assigns rx[6] to b_percent and shows the charging label when rx[5] > 0. So the offsets are decoded, not guessed.",
-      "_needsVerification": "still observed 0 on the cable -- if it never reads non-zero, the endpoint being answered is the dongle rather than the mouse, not a wrong offset"
+      "_note": "rx[5] > 0. Decoded from hts_get_battery + battery_update_ui, confirmed on hardware 2026-08-19: it read 0, flipped to 1 within one sample of the cable going in, and returned to 0 when it came out. rx[4] stayed 1 (dongle) throughout, so the mouse keeps its RF link while charging."
     },
     "connection": {
       "command": "connection",
@@ -234,6 +234,15 @@
       "encoding": "u8",
       "type": "bool"
     },
+    "sleepSeconds": {
+      "command": "sleep",
+      "encoding": "u16be",
+      "min": 0,
+      "max": 3600,
+      "step": 30,
+      "_note": "SECONDS, confirmed on hardware 2026-08-19 by leaving the mouse still and timing it: a stored 240 slept after four minutes, not four hours. It was called sleepMinutes until then, on no evidence whatsoever. The 30s step comes from Sleep_update_ui, which positions its slider at (value / 30) - 1, so the vendor only ever emits multiples of 30; a value under 30 selects a different label, presumably 'off'.",
+      "_rangeNote": "The unit and the step are established; the slider's Maximum is not in Sleep_update_ui, so max here is deliberately generous. This is a bound, not an unverified mapping -- a value the firmware rejects fails `set`'s read-back and is reported, rather than landing somewhere unexpected."
+    },
     "debounceMs": {
       "command": "debounce",
       "encoding": "u8",
@@ -241,13 +250,6 @@
       "max": 20,
       "_needsVerification": "read returns byte 0 of a 4-byte tuple (observed 03 0a 23 14, row 1 of the driver's 6-row table) while the write takes a row index -- the two are not the same number, so writing is disabled until the table is modelled",
       "readOnly": true
-    },
-    "sleepMinutes": {
-      "command": "sleep",
-      "encoding": "u16be",
-      "min": 0,
-      "max": 60,
-      "_needsVerification": "observed 240 on hardware; the unit is not established. If minutes it would be 4 hours, if seconds 4 minutes -- do not present it as either until measured."
     },
     "activeDpiStage": {
       "command": "dpi",
@@ -264,7 +266,8 @@
       "min": 1,
       "max": 7,
       "_note": "rx[6] -- how many DPI stages the mouse cycles through, not an unknown flag. hts_set_get_dpis_colors writes tx[6] from the struct field that hts_dpi_level_combo_SelectionChangeCommitted sets from the 'DPI level' combo, and that handler clamps the active stage down to it. Reads 0 on this mouse, which is odd -- it cycles more stages than that -- so either the firmware does not use it the way the app does, or an earlier bad packet zeroed it.",
-      "_needsVerification": "writing it is untested on hardware; read it, change the count, and check the mouse cycles that many stages before trusting the write"
+      "_needsVerification": "writing it is untested on hardware; read it, change the count, and check the mouse cycles that many stages before trusting the write",
+      "readOnly": true
     },
     "dpiStage1": {
       "command": "dpi",
@@ -466,7 +469,7 @@
       {
         "title": "POWER",
         "fields": [
-          "sleepMinutes"
+          "sleepSeconds"
         ]
       }
     ]

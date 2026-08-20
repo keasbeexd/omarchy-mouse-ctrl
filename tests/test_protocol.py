@@ -288,11 +288,11 @@ class RealProfileTests(unittest.TestCase):
 
     def test_sleep_uses_its_subcommand_and_big_endian_value(self):
         packet = self.profile.build_request(
-            "sleep", write=True, value_bytes=self.profile.encode_value("sleepMinutes", 15)
+            "sleep", write=True, value_bytes=self.profile.encode_value("sleepSeconds", 30)
         )
         self.assertEqual(packet[3], 0x02)
         self.assertEqual(packet[6], 0x07, "byte 6 selects set vs get for sleep")
-        self.assertEqual(packet[7:9], b"\x00\x0f")
+        self.assertEqual(packet[7:9], b"\x00\x1e")
 
     def test_dpi_decodes_big_endian(self):
         reply = bytearray(65)
@@ -376,9 +376,8 @@ class RealProfileTests(unittest.TestCase):
             "liftOffDistance",
             "motionSync",
             "angleSnap",
-            "sleepMinutes",
+            "sleepSeconds",
             "activeDpiStage",
-            "dpiStageCount",
         }
         for n in range(1, 8):
             expected |= {f"dpiStage{n}", f"dpiStage{n}Y", f"dpiStage{n}Color"}

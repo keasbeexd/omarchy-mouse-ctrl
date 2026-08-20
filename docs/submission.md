@@ -54,8 +54,26 @@ interpreted by a generic engine — there is no device-specific code. The vendor
 application matches 14 product IDs across the HSK range, so other variants very
 likely work; adding one is a profile, not a patch.
 
-107 tests (67 Python, 40 JS) pin the decoded protocol, the view model, and the
-repository's own packaging — `install.sh` parses and handles every flag it
-documents, nothing references a file the tree does not ship, and the README's
-links and commands resolve. Those last ones were added after an earlier
-submission was rejected for a truncated `install.sh` in the pushed tree.
+138 tests (93 Python, 45 JS) pin the decoded protocol, the view model, the
+repository's own packaging, and the safety properties below. The packaging and
+safety suites both exist because of earlier review findings, and both fail
+against the builds that were rejected.
+
+**Addressing the v1.3.1 review.** All three findings were valid and are fixed:
+
+- *Lock file.* The lock lived at a predictable `/tmp` path opened with a mode
+  that follows symlinks and truncates. It now lives in a 0700 directory whose
+  ownership is checked, is opened `O_NOFOLLOW`, and never truncates — a lock
+  file has no contents to clear. A test creates the symlink and asserts the
+  target survives.
+- *Device selection.* Candidate scoring is a ranking heuristic and could elect
+  a node matching none of the profile's declared ids. Automatic selection now
+  requires a match on vendor id, product id, usage page and feature report;
+  scoring only orders what is already eligible. A node named explicitly with
+  `--device` can be read but needs `--force-unmatched` to be written, so
+  profiling new hardware is still possible but never accidental.
+- *Unverified writable fields.* `field_writable` now returns False for any
+  field carrying `_needsVerification`, so the profile cannot ship a writable
+  mapping it also calls unproven. `dpiStageCount` is read-only pending a
+  hardware check; the sleep timer's unit was confirmed by timing the mouse, so
+  it is renamed `sleepSeconds`, its range corrected, and the marker removed.
