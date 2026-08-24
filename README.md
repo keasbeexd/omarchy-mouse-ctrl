@@ -134,10 +134,11 @@ shell after editing:
 omarchy-restart-shell
 ```
 
-If `showBatteryLabel` is on but no number appears, the setting is not the
-problem: the label is deliberately blank whenever the battery cannot be read, so
-the bar shows the icon alone rather than a stale or invented figure. `hskctl
-status` will say why the read is failing.
+If `showBatteryLabel` is on but no number appears, the label is deliberately
+blank in two cases: whenever the battery cannot be read, so the bar shows the
+icon alone rather than a stale or invented figure — `hskctl status` will say
+why the read is failing — and in a vertical bar, which is one icon wide and has
+nowhere to put it.
 
 ## Other HSK models
 
@@ -210,7 +211,7 @@ omarchy plugin enable keasbeexd.hskmouse
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 96 tests
+python3 -m unittest discover -s tests    # 99 tests
 node tests/test_model.js                 # 45 tests
 ```
 

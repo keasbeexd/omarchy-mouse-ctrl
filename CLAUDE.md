@@ -143,6 +143,34 @@ snapping were fine, while every MouseArea click was dead. Anything that looks
 like "this control does nothing but that one works" is worth checking for a
 shadowed id before suspecting the device. The service is now `id: hsk`.
 
+## A BarIconButton with an iconComponent cannot show text
+
+`BarIconButton` inherits `text` from `WidgetButton` and then closes both routes
+it could have taken to the screen. It sets `labelVisible: false`, hiding the
+`Text` that draws `text`, and it feeds `text` into an `OpticalGlyph` marked
+`visible: iconComponent === null`. So the moment a widget supplies its own
+icon -- which this one must, because the battery glyph's shape and colour both
+depend on the reading -- `text` renders nowhere.
+
+Nothing complains. The property exists, so the binding is legal and QML issues
+no warning; the label is simply absent. That is indistinguishable from the
+`showBatteryLabel` setting being off, so the natural way to test it -- toggle
+the setting and look -- produces the same nothing in both positions and points
+the investigation at the settings plumbing, which was fine all along.
+
+Any label this widget wants goes **inside** `iconComponent`, as a Row beside
+the glyph. Two things come with that:
+
+- `slotSize` becomes `fixedWidth`, so the button does not grow to fit. It has
+  to be widened by the measured text width (`TextMetrics`) or the label spills
+  over the neighbouring widget.
+- `Style.bar.statusSlot` is **narrower** than `iconSlot` (21 against 27). It
+  was used here for the with-label case on the strength of its name.
+
+The general shape: **when a host component takes a property you set, that is
+not evidence it renders it.** Read the component before assuming the binding
+does anything -- the shell's source is in `shell/Ui/` in basecamp/omarchy.
+
 ## The repository is the product, so test the repository
 
 This plugin was rejected from omarchyplugins.com for a defect no unit test
@@ -443,7 +471,7 @@ inputs are legal before deciding what to test.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests    # 96 tests
+python3 -m unittest discover -s tests    # 99 tests
 node tests/test_model.js                 # 45 tests
 ```
 

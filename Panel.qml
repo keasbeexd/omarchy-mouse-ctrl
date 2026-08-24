@@ -44,6 +44,20 @@ Panel {
     ? root.urgent
     : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55))
 
+  // The battery percentage drawn beside the glyph -- see the BarIconButton
+  // below for why the label has to live inside the icon. Blank in a vertical
+  // bar, which is one icon wide and has nowhere to put it.
+  readonly property string barLabelText: (bar && bar.vertical) ? "" : hsk.barText
+
+  // The slot is a fixed width, so it has to be told how much text it is about
+  // to hold or the label renders outside the button and overlaps its neighbour.
+  TextMetrics {
+    id: barLabelMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    text: root.barLabelText
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -216,21 +230,46 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: hsk.barText
-    slotSize: hsk.barText !== "" ? Style.bar.statusSlot : Style.bar.iconSlot
+    // Deliberately no `text:`. BarIconButton renders its `text` through an
+    // OpticalGlyph that is `visible: iconComponent === null`, and it forces
+    // `labelVisible: false` on the WidgetButton underneath -- so a widget with
+    // a custom icon has no route to a text label at all. Setting `text` here
+    // is not an error and not ignored-with-a-warning; it simply draws nothing,
+    // which is why `showBatteryLabel` appeared to do nothing in either
+    // position. The percentage is drawn inside the icon instead.
+    slotSize: Style.bar.iconSlot
+      + (root.barLabelText !== "" ? barLabelMetrics.width + Style.space(3) : 0)
     active: hsk.lowBattery
     tooltipText: hsk.model + " — " + hsk.summary
     iconComponent: Component {
       Item {
-        Text {
+        // Centred on the button, not on the 16px optical canvas this Loader
+        // fills -- the canvas is itself centred, so overflowing it is
+        // symmetrical, and the slot above was widened to hold the result.
+        Row {
           anchors.centerIn: parent
-          text: hsk.ready
-            ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
-            : "󰍽"
-          color: root.barIconColor
-          font.family: root.fontFamily
-          font.pixelSize: Style.bar.iconFont
-          opacity: hsk.ready ? 1.0 : 0.55
+          spacing: root.barLabelText !== "" ? Style.space(3) : 0
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: hsk.ready
+              ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
+              : "󰍽"
+            color: root.barIconColor
+            font.family: root.fontFamily
+            font.pixelSize: Style.bar.iconFont
+            opacity: hsk.ready ? 1.0 : 0.55
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.barLabelText !== ""
+            text: root.barLabelText
+            color: root.barIconColor
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            renderType: Text.NativeRendering
+          }
         }
       }
     }

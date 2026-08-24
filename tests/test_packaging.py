@@ -169,6 +169,82 @@ class ListingTests(unittest.TestCase):
             )
 
 
+class BarWidgetTests(unittest.TestCase):
+    """The bar item can only draw what the host component actually renders.
+
+    `BarIconButton` inherits `text` from `WidgetButton` and then does two
+    things with it: it sets `labelVisible: false`, hiding the Text that would
+    have drawn it, and it routes `text` into an `OpticalGlyph` marked
+    `visible: iconComponent === null`. So the moment a widget supplies its own
+    `iconComponent` -- which this one must, to draw a battery glyph whose
+    colour tracks the charge -- `text` renders nowhere.
+
+    Nothing warns. The property exists, the assignment binds, and the label is
+    simply absent, which is indistinguishable from the `showBatteryLabel`
+    setting being off. It cost a round trip with a user toggling that setting
+    both ways and seeing no difference, because there was no difference.
+
+    Any label this widget wants belongs inside `iconComponent`.
+    """
+
+    def setUp(self):
+        self.panel = read("Panel.qml")
+
+    def bar_button_block(self):
+        """The body of the BarIconButton declaration, brace-matched."""
+        start = self.panel.index("BarIconButton {")
+        depth, i = 0, self.panel.index("{", start)
+        for j in range(i, len(self.panel)):
+            if self.panel[j] == "{":
+                depth += 1
+            elif self.panel[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    return self.panel[i + 1:j]
+        self.fail("BarIconButton block is unbalanced")
+
+    def test_it_does_not_set_a_text_that_cannot_render(self):
+        block = self.bar_button_block()
+        self.assertIn("iconComponent", block)
+
+        # Only assignments at the top level of the declaration: `text:` deeper
+        # in is on a Text element inside the icon, which is the correct place.
+        depth = 0
+        for line in block.splitlines():
+            stripped = line.strip()
+            if depth == 0 and re.match(r"text\s*:", stripped):
+                self.fail(
+                    "Panel.qml sets `text` on BarIconButton while supplying an "
+                    "iconComponent. BarIconButton hides its own label and its "
+                    "glyph, so this draws nothing -- put the label inside the "
+                    "iconComponent instead."
+                )
+            depth += line.count("{") - line.count("}")
+
+    def test_the_battery_label_is_drawn_inside_the_icon(self):
+        block = self.bar_button_block()
+        icon = block[block.index("iconComponent"):]
+        self.assertIn(
+            "barLabelText", icon,
+            "the bar label is not rendered inside iconComponent, so it cannot "
+            "appear at all",
+        )
+
+    def test_the_slot_is_widened_for_the_label(self):
+        """A fixed-width slot plus a wider label means overlapping neighbours.
+
+        `slotSize` becomes `fixedWidth`, so the button does not grow to fit its
+        contents. It also must not use `statusSlot`, which is *narrower* than
+        `iconSlot` (21 against 27) and was picked here on the assumption that
+        the name meant "a slot with a status in it".
+        """
+        block = self.bar_button_block()
+        slot = re.search(r"slotSize:(.*?)(?=\n\s+[a-zA-Z]+:)", block, re.S)
+        self.assertIsNotNone(slot, "BarIconButton does not set slotSize")
+        self.assertIn("barLabelMetrics", slot.group(1))
+        self.assertNotIn("statusSlot", slot.group(1))
+
+
 class PluginIdConsistencyTests(unittest.TestCase):
     """The plugin id in manifest.json is the only one, everywhere.
 
