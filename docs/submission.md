@@ -54,7 +54,7 @@ interpreted by a generic engine — there is no device-specific code. The vendor
 application matches 14 product IDs across the HSK range, so other variants very
 likely work; adding one is a profile, not a patch.
 
-138 tests (93 Python, 45 JS) pin the decoded protocol, the view model, the
+141 tests (96 Python, 45 JS) pin the decoded protocol, the view model, the
 repository's own packaging, and the safety properties below. The packaging and
 safety suites both exist because of earlier review findings, and both fail
 against the builds that were rejected.

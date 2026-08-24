@@ -9,8 +9,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "io.github.keasbeexd.hsk"
-  ipcTarget: "io.github.keasbeexd.hsk"
+  moduleName: "keasbeexd.hskmouse"
+  ipcTarget: "keasbeexd.hskmouse"
   manageIpc: false
 
   property int cursorIndex: 0
@@ -404,7 +404,7 @@ Panel {
                 width: parent.width
                 visible: root.needsSetup || root.looksLikePermissions
                 text: root.looksLikePermissions
-                  ? "~/.config/omarchy/plugins/io.github.keasbeexd.hsk/install.sh --udev"
+                  ? "~/.config/omarchy/plugins/keasbeexd.hskmouse/install.sh --udev"
                   : "hskctl probe"
                 wrapMode: Text.WrapAnywhere
                 color: root.foreground

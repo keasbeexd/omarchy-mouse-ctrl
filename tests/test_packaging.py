@@ -169,5 +169,79 @@ class ListingTests(unittest.TestCase):
             )
 
 
+class PluginIdConsistencyTests(unittest.TestCase):
+    """The plugin id in manifest.json is the only one, everywhere.
+
+    The id was changed in `manifest.json` alone -- one file, edited in the
+    GitHub web UI -- which left `Panel.qml` registering the old module and IPC
+    target, `install.sh` installing into a directory the shell would never look
+    in, and every command in the README naming a plugin that does not exist.
+    The whole suite passed, because nothing compared the manifest against the
+    files that have to agree with it.
+
+    This is the same failure that got the first submission rejected: a
+    single-file edit leaving the documented path broken. It is not a mistake
+    worth making twice.
+    """
+
+    def setUp(self):
+        self.plugin_id = json.loads(read("manifest.json"))["id"]
+
+    def looks_like_a_plugin_id(self, text):
+        """Dotted tokens carrying this author's namespace.
+
+        Keyed on the namespace rather than the plugin name, because that is
+        what distinguishes an id from ordinary code: `io.github.keasbeexd.hsk`
+        is one, `root.hskctl` is a QML property reference. An exact search for
+        the *current* id would be useless here -- it can only ever find the
+        occurrences that are already right.
+        """
+        namespace = re.escape(self.plugin_id.split(".")[0])
+        pattern = rf"\b[A-Za-z0-9.-]*{namespace}[A-Za-z0-9.-]*\b"
+        return {t.strip(".") for t in re.findall(pattern, text) if "." in t}
+
+    def test_the_qml_registers_the_manifest_id(self):
+        panel = read("Panel.qml")
+        for prop in ("moduleName", "ipcTarget"):
+            found = re.search(rf'{prop}:\s*"([^"]+)"', panel)
+            self.assertIsNotNone(found, f"Panel.qml has no {prop}")
+            self.assertEqual(
+                found.group(1), self.plugin_id,
+                f"Panel.qml {prop} does not match manifest.json",
+            )
+
+    def test_install_sh_does_not_hardcode_an_id(self):
+        """It reads the manifest, so it cannot disagree with it."""
+        script = read("install.sh")
+        self.assertNotIn(f'PLUGIN_ID="{self.plugin_id}"', script)
+        self.assertIn("manifest.json", script)
+
+    def test_no_file_mentions_a_different_plugin_id(self):
+        offenders = {}
+        for root, _dirs, files in os.walk(ROOT):
+            if ".git" in root:
+                continue
+            for name in files:
+                if not name.endswith((".md", ".qml", ".js", ".json", ".sh", ".py")):
+                    continue
+                path = os.path.join(root, name)
+                if os.path.samefile(path, __file__):
+                    # This file quotes the old id while explaining the check.
+                    continue
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        text = fh.read()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                stale = {i for i in self.looks_like_a_plugin_id(text)
+                         if i != self.plugin_id}
+                if stale:
+                    offenders[os.path.relpath(path, ROOT)] = sorted(stale)
+        self.assertEqual(
+            offenders, {},
+            f"these still name an id that is not {self.plugin_id!r}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

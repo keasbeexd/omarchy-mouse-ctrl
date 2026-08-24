@@ -330,6 +330,26 @@ The technique worth keeping: when a value looks stuck, find something in the
 *same reply* that should change, and check whether it does. The charging flag
 flipping is what proved the read path was live rather than cached.
 
+## The plugin id lives in exactly one place
+
+`manifest.json` owns it. `install.sh` reads it from there rather than repeating
+it; `Panel.qml` has to spell it out (QML cannot read the manifest, and adding a
+second file-reading path there is its own bad idea -- see "One version
+number"), so a test asserts the two agree, and a second test asserts no file
+anywhere names a different one.
+
+Both tests exist because the id was changed in `manifest.json` alone, in the
+GitHub web UI. That left `Panel.qml` registering the old module and IPC target,
+`install.sh` installing into a directory the shell would never look in, and
+every command in the README naming a plugin that does not exist -- while the
+whole suite passed, because nothing compared the manifest to the files that
+have to agree with it.
+
+This is the second time a single-file web edit has broken the shipped tree; the
+first one got the plugin rejected. **A value that appears in more than one file
+is a value that will drift.** Derive it where you can, test it where you
+cannot.
+
 ## Zero is an answer
 
 Twice now a heuristic has treated a legitimate 0 as "the mouse did not reply",
@@ -423,7 +443,7 @@ inputs are legal before deciding what to test.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests    # 93 tests
+python3 -m unittest discover -s tests    # 96 tests
 node tests/test_model.js                 # 45 tests
 ```
 

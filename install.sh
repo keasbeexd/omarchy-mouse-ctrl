@@ -21,7 +21,16 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
-PLUGIN_ID="io.github.keasbeexd.hsk"
+# Read from the manifest rather than repeated here. The id was changed in
+# manifest.json alone once, leaving this script installing to a directory the
+# shell would never look in -- the same shape of break that got the first
+# submission rejected.
+PLUGIN_ID="$(
+  python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" \
+    "$REPO_DIR/manifest.json" 2>/dev/null \
+  || sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_DIR/manifest.json" | head -1
+)"
+[[ -n "$PLUGIN_ID" ]] || die "could not read the plugin id out of manifest.json"
 PLUGIN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$PLUGIN_ID"
 UDEV_RULE="/etc/udev/rules.d/60-gwolves-hsk.rules"
 VENDOR_ID="33e4"

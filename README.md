@@ -16,11 +16,11 @@ Two steps. **Both are required** — the second is not optional polish.
 
 ```bash
 omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
-omarchy plugin enable io.github.keasbeexd.hsk
+omarchy plugin enable keasbeexd.hskmouse
 ```
 
 ```bash
-~/.config/omarchy/plugins/io.github.keasbeexd.hsk/install.sh --udev
+~/.config/omarchy/plugins/keasbeexd.hskmouse/install.sh --udev
 ```
 
 Then **unplug and replug** the mouse or its dongle, and add the **HSK Mouse**
@@ -100,8 +100,8 @@ value, shown with one fewer step of rounding. `watch-battery` prints both.
 Omarchy IPC works too:
 
 ```bash
-omarchy-shell io.github.keasbeexd.hsk cycleDpi
-omarchy-shell io.github.keasbeexd.hsk setPollingRate 1000
+omarchy-shell keasbeexd.hskmouse cycleDpi
+omarchy-shell keasbeexd.hskmouse setPollingRate 1000
 ```
 
 ## Settings
@@ -180,11 +180,11 @@ git clone https://github.com/keasbeexd/omarchy-hsk.git
 cd omarchy-hsk
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
-omarchy plugin enable io.github.keasbeexd.hsk
+omarchy plugin enable keasbeexd.hskmouse
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 93 tests
+python3 -m unittest discover -s tests    # 96 tests
 node tests/test_model.js                 # 45 tests
 ```
 
@@ -193,6 +193,12 @@ The Python suite pins the decoded protocol rather than the implementation: the
 one byte, the measured polling map, read-only fields refusing writes, and
 factory reset staying unreachable. If a change breaks one of those, the change
 is very probably wrong.
+
+It checks that the plugin id in `manifest.json` is the only one in the tree —
+that `Panel.qml` registers it, that `install.sh` reads it rather than repeating
+it, and that no file names a different one. That test exists because the id was
+once changed in the manifest alone, which left every documented command naming
+a plugin that did not exist.
 
 It also refuses to do anything irreversible on a guess: the device lock cannot
 be written through a symlink, automatic device selection requires a node that
