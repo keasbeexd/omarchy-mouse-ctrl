@@ -106,12 +106,38 @@ omarchy-shell keasbeexd.hskmouse setPollingRate 1000
 
 ## Settings
 
-| Setting | Default | |
-|---|---|---|
-| Refresh interval | 60s | how often the bar re-reads the mouse |
-| Low battery warning | 15% | when the icon turns urgent |
-| Show battery percentage | on | number beside the icon in the bar |
-| Path to `hskctl` | *(bundled)* | override only if you installed it yourself |
+| Setting | Key | Default | |
+|---|---|---|---|
+| Refresh interval | `refreshIntervalSec` | 60 | how often the bar re-reads the mouse |
+| Low battery warning | `lowBatteryPercent` | 15 | when the icon turns urgent |
+| Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
+| Path to `hskctl` | `hskctlPath` | *(bundled)* | override only if you installed it yourself |
+
+There is no settings UI. Omarchy keeps every widget's options **inline on that
+widget's entry** in `~/.config/omarchy/shell.json`, under the `bar` key, in
+whichever of the three layout arrays the widget sits in:
+
+```json
+{
+  "bar": {
+    "right": [
+      { "id": "keasbeexd.hskmouse", "showBatteryLabel": true, "refreshIntervalSec": 60 }
+    ]
+  }
+}
+```
+
+Every key is optional — leave one out and the default above applies. Restart the
+shell after editing:
+
+```bash
+omarchy-restart-shell
+```
+
+If `showBatteryLabel` is on but no number appears, the setting is not the
+problem: the label is deliberately blank whenever the battery cannot be read, so
+the bar shows the icon alone rather than a stale or invented figure. `hskctl
+status` will say why the read is failing.
 
 ## Other HSK models
 
