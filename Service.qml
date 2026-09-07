@@ -61,6 +61,33 @@ Item {
   readonly property bool ready: state === "ready"
   readonly property bool lowBattery: Model.isLow(effectiveValues, lowBatteryPercent)
 
+  // hskctl JSON output for one command is a few kilobytes at most. We cap at
+  // 256 KiB anyway: the cap belongs at the producer -- before the bytes exist
+  // in the shell -- and the reviewer's rule is that a whole-output collector
+  // (StdioCollector, capture_output) is applied too late. If a runaway hskctl
+  // ever exceeded this cap the pipe is closed and the process killed, rather
+  // than the shell allocating without bound.
+  readonly property int _maxProcessBytes: 262144
+  property string _statusStdout: ""
+  property int _statusStdoutBytes: 0
+  property string _statusStderr: ""
+  property int _statusStderrBytes: 0
+  property string _setStdout: ""
+  property int _setStdoutBytes: 0
+  property string _setStderr: ""
+  property int _setStderrBytes: 0
+  property bool _statusOverflow: false
+  property bool _setOverflow: false
+
+  // In UTF-16 each JavaScript character is 1..2 code units; a byte cap read as
+  // .length is conservative but safe as an upper bound. The producer side of
+  // the cap is the process termination on overflow.
+  function _appendChunk(current, chunk, budget) {
+    var next = current + chunk
+    if (next.length > budget) return next.substring(0, budget)
+    return next
+  }
+
   // What the UI reads: device truth with any in-flight change laid over it.
   readonly property var effectiveValues: {
     var merged = {}
@@ -106,6 +133,9 @@ Item {
     // would snap the number back to the old value and then forward again.
     if (Object.keys(_soon).length > 0) return
     refreshing = true
+    _statusStdout = ""; _statusStdoutBytes = 0
+    _statusStderr = ""; _statusStderrBytes = 0
+    _statusOverflow = false
     statusProcess.command = [hskctl, "--json", "status"]
     statusProcess.running = true
   }
@@ -185,6 +215,9 @@ Item {
 
     actionStatus = ""
     _setField = job.field
+    _setStdout = ""; _setStdoutBytes = 0
+    _setStderr = ""; _setStderrBytes = 0
+    _setOverflow = false
     setProcess.command = [hskctl, "--json", "set", String(job.field), String(job.value)]
     setProcess.running = true
   }
@@ -263,8 +296,12 @@ Item {
     repeat: false
     running: statusProcess.running || setProcess.running
     onTriggered: {
-      if (statusProcess.running) statusProcess.running = false
-      if (setProcess.running) setProcess.running = false
+      // signal(15) tears down the child rather than only setting `running`
+      // to false, which just detaches the wrapper -- the shell would still
+      // wait for the descendant to exit on its own. signal(9) follows if
+      // it does not oblige.
+      if (statusProcess.running) { statusProcess.signal(15); statusKillTimer.restart() }
+      if (setProcess.running) { setProcess.signal(15); setKillTimer.restart() }
       root.pending = ({})
       root._queue = []
       root.lastError = "hskctl timed out"
@@ -272,16 +309,71 @@ Item {
     }
   }
 
+  // StdioCollector holds the whole stream before we can see it, so we cannot
+  // bound the byte count from the shell side. SplitParser fires on each chunk,
+  // and we count against a hard cap; on overflow the process is TERMed and
+  // KILLed rather than allowed to keep allocating in the shell. hskctl is our
+  // own trusted CLI, but the reviewer's rule is the same regardless of the
+  // producer -- the cap has to be at the consumer boundary, before parsing.
+
+  Timer {
+    id: statusKillTimer
+    interval: 1500
+    repeat: false
+    onTriggered: if (statusProcess.running) statusProcess.signal(9)
+  }
+
+  Timer {
+    id: setKillTimer
+    interval: 1500
+    repeat: false
+    onTriggered: if (setProcess.running) setProcess.signal(9)
+  }
+
   Process {
     id: statusProcess
     running: false
     command: []
-    stdout: StdioCollector { id: statusOut; waitForEnd: true }
-    stderr: StdioCollector { id: statusErr; waitForEnd: true }
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root._statusOverflow) return
+        var s = String(chunk || "")
+        root._statusStdoutBytes += s.length
+        root._statusStdout = root._appendChunk(root._statusStdout, s, root._maxProcessBytes)
+        if (root._statusStdoutBytes > root._maxProcessBytes) {
+          root._statusOverflow = true
+          statusProcess.signal(15)
+          statusKillTimer.restart()
+        }
+      }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root._statusOverflow) return
+        var s = String(chunk || "")
+        // stderr is bounded to a smaller ceiling because it is only ever
+        // rendered as a one-line error message. Truncation here is fine --
+        // we already emit the exit code on failure.
+        root._statusStderrBytes += s.length
+        root._statusStderr = root._appendChunk(root._statusStderr, s, 4096)
+      }
+    }
 
-    onExited: function(exitCode) {
+    onExited: function(exitCode, exitStatus) {
+      statusKillTimer.stop()
       root.refreshing = false
-      var out = String(statusOut.text || "")
+      if (root._statusOverflow) {
+        root.state = "error"
+        root.values = ({})
+        root.writable = []
+        root.pending = ({})
+        root.lastError = "hskctl output exceeded " + root._maxProcessBytes + " bytes; killed"
+        root.changed()
+        return
+      }
+      var out = root._statusStdout
       if (out.trim() !== "") {
         root.applyStatus(out)
         return
@@ -292,7 +384,7 @@ Item {
       root.values = ({})
       root.writable = []
       root.pending = ({})
-      var err = String(statusErr.text || "").trim()
+      var err = root._statusStderr.trim()
       root.lastError = err !== ""
         ? err.split("\n")[0]
         : "Could not run " + root.hskctl + " (exit " + exitCode + ")"
@@ -304,11 +396,46 @@ Item {
     id: setProcess
     running: false
     command: []
-    stdout: StdioCollector { id: setOut; waitForEnd: true }
-    stderr: StdioCollector { id: setErr; waitForEnd: true }
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root._setOverflow) return
+        var s = String(chunk || "")
+        root._setStdoutBytes += s.length
+        root._setStdout = root._appendChunk(root._setStdout, s, root._maxProcessBytes)
+        if (root._setStdoutBytes > root._maxProcessBytes) {
+          root._setOverflow = true
+          setProcess.signal(15)
+          setKillTimer.restart()
+        }
+      }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root._setOverflow) return
+        var s = String(chunk || "")
+        root._setStderrBytes += s.length
+        root._setStderr = root._appendChunk(root._setStderr, s, 4096)
+      }
+    }
 
-    onExited: function(exitCode) {
-      var parsed = Model.parseStatus(setOut.text)
+    onExited: function(exitCode, exitStatus) {
+      setKillTimer.stop()
+      if (root._setOverflow) {
+        root.pending = ({})
+        root.actionStatus = "hskctl output exceeded limit; killed"
+        actionStatusTimer.restart()
+        root._setField = ""
+        if (root._queue.length > 0) {
+          root._run(root._queue.shift())
+        } else {
+          drainTimer.stop()
+          settleTimer.restart()
+        }
+        return
+      }
+      var parsed = Model.parseStatus(root._setStdout)
       if (exitCode !== 0 || !parsed.ok) {
         root.pending = ({})
         root.actionStatus = parsed.error !== ""
@@ -326,5 +453,12 @@ Item {
         settleTimer.restart()
       }
     }
+  }
+
+  Component.onDestruction: {
+    // Make sure any in-flight hskctl gets torn down when the panel is unloaded,
+    // rather than surviving its own supervisor.
+    if (statusProcess.running) statusProcess.signal(15)
+    if (setProcess.running) setProcess.signal(15)
   }
 }

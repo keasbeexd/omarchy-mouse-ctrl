@@ -140,6 +140,30 @@ icon alone rather than a stale or invented figure — `hskctl status` will say
 why the read is failing — and in a vertical bar, which is one icon wide and has
 nowhere to put it.
 
+## Removing
+
+```bash
+omarchy plugin remove keasbeexd.hskmouse
+```
+
+That takes the plugin out of the shell. What survives, and how to remove it:
+
+- The **udev rule** at `/etc/udev/rules.d/60-gwolves-hsk.rules` stays in place
+  (it needs `sudo` to have got there in the first place). Remove it with
+  `sudo rm /etc/udev/rules.d/60-gwolves-hsk.rules && sudo udevadm control --reload-rules`
+  if you no longer want your user to have hidraw access to the mouse.
+- If you ran `./install.sh --link`, a symlink at `~/.local/bin/hskctl` points
+  at the plugin. `./install.sh --uninstall` removes it (and only if it still
+  points at this checkout — a shadow binary someone else put there is left
+  alone).
+- Any `hskctl save` snapshot lives at `~/.config/hskctl/settings.json`; delete
+  it if you kept one. It only ever holds settings the mouse itself reports
+  (DPI stages, polling rate, motion sync), never anything private.
+
+Nothing else persists: the plugin writes no cache, no log, no state file on
+its own, and it never runs anything in the background. Mouse configuration
+lives on the mouse itself and follows the mouse, not this plugin.
+
 ## Other HSK models
 
 The protocol lives in `profiles/*.json` as data, interpreted by a generic
@@ -189,7 +213,7 @@ divide a 1000 Hz base, while 32 and 64 are separate high-rate codes for 2000 and
 
 Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md), and the
 working notes — including every wrong turn and what it cost — in
-[CLAUDE.md](CLAUDE.md).
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Safety
 
@@ -211,8 +235,8 @@ omarchy plugin enable keasbeexd.hskmouse
 ```
 
 ```bash
-python3 -m unittest discover -s tests    # 99 tests
-node tests/test_model.js                 # 45 tests
+python3 -m unittest discover -s tests    # 109 tests
+node tests/test_model.js                 # 50 tests
 ```
 
 The Python suite pins the decoded protocol rather than the implementation: the

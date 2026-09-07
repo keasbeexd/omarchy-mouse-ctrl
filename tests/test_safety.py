@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from hskctl import device  # noqa: E402
+from hskctl import cli, device  # noqa: E402
 from hskctl.hidraw import HidrawInfo  # noqa: E402
 from hskctl.protocol import load_profile  # noqa: E402
 
@@ -221,6 +221,76 @@ class UnverifiedMappingTests(unittest.TestCase):
             self.assertFalse(self.profile.field_writable("pollingRate"))
         finally:
             self.profile.data["fields"]["pollingRate"] = spec
+
+
+class SettingsFileTests(unittest.TestCase):
+    """cmd_save/apply must not follow a planted symlink or truncate someone
+    else's file, and must not read an unbounded blob into memory.
+
+    The same shape as the lock-file finding, and in the same section of the
+    review guidance: check the descriptor, not the pathname, and cap the read
+    at the producer boundary.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "state", "settings.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_write_is_atomic_and_mode_600(self):
+        cli._atomic_write_json(self.path, {"model": "x", "settings": {"a": 1}})
+        info = os.stat(self.path)
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+        parent = os.path.dirname(self.path)
+        self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
+
+    def test_write_refuses_to_follow_a_symlink_at_the_destination(self):
+        victim = os.path.join(self.tmp.name, "precious")
+        with open(victim, "w") as fh:
+            fh.write("KEEP ME\n")
+        os.mkdir(os.path.dirname(self.path), 0o700)
+        os.symlink(victim, self.path)
+        # rename(2) replaces the symlink with the new inode -- the target file
+        # stays intact. That is the behaviour we rely on, so verify it here.
+        cli._atomic_write_json(self.path, {"model": "x", "settings": {}})
+        with open(victim) as fh:
+            self.assertEqual(fh.read(), "KEEP ME\n")
+        self.assertFalse(os.path.islink(self.path))
+
+    def test_read_refuses_a_symlink(self):
+        os.mkdir(os.path.dirname(self.path), 0o700)
+        target = os.path.join(self.tmp.name, "real.json")
+        with open(target, "w") as fh:
+            fh.write('{"settings": {}}\n')
+        os.symlink(target, self.path)
+        with self.assertRaises(OSError):
+            cli._read_bounded_json(self.path)
+
+    def test_read_rejects_oversize(self):
+        os.mkdir(os.path.dirname(self.path), 0o700)
+        with open(self.path, "wb") as fh:
+            fh.write(b"x" * (cli._MAX_SETTINGS_BYTES + 1))
+        with self.assertRaises(OSError):
+            cli._read_bounded_json(self.path)
+
+    def test_write_rejects_oversize_payload(self):
+        os.mkdir(os.path.dirname(self.path), 0o700)
+        payload = {"model": "x", "settings": {"k": "a" * cli._MAX_SETTINGS_BYTES}}
+        with self.assertRaises(OSError):
+            cli._atomic_write_json(self.path, payload)
+
+    def test_write_repairs_a_wider_parent_directory(self):
+        # A state directory left over from an earlier version could be 755.
+        # _prepare_state_dir should tighten it back to 700 rather than refuse,
+        # since we own it -- but must not silently write into somebody else's
+        # 755 directory. The owner check is exercised implicitly by every other
+        # test in this class, since the tempdir is ours.
+        parent = os.path.dirname(self.path)
+        os.mkdir(parent, 0o755)
+        cli._atomic_write_json(self.path, {"model": "x", "settings": {}})
+        self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
 
 
 if __name__ == "__main__":
