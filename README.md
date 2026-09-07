@@ -211,15 +211,12 @@ read off a plausible-looking table — and the answer is not a formula: raw 1–
 divide a 1000 Hz base, while 32 and 64 are separate high-rate codes for 2000 and
 4000 Hz.
 
-Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md), and the
-working notes — including every wrong turn and what it cost — in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
 
 ## Safety
 
-Factory reset (opcode `09`) is deliberately not bound to any field, and a test
-enforces that — nothing in the panel should be one keystroke from wiping your
-mouse's configuration.
+Factory reset (opcode `09`) is deliberately not bound to any field — nothing
+in the panel should be one keystroke from wiping your mouse's configuration.
 
 Writes go read-modify-write, so changing one DPI stage cannot zero the others.
 Settings live on the mouse itself and follow it between machines.
@@ -234,33 +231,12 @@ cd omarchy-hsk
 omarchy plugin enable keasbeexd.hskmouse
 ```
 
-```bash
-python3 -m unittest discover -s tests    # 109 tests
-node tests/test_model.js                 # 50 tests
-```
-
-The Python suite pins the decoded protocol rather than the implementation: the
-+0x80 rule across every command, wired and wireless packets differing in exactly
-one byte, the measured polling map, read-only fields refusing writes, and
-factory reset staying unreachable. If a change breaks one of those, the change
-is very probably wrong.
-
-It checks that the plugin id in `manifest.json` is the only one in the tree —
-that `Panel.qml` registers it, that `install.sh` reads it rather than repeating
-it, and that no file names a different one. That test exists because the id was
-once changed in the manifest alone, which left every documented command naming
-a plugin that did not exist.
-
-It also refuses to do anything irreversible on a guess: the device lock cannot
-be written through a symlink, automatic device selection requires a node that
-matches the vendor and product ids the profile declares (a `--device` you name
-yourself is readable but needs `--force-unmatched` to write), and any field the
-profile marks unverified is read-only until someone confirms it on hardware.
-
-It also checks the repository itself — that `install.sh` parses and dispatches
-every flag its own help text advertises, that nothing references a file the
-tree does not contain, and that the README's links and commands are real. Those
-exist because a truncated `install.sh` shipped once and no test noticed.
+The tree that ships to the marketplace holds only what a user needs at
+runtime. Contributor tooling — the test suite, the vendor-binary decoder,
+and the internal development notes — lives in the repo's git history
+(everything up to and including the `v1.6.0` tag) rather than in the
+installed tree, so `omarchy plugin add` does not copy 300+ KiB of
+developer-only files onto every user's machine.
 
 ```
 manifest.json  Panel.qml  Service.qml  Model.js   the plugin
@@ -268,16 +244,13 @@ install.sh                                        udev rule, self-contained
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
 profiles/        the decoded protocol -- data, not code
-tools/           vendor-driver analysis
-tests/           protocol, view-model and packaging tests
-docs/            how the protocol was decoded, and how to verify it
+docs/            how the protocol was decoded, for anyone profiling a variant
 ```
 
 ## Contributing
 
-Bug reports and profiles for other HSK variants are both welcome. If you are
-publishing a fork or a listing, [docs/PUBLISHING.md](docs/PUBLISHING.md) covers
-the marketplace submission.
+Bug reports and profiles for other HSK variants are both welcome. Open an
+issue at the GitHub repo above.
 
 ## Licence
 
