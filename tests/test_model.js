@@ -18,7 +18,7 @@ new Function("exports", src + "\n;Object.assign(exports, {" +
   "POLLING_RATES, parseStatus, has, batteryGlyph, connectionGlyph, connectionLabel," +
   "summaryLine, barLabel, dpiStages, pollingOptions, isLow, buildRows, canWrite," +
   "DPI_MIN, DPI_MAX, DPI_STEP, clampDpi, nextStageColor, STAGE_COLORS," +
-  "toggleLabel, toggleDescription, isPermissionError, manifestVersion});")(Model);
+  "toggleLabel, toggleDescription, isPermissionError, manifestVersion, plain});")(Model);
 
 let passed = 0;
 function test(name, fn) {
@@ -381,6 +381,42 @@ test("an older hskctl without a version does not break the panel", () => {
   const parsed = Model.parseStatus(JSON.stringify(
     { ok: true, state: "ready", settings: {} }));
   assert.strictEqual(parsed.version, "");
+});
+
+console.log("\nplain (sanitizer for shared host sinks)");
+test("strips the three AutoText triggers", () => {
+  // The whole point of plain() is that Qt cannot enter rich-text mode on
+  // the result, so `<`, `>` and `&` are removed rather than escaped -- an
+  // escaped `&lt;` would round-trip back through AutoText.
+  assert.strictEqual(Model.plain("<b>hi</b>"), "bhi/b");
+  assert.strictEqual(Model.plain("a & b"), "a  b");
+  assert.strictEqual(Model.plain("x<img src=x>"), "ximg src=x");
+});
+
+test("drops C0, C1, DEL and bidi controls", () => {
+  assert.strictEqual(Model.plain("a\x00b\x1fc\x7fd"), "abcd");
+  assert.strictEqual(Model.plain("abc"), "abc");
+  assert.strictEqual(Model.plain("a‮b⁦c⁩d"), "abcd");
+});
+
+test("caps to the given length", () => {
+  const long = "x".repeat(1000);
+  assert.strictEqual(Model.plain(long, 32).length, 32);
+  assert.strictEqual(Model.plain(long).length, 200);   // default cap
+});
+
+test("survives null, undefined and non-strings without throwing", () => {
+  assert.strictEqual(Model.plain(null), "");
+  assert.strictEqual(Model.plain(undefined), "");
+  assert.strictEqual(Model.plain(42), "42");
+  assert.strictEqual(Model.plain({ toString: () => "<x>" }), "x");
+});
+
+test("keeps ordinary text intact", () => {
+  assert.strictEqual(
+    Model.plain("G-Wolves HSK Pro 4K"),
+    "G-Wolves HSK Pro 4K"
+  );
 });
 
 console.log(`\n${passed} passed`);

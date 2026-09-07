@@ -4,6 +4,36 @@
 // formatting out of QML makes the failure modes testable and keeps the panel
 // free of string surgery.
 
+// Neutralise a string for shared host components that render text with
+// Qt.AutoText and cannot be pinned to PlainText from a plugin -- BarIconButton
+// tooltips, PanelHero titles, section headers, ConfirmDialog messages. On
+// AutoText, Qt sniffs the string and enters rich-text mode if it looks like
+// markup; a rich-text `<img src="...">` in a device or setting name is then a
+// real fetch from the shell process to whatever the string's author picks.
+// So strip the three characters Qt keys on (& before < > because escaping <
+// as &lt; would turn it back on when Qt sees &), plus C0 and C1 controls and
+// bidi overrides, and cap the length so a runaway string cannot fill the bar.
+//
+// Every value from the device is a candidate: an HSK's product string is set
+// by the mouse's own firmware, an error message can carry any bytes hskctl
+// wants to include, and a model name in a future profile is free text.
+function plain(text, limit) {
+  var s = String(text == null ? "" : text)
+  var out = ""
+  var cap = (typeof limit === "number" && limit > 0) ? limit : 200
+  for (var i = 0; i < s.length && out.length < cap; i++) {
+    var c = s.charCodeAt(i)
+    if (c < 0x20 || c === 0x7f) continue                        // C0 + DEL
+    if (c >= 0x80 && c <= 0x9f) continue                        // C1
+    if (c === 0x202a || c === 0x202b || c === 0x202c            // bidi
+        || c === 0x202d || c === 0x202e
+        || c === 0x2066 || c === 0x2067 || c === 0x2068 || c === 0x2069) continue
+    if (c === 0x26 /* & */ || c === 0x3c /* < */ || c === 0x3e /* > */) continue
+    out += s[i]
+  }
+  return out
+}
+
 // Every one of these was measured by timing the mouse's own reports. The
 // register is not a single formula -- 1/2/4 divide a 1000 Hz base while 32 and
 // 64 are high-rate codes -- so the panel offers exactly the rates confirmed on

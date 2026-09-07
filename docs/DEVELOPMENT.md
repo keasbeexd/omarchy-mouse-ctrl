@@ -1,7 +1,12 @@
-# omarchy-hsk — working notes for Claude
+# omarchy-hsk — development notes
 
 Read this before changing anything. It records what is proven, what is guessed,
 and which of the two you are allowed to act on.
+
+(This file used to live at the repo root as `CLAUDE.md`. It was moved into
+`docs/` so `omarchy plugin add` does not copy an auto-discovered agent
+instruction file into every user's plugins directory -- see section 13 of the
+Omarchy plugin security review guidance. Nothing in it is agent-specific.)
 
 ## What this is
 

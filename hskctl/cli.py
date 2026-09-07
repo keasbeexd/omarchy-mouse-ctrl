@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
+import tempfile
 from typing import Any
 
 from . import __version__
@@ -1033,6 +1035,109 @@ SETTINGS_PATH = os.path.join(
     "settings.json",
 )
 
+# Cap the settings file at 64 KiB, which is more than three orders of magnitude
+# above what `save` actually writes (~500 bytes). The reviewer's rule is that a
+# size ceiling belongs at the producer boundary, and this is that boundary for
+# `apply`.
+_MAX_SETTINGS_BYTES = 65536
+
+
+def _prepare_state_dir(path: str) -> str:
+    """Create the parent of `path` as a 0700 directory owned by us.
+
+    `os.makedirs(exist_ok=True)` is silent about what it did or did not find,
+    which is precisely what the review guidance names as the parent-chain
+    problem: if the state directory already exists as a symlink to somewhere
+    else the process happily follows it. So after creating we `lstat`
+    (`follow_symlinks=False`) and refuse anything that is not a real
+    directory we own.
+    """
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    st = os.stat(parent, follow_symlinks=False)
+    if not stat.S_ISDIR(st.st_mode):
+        raise OSError(f"{parent} exists and is not a directory")
+    if st.st_uid != os.geteuid():
+        raise OSError(f"{parent} is owned by uid {st.st_uid}, not you")
+    if st.st_mode & 0o077:
+        # Not a hard refuse -- reviewers accept a repair for a state directory
+        # that is plugin-owned but wider than we want. If chmod fails we do
+        # refuse, because at that point we cannot make it private.
+        os.chmod(parent, 0o700)
+    return parent
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """Write JSON to `path` atomically, refusing to follow a symlink.
+
+    A same-user attacker can plant a symlink at any predictable path in a
+    directory they can write to. This tool's settings file is $XDG_CONFIG_HOME
+    which is not sticky, so the risk applies. mkstemp + fchmod + rename
+    replaces the target inode-by-inode: rename(2) does not follow a symlink
+    at the destination, and mkstemp names the temporary randomly.
+    """
+    parent = _prepare_state_dir(path)
+    encoded = json.dumps(payload, indent=2).encode("utf-8") + b"\n"
+    if len(encoded) > _MAX_SETTINGS_BYTES:
+        raise OSError(
+            f"settings serialise to {len(encoded)} bytes, over the {_MAX_SETTINGS_BYTES} cap"
+        )
+    fd, tmp = tempfile.mkstemp(prefix=".hskctl-settings-", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        view = memoryview(encoded)
+        while view:
+            n = os.write(fd, view)
+            view = view[n:]
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, path)
+        dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        if fd != -1:
+            os.close(fd)
+        raise
+
+
+def _read_bounded_json(path: str) -> dict:
+    """Read a settings file through an fd we validated, with a byte cap.
+
+    `open(path, "r")` follows symlinks, blocks on a FIFO planted at the path,
+    and reads to EOF before any size check. This does one open(O_NOFOLLOW|
+    O_NONBLOCK), fstats the descriptor for regular file / owner / size, then
+    reads MAX + 1 bytes and rejects overflow.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"{path} is not a regular file")
+        if st.st_uid != os.geteuid():
+            raise OSError(f"{path} is not owned by you")
+        if st.st_size > _MAX_SETTINGS_BYTES:
+            raise OSError(f"{path} is larger than {_MAX_SETTINGS_BYTES} bytes; refusing")
+        os.set_blocking(fd, True)
+        data = b""
+        while len(data) <= _MAX_SETTINGS_BYTES:
+            chunk = os.read(fd, min(65536, _MAX_SETTINGS_BYTES + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
+        if len(data) > _MAX_SETTINGS_BYTES:
+            raise OSError(f"{path} grew past the {_MAX_SETTINGS_BYTES} byte cap during read")
+    finally:
+        os.close(fd)
+    return json.loads(data.decode("utf-8"))
+
 
 def cmd_save(args) -> int:
     """Record the mouse's current writable settings to disk.
@@ -1056,10 +1161,7 @@ def cmd_save(args) -> int:
     keep = {k: v for k, v in settings.items() if profile.field_writable(k)}
     path = args.file or SETTINGS_PATH
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump({"model": profile.model, "settings": keep}, fh, indent=2)
-            fh.write("\n")
+        _atomic_write_json(path, {"model": profile.model, "settings": keep})
     except OSError as exc:
         return _fail(f"could not write {path}: {exc}", args.json)
 
@@ -1075,12 +1177,18 @@ def cmd_apply(args) -> int:
     """Push saved settings back to the mouse."""
     path = args.file or SETTINGS_PATH
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            saved = json.load(fh).get("settings", {})
+        saved_doc = _read_bounded_json(path)
+    except FileNotFoundError:
+        return _fail(f"no saved settings at {path}", args.json, path=path)
     except OSError as exc:
         return _fail(f"could not read {path}: {exc}", args.json, path=path)
     except ValueError as exc:
         return _fail(f"{path} is not valid JSON: {exc}", args.json, path=path)
+    if not isinstance(saved_doc, dict):
+        return _fail(f"{path} is not a JSON object", args.json, path=path)
+    saved = saved_doc.get("settings") or {}
+    if not isinstance(saved, dict):
+        return _fail(f"{path} has no valid 'settings' object", args.json, path=path)
 
     try:
         profile = load_profile(args.profile)

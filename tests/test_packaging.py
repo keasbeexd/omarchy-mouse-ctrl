@@ -138,6 +138,105 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(keys, set(widget["defaults"]))
 
 
+class QmlSafetyTests(unittest.TestCase):
+    """QML rendering sinks come from device data and error strings, both of
+    which are attacker-supplyable in the reviewer's threat model. A Text
+    element without an explicit textFormat sits on AutoText, which sniffs
+    the value and renders it as rich text if it looks like markup -- and
+    rich-text `<img src="...">` becomes a real fetch from the shell process.
+
+    Every Text/Label/TextEdit in the panel must pin `textFormat: Text.PlainText`,
+    literal-only ones included so the invariant is auditable. This is the
+    marketplace's single most-reported finding, so it is worth pinning here.
+    """
+
+    def setUp(self):
+        self.panel = read("Panel.qml")
+
+    def test_every_text_sink_pins_the_format(self):
+        # For each `Text {` (or Label/TextEdit) find its matching `}` and
+        # assert `textFormat:` is inside. A block that opens but does not
+        # match by end-of-file counts as missing.
+        pattern = re.compile(r"\b(Text|Label|TextEdit)\s*\{")
+        offenders = []
+        for m in pattern.finditer(self.panel):
+            depth, i = 1, m.end()
+            while i < len(self.panel) and depth:
+                depth += (self.panel[i] == "{") - (self.panel[i] == "}")
+                i += 1
+            body = self.panel[m.end():i]
+            if "textFormat:" not in body:
+                line = self.panel[: m.start()].count("\n") + 1
+                offenders.append(f"{m.group(1)} at Panel.qml:{line}")
+        self.assertEqual(
+            offenders, [],
+            "these text sinks lack `textFormat: Text.PlainText`, so they "
+            "render on AutoText and can fetch arbitrary URLs when a device "
+            "or error string looks like markup:\n  " + "\n  ".join(offenders),
+        )
+
+    def test_shared_host_sinks_sanitize_device_strings(self):
+        """tooltipText and PanelHero's title/meta land in host components we
+        cannot pin from the plugin. Any dynamic string on those must go
+        through Model.plain() first, which strips < > & and controls.
+        """
+        # `hsk.model` and `hsk.summary` come from the device; if either shows
+        # up next to `tooltipText:` or `title:`/`meta:` without a plain()
+        # wrapper the invariant is broken.
+        raw_uses = re.findall(
+            r"(?:tooltipText|title|meta):\s*[^\n]*\bhsk\.(?:model|summary|"
+            r"pluginVersion|devicePath|value\()[^\n]*",
+            self.panel,
+        )
+        offenders = [line for line in raw_uses if "Model.plain" not in line]
+        self.assertEqual(
+            offenders, [],
+            "these bindings pass device-derived strings to a host component "
+            "without Model.plain(), so a markup-shaped value would render as "
+            "rich text:\n  " + "\n  ".join(offenders),
+        )
+
+
+class RepositoryHygieneTests(unittest.TestCase):
+    """The tree that ships must not carry files that widen the attack surface
+    just by being cloned into a user's plugins directory.
+    """
+
+    def test_no_agent_instruction_file_at_the_root(self):
+        # `omarchy plugin add` copies the whole repo verbatim into a location
+        # that coding agents auto-discover (CLAUDE.md, AGENTS.md, .claude/,
+        # .codex/, .agents/). The reviewer flags each of these as a prompt-
+        # injection surface irrespective of their content. Development notes
+        # live under docs/ instead, which is not auto-loaded.
+        forbidden = (
+            "CLAUDE.md", "AGENTS.md", "SKILL.md",
+            ".claude", ".codex", ".agents", ".gemini",
+            ".gstack", ".wrangler",
+        )
+        present = [name for name in forbidden if os.path.exists(os.path.join(ROOT, name))]
+        self.assertEqual(
+            present, [],
+            f"these agent-visible files must not ship in the installed tree: {present}",
+        )
+
+    def test_no_stdio_collector_survives_in_the_tree(self):
+        """The reviewer names StdioCollector explicitly as an unbounded whole-
+        output collector. hskctl is our own trusted CLI, but the cap has to
+        live at the boundary regardless, so Service.qml uses SplitParser with
+        a byte budget and a KILL escalation instead.
+        """
+        service = read("Service.qml")
+        # Only real usages: `stdout: StdioCollector {`, not "StdioCollector"
+        # appearing inside a comment that explains why we no longer use it.
+        real = re.search(r"(?:stdout|stderr):\s*StdioCollector\b", service)
+        self.assertIsNone(
+            real,
+            "Service.qml uses StdioCollector on a Process stream, which reads "
+            "to EOF before any byte check can run -- replace with SplitParser "
+            "and a byte budget.",
+        )
+
+
 class ListingTests(unittest.TestCase):
     """What the marketplace and a browsing human look for."""
 

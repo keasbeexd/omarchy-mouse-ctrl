@@ -240,7 +240,12 @@ Panel {
     slotSize: Style.bar.iconSlot
       + (root.barLabelText !== "" ? barLabelMetrics.width + Style.space(3) : 0)
     active: hsk.lowBattery
-    tooltipText: hsk.model + " — " + hsk.summary
+    // BarIconButton renders its tooltip through a shared host component we
+    // cannot pin to PlainText from here, so strip < > & and controls and cap
+    // the length before handoff. hsk.model is set by the mouse's own firmware
+    // and hsk.summary quotes it, so the values are attacker-supplyable in the
+    // reviewer's threat model (a USB device sets its own product string).
+    tooltipText: Model.plain(hsk.model, 60) + " — " + Model.plain(hsk.summary, 120)
     iconComponent: Component {
       Item {
         // Centred on the button, not on the 16px optical canvas this Loader
@@ -251,6 +256,13 @@ Panel {
           spacing: root.barLabelText !== "" ? Style.space(3) : 0
 
           Text {
+            // textFormat is set on every Text in this tree without exception,
+            // literal-only ones included. On Qt's default AutoText a string
+            // that looks like markup renders as rich text and `<img src=...>`
+            // becomes a real fetch from the shell process -- and every value
+            // that ends up in a Text here comes ultimately from the mouse or
+            // an hskctl error message, so the invariant has to hold end to end.
+            textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
             text: hsk.ready
               ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
@@ -262,6 +274,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
             visible: root.barLabelText !== ""
             text: root.barLabelText
@@ -331,13 +344,18 @@ Panel {
           PanelHero {
             id: hero
             width: parent.width
-            title: hsk.model
-            meta: hsk.summary
+            // PanelHero.title and .meta land in a shared host Text with the
+            // default AutoText format we cannot override from a plugin, so
+            // strip < > & (and controls) and cap before assignment -- the
+            // model name comes from the mouse's own product string.
+            title: Model.plain(hsk.model, 60)
+            meta: Model.plain(hsk.summary, 160)
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconOpacity: hsk.ready ? 1.0 : 0.5
             iconComponent: Component {
               Text {
+                textFormat: Text.PlainText
                 text: hsk.ready
                   ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
                   : "󰍽"
@@ -370,6 +388,7 @@ Panel {
 
             Text {
               id: writingLabel
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰏫  Writing to the mouse…"
               color: root.foreground
@@ -379,9 +398,18 @@ Panel {
           }
 
           Text {
+            // hsk.lastError comes from hskctl (a trusted first-party helper
+            // that we ship) but the text itself is not necessarily under our
+            // control -- an exception string can carry a device name or path
+            // that came from the mouse. Pin the format explicitly so an error
+            // that happens to look like markup renders as text, not as a
+            // remote fetch.
+            textFormat: Text.PlainText
             visible: hsk.actionStatus !== "" || (hsk.lastError !== "" && !root.needsSetup)
             width: parent.width
-            text: hsk.actionStatus !== "" ? hsk.actionStatus : hsk.lastError
+            text: Model.plain(
+              hsk.actionStatus !== "" ? hsk.actionStatus : hsk.lastError, 400
+            )
             color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -409,6 +437,7 @@ Panel {
               spacing: Style.space(6)
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: root.needsSetup
                   ? (hsk.detected ? "Mouse found, protocol not mapped" : "Mouse not detected")
@@ -422,13 +451,14 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: {
                   if (root.looksLikePermissions)
                     return "Configuring the mouse uses HID feature reports, and those need "
                          + "read-write access to /dev/hidraw*, which is root-only by default. "
                          + "Install the udev rule, then unplug and replug the mouse or its dongle."
-                  if (root.hasError) return hsk.lastError
+                  if (root.hasError) return Model.plain(hsk.lastError, 400)
                   if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
                   return "hskctl can see the device but does not know its config protocol yet. "
                        + "Run a capture to fill in the profile."
@@ -440,6 +470,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 visible: root.needsSetup || root.looksLikePermissions
                 text: root.looksLikePermissions
@@ -511,6 +542,7 @@ Panel {
               spacing: Style.space(6)
 
               Text {
+                textFormat: Text.PlainText
                 text: "Polling rate"
                 color: root.dim
                 font.family: root.fontFamily
@@ -539,6 +571,7 @@ Panel {
               spacing: Style.space(6)
 
               Text {
+                textFormat: Text.PlainText
                 text: "Lift-off distance"
                 color: root.dim
                 font.family: root.fontFamily
@@ -624,9 +657,13 @@ Panel {
 
             Text {
               id: versionLabel
+              textFormat: Text.PlainText
               anchors.right: parent.right
               anchors.bottom: parent.bottom
-              text: "v" + hsk.pluginVersion
+              // Version comes from hskctl (which reads it from manifest.json),
+              // so it is trusted -- but plain() also caps and keeps a rogue
+              // build from painting a novel out of the label.
+              text: "v" + Model.plain(hsk.pluginVersion, 32)
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -640,11 +677,15 @@ Panel {
 
               PanelToolTip {
                 visible: versionMouse.containsMouse
+                // The tooltip is rendered by a shared host component, so
+                // sanitize the device-supplied pieces (firmware string, hidraw
+                // path) the same way as the bar tooltip. The literal prefix
+                // and the version stay as-is.
                 text: {
-                  var parts = ["HSK Mouse v" + hsk.pluginVersion]
+                  var parts = ["HSK Mouse v" + Model.plain(hsk.pluginVersion, 32)]
                   if (hsk.has("firmwareVersion"))
-                    parts.push("firmware " + hsk.value("firmwareVersion"))
-                  if (hsk.devicePath !== "") parts.push(hsk.devicePath)
+                    parts.push("firmware " + Model.plain(hsk.value("firmwareVersion"), 40))
+                  if (hsk.devicePath !== "") parts.push(Model.plain(hsk.devicePath, 60))
                   return parts.join("  ·  ")
                 }
                 fontFamily: root.fontFamily
@@ -680,6 +721,7 @@ Panel {
     opacity: stepButton.enabled ? 1 : 0.35
 
     Text {
+      textFormat: Text.PlainText
       anchors.centerIn: parent
       text: stepButton.glyph
       color: root.foreground
@@ -773,6 +815,7 @@ Panel {
 
       // Selector. Filled when this is the stage the mouse is currently using.
       Text {
+        textFormat: Text.PlainText
         text: stageRow.isActive ? "\uf111" : "\uf10c"
         color: stageRow.isActive ? root.foreground : root.dim
         font.family: root.fontFamily
@@ -796,6 +839,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         text: stageRow.stage
         color: root.foreground
         font.family: root.fontFamily
@@ -821,6 +865,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         text: stageRow.dpi
         color: stageRow.split ? root.urgent : root.foreground
         font.family: root.fontFamily
