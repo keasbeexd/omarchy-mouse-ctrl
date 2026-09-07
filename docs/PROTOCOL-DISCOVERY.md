@@ -70,6 +70,11 @@ Then:
 ./tools/analyze-driver.py HSK_SW_FW20240320.zip --json driver-report.json
 ```
 
+`tools/analyze-driver.py` is not shipped in the installed tree (it is a
+one-time helper that has no runtime role). Get it by cloning the repository
+directly, or by checking out the `v1.6.0` tag or any earlier commit — the
+script lives at `tools/analyze-driver.py` in git history.
+
 It never runs the vendor binary — it only parses it. What it reports:
 
 - **USB vendor/product ids** scraped from every file, in both ASCII and the
