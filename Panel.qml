@@ -40,9 +40,22 @@ Panel {
   readonly property bool looksLikePermissions: root.hasError
     && Model.isPermissionError(hsk.lastError)
 
+  // The mouse glyph stays filled at every state -- an outlined mouse when the
+  // reading is stale reads as a different device, not as "waiting". Low battery
+  // still shouts (urgent), a stale reading still dims, and everything else is
+  // the bar's own foreground.
   readonly property color barIconColor: hsk.lowBattery
     ? root.urgent
     : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55))
+
+  // When the mouse is plugged in, the percentage recolours to the theme's
+  // accent so "charging" is visible at a glance -- the accent tracks whatever
+  // omarchy theme is active, so it always sits with the rest of the bar.
+  readonly property color barLabelColor: hsk.lowBattery
+    ? root.urgent
+    : (hsk.ready && hsk.value("charging") === true
+       ? Color.accent
+       : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55)))
 
   // The battery percentage drawn beside the glyph -- see the BarIconButton
   // below for why the label has to live inside the icon. Blank in a vertical
@@ -51,11 +64,21 @@ Panel {
 
   // The slot is a fixed width, so it has to be told how much text it is about
   // to hold or the label renders outside the button and overlaps its neighbour.
+  // Both metrics feed the slot width below -- sizing to actual content instead
+  // of the full icon slot removes the padding that made the widget look loose
+  // against its neighbours.
   TextMetrics {
     id: barLabelMetrics
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
     text: root.barLabelText
+  }
+
+  TextMetrics {
+    id: barIconMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.bar.iconFont
+    text: "󰍽"
   }
 
   implicitWidth: button.implicitWidth
@@ -237,8 +260,12 @@ Panel {
     // is not an error and not ignored-with-a-warning; it simply draws nothing,
     // which is why `showBatteryLabel` appeared to do nothing in either
     // position. The percentage is drawn inside the icon instead.
-    slotSize: Style.bar.iconSlot
-      + (root.barLabelText !== "" ? barLabelMetrics.width + Style.space(3) : 0)
+    // Content width plus a two-pixel breathing room on each side, instead of
+    // Style.bar.iconSlot -- which is padded to a square that fits any single
+    // glyph, and left the widget visibly loose next to its neighbours.
+    slotSize: Math.ceil(barIconMetrics.width)
+      + (root.barLabelText !== "" ? Style.space(3) + Math.ceil(barLabelMetrics.width) : 0)
+      + Style.space(2)
     active: hsk.lowBattery
     // BarIconButton renders its tooltip through a shared host component we
     // cannot pin to PlainText from here, so strip < > & and controls and cap
@@ -264,9 +291,10 @@ Panel {
             // an hskctl error message, so the invariant has to hold end to end.
             textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
-            text: hsk.ready
-              ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
-              : "󰍽"
+            // Always the filled mouse glyph -- charging state and battery level
+            // are carried by the percentage's colour beside it, not by swapping
+            // the icon out from under the reader.
+            text: "󰍽"
             color: root.barIconColor
             font.family: root.fontFamily
             font.pixelSize: Style.bar.iconFont
@@ -278,7 +306,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             visible: root.barLabelText !== ""
             text: root.barLabelText
-            color: root.barIconColor
+            color: root.barLabelColor
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             renderType: Text.NativeRendering
