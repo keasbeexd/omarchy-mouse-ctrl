@@ -706,19 +706,20 @@ Panel {
 
     // Read straight from the service rather than being handed a snapshot, so
     // the row survives a refresh instead of being torn down and rebuilt.
+    //
+    // No separate Y axis here. G-Wolves' own write path mirrors X into Y in
+    // the same packet (see the profile's `linkedField`), so every write this
+    // plugin makes keeps them equal -- a mismatch can only be a leftover from
+    // before this mouse was ever set through here, and the next write clears
+    // it. Not worth a UI for.
     readonly property int dpi: {
       var v = hsk.value("dpiStage1")
       return v === undefined || v === null ? Model.DPI_MIN : v
-    }
-    readonly property int dpiY: {
-      var v = hsk.value("dpiStage1Y")
-      return v === undefined || v === null ? stageRow.dpi : v
     }
     readonly property string swatch: {
       var v = hsk.value("dpiStage1Color")
       return v === undefined || v === null ? "" : String(v)
     }
-    readonly property bool split: stageRow.dpiY !== stageRow.dpi
     readonly property bool dpiWritable: hsk.canWrite("dpiStage1")
     readonly property bool colorWritable: hsk.canWrite("dpiStage1Color")
 
@@ -755,7 +756,7 @@ Panel {
           enabled: stageRow.dpiWritable
           selectByMouse: true
           horizontalAlignment: Text.AlignRight
-          color: stageRow.split ? root.urgent : root.foreground
+          color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
@@ -897,12 +898,6 @@ Panel {
           }
         }
       }
-    }
-
-    PanelToolTip {
-      visible: stageRow.split && stageRow.hasCursor
-      text: "X and Y axes differ on this stage"
-      fontFamily: root.fontFamily
     }
   }
 }

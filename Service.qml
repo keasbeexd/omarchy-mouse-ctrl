@@ -25,7 +25,6 @@ Item {
   // want to hold a refresh off for longer.
   property bool suspended: false
   property var writable: []
-  property var unverified: []
   // Legal values per field, e.g. which polling rates *this* mouse offers --
   // keyed by field name, from the profile via hskctl. Lets the panel build
   // its selectors from whatever mouse is actually plugged in instead of a
@@ -153,7 +152,6 @@ Item {
     devicePath = parsed.device
     values = parsed.settings || {}
     writable = parsed.writable || []
-    unverified = parsed.unverified || []
     allowed = parsed.allowed || {}
     if (parsed.version !== "") pluginVersion = parsed.version
     pending = ({})

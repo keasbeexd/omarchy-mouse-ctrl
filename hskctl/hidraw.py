@@ -12,6 +12,7 @@ import ctypes
 import fcntl
 import glob
 import os
+import re
 import struct
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -125,6 +126,16 @@ def _ioctl_string(fd: int, request_builder, length: int = 256) -> str:
     return buf.value.decode("utf-8", errors="replace")
 
 
+# A USB interface path component looks like "1-2:1.0" or "3-1.4:1.2" --
+# <bus>-<port[.port...]>:<bConfigurationValue>.<bInterfaceNumber>, exactly one
+# colon. The HID match id one level below it, "0003:VVVV:PPPP.NNNN", also has
+# a colon and a dot but two colons, not one, and its trailing number is a
+# global HID instance counter, not an interface number -- matching that first
+# (as a plain "does it contain : and ." check did) silently returned the
+# wrong number whenever it happened to look like a small decimal.
+_USB_INTERFACE_RE = re.compile(r"^\d+-[\d.]+:\d+\.(\d+)$")
+
+
 def _interface_number(path: str) -> int | None:
     """Walk sysfs to find which USB interface this hidraw node belongs to.
 
@@ -137,15 +148,11 @@ def _interface_number(path: str) -> int | None:
         real = os.path.realpath(sysfs)
     except OSError:
         return None
-    # .../usbN/x-y/x-y:1.2/0003:VVVV:PPPP.NNNN -> we want the ":1.2" component.
+    # .../usbN/x-y/x-y:1.2/0003:VVVV:PPPP.NNNN -> we want the "x-y:1.2" component.
     for part in real.split(os.sep)[::-1]:
-        if ":" in part and "." in part:
-            head = part.split(":")[-1]
-            if "." in head:
-                try:
-                    return int(head.split(".")[1])
-                except (ValueError, IndexError):
-                    continue
+        match = _USB_INTERFACE_RE.match(part)
+        if match:
+            return int(match.group(1))
     return None
 
 

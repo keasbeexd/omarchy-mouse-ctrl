@@ -83,7 +83,6 @@ function parseStatus(raw) {
     detected: parsed.detected === true,
     settings: parsed.settings || {},
     writable: parsed.writable || [],
-    unverified: parsed.unverified || [],
     allowed: parsed.allowed || {},
     version: typeof parsed.version === "string" ? parsed.version : "",
     error: String(parsed.error || "")
