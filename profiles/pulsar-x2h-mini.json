@@ -84,9 +84,9 @@
     "requireFeatureReport": true
   },
   "transport": {
-    "_comment": "17-byte packet length is still an unconfirmed guess -- pending `hskctl doctor --json` on the real device to see the actual reply size. reportId IS confirmed, though: hskctl probe found the cabled mouse's config endpoint (3554:f507, interface 11) reporting feature report id 6, not the unnumbered id 0 originally guessed here -- byte 0 of every packet template below was fixed to match. Whether the host writes these as HID Feature reports (like the G-Wolves profile) or Output reports over an interrupt endpoint is still unconfirmed by either source project; 'feature' matches what the probe found (a feature report id existing at all), so it is now a better-than-guess default rather than an arbitrary one.",
-    "kind": "feature",
-    "reportId": 6,
+    "_comment": "Corrected against the real, cloned source of packerlschupfer/pulsar-mouse-linux (not a secondhand summary): drivers/nordic.py and drivers/x2_crazylight.py -- the latter decoded from an actual Pulsar Fusion USB capture (GitHub issue #7), independent of the former -- both agree the transport is a raw USB Output report (SET_REPORT, wValue high byte 0x02) with report id 0x08, read back over the interrupt IN endpoint, NOT a Feature report (HIDIOCGFEATURE/HIDIOCSFEATURE) as first guessed from `hskctl probe`'s feature report id 6 on this interface. hskctl's existing transport.kind: \"output\" already implements exactly this shape (write_output = os.write, read_input = os.read) with no engine changes needed -- byte 0 of every command template below is now 0x08 to match.",
+    "kind": "output",
+    "reportId": 8,
     "packetLength": 17,
     "readLength": 17,
     "settleMs": 30,
@@ -99,74 +99,74 @@
   "commands": {
     "_comment": "Two shapes here. 'battery'/'version' are their own opcodes (byte 1) with data from byte 2, matching the G-Wolves style. Everything else rides the dongle's memory-mapped get/set (opcode 0x08 read / 0x07 write, at a fixed address baked into each command's template since every hskctl field is its own fixed address, not a runtime parameter) -- byte 3:4 address (endianness unconfirmed, written big-endian here), byte 5 length, value from byte 6.",
     "battery": {
-      "get": "06 04",
+      "get": "08 04",
       "responseOffset": 6,
       "readOnly": true,
       "_note": "[6]=percent, [7]=power/charging, [8:10]=millivolts per the nordic.py summary. Only percent and charging are mapped here; battery_mv would need a u16 field of its own once confirmed."
     },
     "version": {
-      "get": "06 12",
+      "get": "08 12",
       "responseOffset": 6,
       "readOnly": true
     },
     "pollingRate": {
-      "get": "06 08 00 00 00 01",
-      "set": "06 07 00 00 00 01",
+      "get": "08 08 00 00 00 01",
+      "set": "08 07 00 00 00 01",
       "valueOffset": 6,
       "responseOffset": 6,
-      "_note": "address 0x00. The raw<->Hz mapping (POLL_VAL_TO_HZ in the source) was not itself transcribed, so no `values` map is given -- see the field below."
+      "_note": "address 0x00. Raw<->Hz table confirmed from packerlschupfer/pulsar-mouse-linux's real source (drivers/nordic.py POLL_HZ_TO_VAL) -- 125/2000/4000/8000 credited there to an actual Pulsar Fusion USB capture (github.com/packerlschupfer/pulsar-mouse-linux issue #7 on the X2 CrazyLight, a different model sharing this same Nordic register map), 250/500/1000 to andrewrabert's earlier tool. The encoding itself (which raw byte means which rate) is solid; which of these seven rates the X2H mini specifically offers in Fusion's UI is not confirmed -- see the field's uiOptions note."
     },
     "dpiStageCount": {
-      "get": "06 08 00 00 02 01",
-      "set": "06 07 00 00 02 01",
+      "get": "08 08 00 00 02 01",
+      "set": "08 07 00 00 02 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "activeDpiStage": {
-      "get": "06 08 00 00 04 01",
-      "set": "06 07 00 00 04 01",
+      "get": "08 08 00 00 04 01",
+      "set": "08 07 00 00 04 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "liftOff": {
-      "get": "06 08 00 00 0a 01",
-      "set": "06 07 00 00 0a 01",
+      "get": "08 08 00 00 0a 01",
+      "set": "08 07 00 00 0a 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "debounce": {
-      "get": "06 08 00 00 a9 01",
-      "set": "06 07 00 00 a9 01",
+      "get": "08 08 00 00 a9 01",
+      "set": "08 07 00 00 a9 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "motion": {
-      "get": "06 08 00 00 ab 01",
-      "set": "06 07 00 00 ab 01",
+      "get": "08 08 00 00 ab 01",
+      "set": "08 07 00 00 ab 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "angle": {
-      "get": "06 08 00 00 af 01",
-      "set": "06 07 00 00 af 01",
+      "get": "08 08 00 00 af 01",
+      "set": "08 07 00 00 af 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "ripple": {
-      "get": "06 08 00 00 b1 01",
-      "set": "06 07 00 00 b1 01",
+      "get": "08 08 00 00 b1 01",
+      "set": "08 07 00 00 b1 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "turbo": {
-      "get": "06 08 00 00 b5 01",
-      "set": "06 07 00 00 b5 01",
+      "get": "08 08 00 00 b5 01",
+      "set": "08 07 00 00 b5 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "sleep": {
-      "get": "06 08 00 00 b7 01",
-      "set": "06 07 00 00 b7 01",
+      "get": "08 08 00 00 b7 01",
+      "set": "08 07 00 00 b7 01",
       "valueOffset": 6,
       "responseOffset": 6,
       "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
@@ -200,7 +200,17 @@
     "pollingRate": {
       "command": "pollingRate",
       "encoding": "u8",
-      "_needsVerification": "raw<->Hz table not transcribed -- this reads the raw register value only. Pulsar's Nordic mice are typically 125/250/500/1000/2000/4000/8000 Hz; do not assume the raw byte is one of these until confirmed with `hskctl get pollingRate` next to the Pulsar Fusion app."
+      "values": {
+        "1": 1000,
+        "2": 500,
+        "4": 250,
+        "8": 125,
+        "16": 2000,
+        "32": 4000,
+        "64": 8000
+      },
+      "uiOptions": [125, 250, 500, 1000],
+      "_needsVerification": "the raw<->Hz map itself is confirmed real-source (see the command's _note), so this is a much stronger guess than the rest of this profile -- but it's still unconfirmed specifically for the X2H mini (vs. the X2A/X2 CrazyLight this table was built from) until read back next to the Pulsar Fusion app. uiOptions defaults to the conservative 4-rate set nordic.py's base capabilities declare (125/250/500/1000); bump it to include 2000/4000/8000 once confirmed this model actually offers them -- Cfg.ini's [DEV_13] block doesn't list a rate set to check against."
     },
     "dpiStageCount": {
       "command": "dpiStageCount",
@@ -298,9 +308,10 @@
     ]
   },
   "_followUp": [
-    "VID/PID and reportId (6) are confirmed on real hardware for the cabled connection; the RF receiver's own config-endpoint interface is still not identified -- a fresh `hskctl probe --json` with the dongle connected, now that all five product ids are in match.productIds, may score it differently.",
-    "The opcode/address byte layout is still the pre-existing transcription, unconfirmed and evidently at least partly wrong (real hardware returns no data at all cabled, and duplicate garbage values for different fields over the dongle). Static analysis of the real app (tools/analyze-driver.py) confirmed the transport (HID Feature reports, real HidD_SetFeature/HidP_GetCaps imports) but not the packet bytes -- native C++/MFC embeds those as immediate values in machine code, not as an extractable blob the way G-Wolves' .NET FieldRVA tables were. Getting them needs either real disassembly of 'Pulsar Fusion Wireless Mice.exe', or a live USB capture (Wireshark/usbmon) while it runs against a real X2H mini.",
-    "Confirm every _needsVerification field with `hskctl get <field>` next to the Pulsar Fusion app once real packet bytes are known, then delete the marker so writes unlock.",
-    "DPI stage values and LED colour need a record-level checksum (0x55 - value per byte, not the whole-packet checksum) that protocol.py does not support yet -- add an encoding for it before mapping dpiStage1..N here. Cfg.ini confirms this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like the G-Wolves profile."
+    "Re-run `hskctl doctor --json --device /dev/hidraw5` (or whatever `hskctl probe` names as the cabled config endpoint) now that transport.kind is 'output' and reportId is 8, corrected against packerlschupfer/pulsar-mouse-linux's real cloned source (drivers/nordic.py, drivers/x2_crazylight.py) rather than a secondhand summary of it. Both independently agree on report id 8 and Output-report transport; the earlier 'feature id 6, no readings' and 'output report id 8/output transport, duplicate garbage values' results were consistent with this being the actual bug.",
+    "The RF receiver's own config-endpoint interface is still not positively identified -- a fresh `hskctl probe --json` with the dongle connected, now that all five product ids are in match.productIds and the transport is corrected, may score it differently. Check outputReportIds (not just featureReportIds) in the JSON, since the real transport uses Output reports.",
+    "The opcode/address bytes (CMD_MEM_GET=0x08/CMD_MEM_SET=0x07, addresses 0x00 polling/0x02 dpiStageCount/0x04 activeDpiStage/0x0A LOD/0xA9 debounce/0xAB motionSync/0xAF angleSnap/0xB1 rippleControl/0xB5 turboMode/0xB7 autosleep) now match the real cloned source exactly, not a summary of it -- these were already right before this fix; only the transport (report id, output vs feature) was wrong. Two known gaps vs. the real driver: autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- this engine has no per-field 'write to two addresses' hook yet, so a write here would only update 0xB7 until that's added. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; this engine's check_ack has no hook for 'echo the sent opcode' (only a fixed expected byte), so an occasional stale/wrong reply is possible until that's added too.",
+    "Confirm every _needsVerification field with `hskctl get <field>` next to the Pulsar Fusion app once reads return real data, then delete the marker so writes unlock.",
+    "DPI stage values and LED colour need a record-level checksum (0x55 - value per byte, not the whole-packet checksum) that protocol.py does not support yet -- add an encoding for it before mapping dpiStage1..N here. Cfg.ini confirms this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like the G-Wolves profile; the real source's _dpi_to_raw/_raw_to_dpi (drivers/nordic.py) is the reference encoding once the checksum hook exists."
   ]
 }
