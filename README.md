@@ -179,9 +179,10 @@ an issue with what you find on hardware this hasn't been tested against.
 
 **Bar widget:** left click opens the panel, middle click refreshes.
 
-**In the panel**, DPI is one row: a draggable slider (50 DPI steps), its
-current value, a colour swatch that cycles through the firmware's stage
-palette on click, and a hex field you can type a colour into directly. There
+**In the panel**, DPI is one row: a number field you can type an exact value
+into, a draggable slider (50 DPI steps) below it, then three one-click
+preset colours, a swatch showing the current colour (click it to cycle the
+firmware's full palette), and a hex field for typing an exact colour. There
 is deliberately no stage picker — see [Pulsar X2H mini](#pulsar-x2h-mini)
 above for why, and note this applies to the G-Wolves profile too even though
 its firmware's stage switching does actually work: this plugin only ever

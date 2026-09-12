@@ -746,14 +746,35 @@ Panel {
         width: parent.width
         spacing: Style.space(8)
 
-        Text {
-          textFormat: Text.PlainText
-          text: stageRow.dpi
+        // Typing a value commits like the slider does -- on
+        // editingFinished, not per keystroke, so a half-typed number is
+        // never sent to the mouse.
+        TextField {
+          id: dpiField
+          Layout.preferredWidth: Style.space(70)
+          enabled: stageRow.dpiWritable
+          selectByMouse: true
+          horizontalAlignment: Text.AlignRight
           color: stageRow.split ? root.urgent : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
-          Layout.alignment: Qt.AlignVCenter
+          validator: IntValidator { bottom: Model.DPI_MIN; top: Model.DPI_MAX }
+
+          // Only follow the device (and the slider) while not focused, or a
+          // refresh mid-edit would overwrite what is being typed.
+          Binding {
+            target: dpiField
+            property: "text"
+            value: String(stageRow.dpi)
+            when: !dpiField.activeFocus
+          }
+
+          onEditingFinished: {
+            var n = parseInt(text, 10)
+            if (!isNaN(n)) hsk.set("dpiStage1", Model.clampDpi(n))
+            focus = false
+          }
         }
 
         Item { Layout.fillWidth: true }
@@ -787,7 +808,39 @@ Panel {
         spacing: Style.space(8)
         visible: stageRow.swatch !== ""
 
-        // Colour swatch. Clicking steps through the firmware's stage palette.
+        // Three one-click presets, then the current colour (click cycles the
+        // firmware's full palette for anything not one of the three), then
+        // the hex field for typing an exact colour.
+        Repeater {
+          model: Model.DPI_PRESET_COLORS
+
+          Rectangle {
+            id: presetBox
+            required property string modelData
+            visible: stageRow.colorWritable
+            Layout.preferredWidth: Style.space(14)
+            Layout.preferredHeight: Style.space(14)
+            Layout.alignment: Qt.AlignVCenter
+            radius: Style.cornerRadius > 0 ? Style.space(3) : 0
+            color: presetBox.modelData
+            border.width: 1
+            border.color: presetMouse.containsMouse ? root.foreground : root.dim
+
+            MouseArea {
+              id: presetMouse
+              anchors.fill: parent
+              anchors.margins: -Style.space(3)
+              hoverEnabled: true
+              enabled: !hsk.busy
+              cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
+              onEntered: root.setCursor(root.rowIndexOf("dpiStage"))
+              onClicked: hsk.set("dpiStage1Color", presetBox.modelData)
+            }
+          }
+        }
+
+        // Current colour. Clicking cycles the firmware's full palette, for
+        // reaching a colour that isn't one of the three presets above.
         Rectangle {
           id: swatchBox
           visible: stageRow.colorWritable
@@ -812,7 +865,7 @@ Panel {
 
           PanelToolTip {
             visible: swatchMouse.containsMouse
-            text: "Cycle colour"
+            text: "Current colour -- click to cycle"
             fontFamily: root.fontFamily
           }
         }
@@ -839,7 +892,7 @@ Panel {
           onEditingFinished: {
             var v = text.trim()
             if (v !== "" && v[0] !== "#") v = "#" + v
-            if (/^#[0-9a-fA-F]{6}$/.test(v)) hsk.set("dpiStage1Color", v.toLowerCase())
+            if (Model.isValidHexColor(v)) hsk.set("dpiStage1Color", v.toLowerCase())
             focus = false
           }
         }
