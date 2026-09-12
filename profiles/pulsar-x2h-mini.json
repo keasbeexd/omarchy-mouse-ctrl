@@ -180,6 +180,63 @@
       "valueChecksum": "sum8_minus_55",
       "responseOffset": 6,
       "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
+    },
+    "_dpiComment": "DPI stages are 4-byte records (ADDR_DPI_BASE=0x0C, DPI_STAGE_SIZE=4 per drivers/nordic.py): 3 data bytes (nordicDpi3 encoding) + 1 valueChecksum byte, same mechanism as every scalar field above just with a 3-byte value instead of 1. LED colours are the same shape at ADDR_LED_COLOR_BASE=0x2C (rgb encoding, still 3 bytes + checksum). Byte 5 (length) is 3 for reads (only the 3 data bytes are decoded) and 4 for writes (3 value bytes + the checksum byte the device actually stores) -- matching _mem_write's real byte count for a 4-byte block, unlike the single-value fields above where byte 5 says 1 despite 2 bytes actually going out (which round-tripped fine in testing, but a 4-byte block is more of the packet to get right, so this matches the real driver's own accounting exactly rather than relying on the device not checking it).",
+    "dpiStage1": {
+      "get": "08 08 00 00 0c 03",
+      "set": "08 07 00 00 0c 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiStage2": {
+      "get": "08 08 00 00 10 03",
+      "set": "08 07 00 00 10 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiStage3": {
+      "get": "08 08 00 00 14 03",
+      "set": "08 07 00 00 14 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiStage4": {
+      "get": "08 08 00 00 18 03",
+      "set": "08 07 00 00 18 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiColor1": {
+      "get": "08 08 00 00 2c 03",
+      "set": "08 07 00 00 2c 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiColor2": {
+      "get": "08 08 00 00 30 03",
+      "set": "08 07 00 00 30 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiColor3": {
+      "get": "08 08 00 00 34 03",
+      "set": "08 07 00 00 34 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
+    },
+    "dpiColor4": {
+      "get": "08 08 00 00 38 03",
+      "set": "08 07 00 00 38 04",
+      "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
+      "responseOffset": 6
     }
   },
   "fields": {
@@ -233,9 +290,10 @@
     "activeDpiStage": {
       "command": "activeDpiStage",
       "encoding": "u8",
-      "min": 0,
-      "max": 7,
-      "_note": "Write path confirmed via the motionSync canary. Read value (0) is consistent with the owner's confirmed single active stage. Still 0-based, unlike the G-Wolves profile's 1-based activeDpiStage -- do not compare the two raw."
+      "add": 1,
+      "min": 1,
+      "max": 4,
+      "_note": "Wire value is 0-based (confirmed: owner's single-stage mouse reads back 0). `add: 1` translates it to the 1-based convention Model.js's dpiStages()/buildRows() and the G-Wolves profile both use -- without this, the panel's active-stage highlight would compare a 0-based value against a 1-based loop and never match. hskctl set/get activeDpiStage now takes/returns 1 for the first stage, matching G-Wolves; this changed from the earlier 0-based CLI convention. max:4 matches the 4 DPI stage fields mapped below, not necessarily this model's true hardware ceiling."
     },
     "liftOffDistance": {
       "command": "liftOff",
@@ -284,16 +342,79 @@
       "min": 0,
       "max": 2550,
       "_note": "Read value (30s) confirmed correct by the owner against their actual mouse's real auto-sleep behavior. Write path confirmed via the motionSync canary."
+    },
+    "dpiStage1": {
+      "command": "dpiStage1",
+      "encoding": "nordicDpi3",
+      "step": 50,
+      "min": 50,
+      "max": 26000,
+      "_note": "CANARY FIELD for the new nordicDpi3 encoding + multi-byte valueChecksum, same role motionSync played for the single-byte case. Encoding cross-checked byte-for-byte against packerlschupfer/pulsar-mouse-linux's own _dpi_to_raw/_raw_to_dpi for several values (400/800/1600/3200/50/100/26000, all exact matches). Confirm `hskctl set dpiStage1 <n>` round-trips correctly AND the mouse's actual cursor speed visibly changes before removing _needsVerification from dpiStage2/3/4."
+    },
+    "dpiStage2": {
+      "command": "dpiStage2",
+      "encoding": "nordicDpi3",
+      "step": 50,
+      "min": 50,
+      "max": 26000,
+      "_needsVerification": "same caveat as dpiStage1 -- encoding math confirmed, hardware write not yet confirmed for this specific address"
+    },
+    "dpiStage3": {
+      "command": "dpiStage3",
+      "encoding": "nordicDpi3",
+      "step": 50,
+      "min": 50,
+      "max": 26000,
+      "_needsVerification": "same caveat as dpiStage1 -- encoding math confirmed, hardware write not yet confirmed for this specific address"
+    },
+    "dpiStage4": {
+      "command": "dpiStage4",
+      "encoding": "nordicDpi3",
+      "step": 50,
+      "min": 50,
+      "max": 26000,
+      "_needsVerification": "same caveat as dpiStage1 -- encoding math confirmed, hardware write not yet confirmed for this specific address"
+    },
+    "dpiStage1Color": {
+      "command": "dpiColor1",
+      "encoding": "rgb",
+      "_note": "CANARY FIELD alongside dpiStage1 -- this is the most visually obvious test in the whole profile: set a colour, look at the mouse's LED. Confirm it actually changes to the right colour before removing _needsVerification from dpiStage2Color/3Color/4Color."
+    },
+    "dpiStage2Color": {
+      "command": "dpiColor2",
+      "encoding": "rgb",
+      "_needsVerification": "same caveat as dpiStage1Color"
+    },
+    "dpiStage3Color": {
+      "command": "dpiColor3",
+      "encoding": "rgb",
+      "_needsVerification": "same caveat as dpiStage1Color"
+    },
+    "dpiStage4Color": {
+      "command": "dpiColor4",
+      "encoding": "rgb",
+      "_needsVerification": "same caveat as dpiStage1Color"
     }
   },
   "ui": {
-    "dpiStages": [],
+    "dpiStages": [
+      "dpiStage1",
+      "dpiStage2",
+      "dpiStage3",
+      "dpiStage4"
+    ],
     "quickToggles": [
       "motionSync",
       "angleSnap",
       "rippleControl"
     ],
     "sections": [
+      {
+        "title": "DPI",
+        "fields": [
+          "activeDpiStage"
+        ]
+      },
       {
         "title": "PERFORMANCE",
         "fields": [

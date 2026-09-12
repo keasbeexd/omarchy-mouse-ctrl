@@ -77,6 +77,18 @@ CHECKSUMS = {
 # --- field codecs -----------------------------------------------------------
 
 
+def _rot2(nibble: int) -> int:
+    """Rotate a 4-bit value left by 2. Self-inverse.
+
+    Pulsar's Nordic DPI record packs a 2-bit mode and a 2-bit page into one
+    nibble, rotated so the common case (mode 0, page 0) round-trips through
+    a value that looks like noise rather than 0 -- this exists only to match
+    the firmware's own bit layout, confirmed against
+    packerlschupfer/pulsar-mouse-linux's drivers/nordic.py.
+    """
+    return ((nibble << 2) | (nibble >> 2)) & 0x0F
+
+
 def _decode_scalar(buf: bytes, spec: dict) -> Any:
     enc = spec.get("encoding", "u8")
     off = spec["offset"]
@@ -100,6 +112,27 @@ def _decode_scalar(buf: bytes, spec: dict) -> Any:
     elif enc == "version2":
         # Two bytes of major.minor, as some firmwares report it.
         return "%d.%d" % (buf[off], buf[off + 1])
+    elif enc == "nordicDpi3":
+        # Pulsar's Nordic DPI record: [lo, lo, high] where `high`'s low
+        # nibble rotates a 2-bit mode and 2-bit page. Mode selects a
+        # (multiplier, base, ceiling) row from the field's `dpiModes` list
+        # (single-mode devices, the only ones mapped so far, have exactly
+        # one row); page extends `lo` past 8 bits. Confirmed against
+        # packerlschupfer/pulsar-mouse-linux's drivers/nordic.py
+        # _raw_to_dpi/_dpi_to_raw.
+        step = spec.get("step", 50)
+        modes = spec.get("dpiModes") or [[0, 1, 1, None]]
+        high = _rot2(buf[off + 2] & 0x0F)
+        mode, page = high >> 2, high & 0x03
+        for m, mult, mbase, _limit in modes:
+            if m == mode:
+                break
+        else:
+            # Unknown mode: fall back to the first row rather than invent a
+            # number -- this only happens against a device we have not
+            # actually mapped that mode for yet.
+            _m, mult, mbase, _limit = modes[0]
+        return (buf[off] + mbase + 256 * page) * step * mult
     else:
         raise ProtocolError(f"unknown encoding {enc!r}")
 
@@ -168,6 +201,30 @@ def _encode_scalar(buf: bytearray, spec: dict, value: Any) -> None:
                 f"so only exact divisors work ({', '.join(str(a) for a in allowed[:8])}, ...)"
             )
         raw = base // wanted
+    elif spec.get("encoding") == "nordicDpi3":
+        # Inverse of the nordicDpi3 decode above -- see its comment there for
+        # the bit layout. `modes` picks the coarsest row whose ceiling still
+        # covers this DPI (None = "everything above"), the same rule
+        # _dpi_to_raw uses, so a value above the finest mode's range doesn't
+        # silently wrap.
+        step = spec.get("step", 50)
+        modes = spec.get("dpiModes") or [[0, 1, 1, None]]
+        dpi = int(value)
+        lo, hi = spec.get("min"), spec.get("max")
+        if lo is not None and dpi < lo:
+            raise ProtocolError(f"{value} is below the minimum of {lo}")
+        if hi is not None and dpi > hi:
+            raise ProtocolError(f"{value} is above the maximum of {hi}")
+        for mode, mult, mbase, limit in modes:
+            if limit is None or dpi <= limit:
+                break
+        unit = step * mult
+        index = round(dpi / unit) - mbase
+        if not 0 <= index <= 1023:
+            raise ProtocolError(f"{dpi} DPI is out of range for this device")
+        page, low = divmod(index, 256)
+        nib = _rot2((mode << 2) | page)
+        raw = bytes([low, low, (nib << 4) | nib])
     else:
         raw = int(value)
         offset_add = spec.get("add")
@@ -205,6 +262,8 @@ def _encode_scalar(buf: bytearray, spec: dict, value: Any) -> None:
         buf[off] = (buf[off] & 0x0F) | ((raw & 0x0F) << 4)
     elif enc == "rgb":
         buf[off : off + 3] = bytes(raw)
+    elif enc == "nordicDpi3":
+        buf[off : off + 3] = raw
     else:
         raise ProtocolError(f"unknown encoding {enc!r}")
 
@@ -408,7 +467,9 @@ class Profile:
     def encode_value(self, name: str, value: Any) -> bytes:
         """Encode one field's value as the bytes that ride in a set request."""
         spec = dict(self.field(name))
-        width = {"u8": 1, "u16le": 2, "u16be": 2}.get(spec.get("encoding", "u8"), 1)
+        width = {
+            "u8": 1, "u16le": 2, "u16be": 2, "rgb": 3, "nordicDpi3": 3,
+        }.get(spec.get("encoding", "u8"), 1)
         scratch = bytearray(width)
         spec["offset"] = 0
         _encode_scalar(scratch, spec, value)
