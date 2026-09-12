@@ -1,19 +1,46 @@
 {
   "profileVersion": 1,
-  "model": "Pulsar X2H mini",
+  "model": "Pulsar X2H Mini Wireless",
   "status": "partial",
   "_source": [
-    "Not decoded from a captured trace on real hardware -- there is no Pulsar",
-    "X2H mini on hand for this project. Everything below is transcribed from",
-    "two community Linux projects that already speak to Pulsar's Nordic",
-    "wireless dongle: packerlschupfer/pulsar-mouse-linux (drivers/nordic.py,",
-    "which documents an address-mapped memory protocol for VID 0x3554,",
-    "PIDs 0xf507/0xf508 -- shipped for the 'Pulsar X2A Wireless / X2 V2",
-    "Mini' dongle) and the tool it credits as its source,",
-    "andrewrabert/python-pulsar-mouse-tool. X2H mini's own USB ids were not",
-    "published anywhere found by this search; 0xf507/0xf508 are the closest",
-    "confirmed relative (same Nordic receiver family) and are a placeholder",
-    "until someone runs `hskctl probe` with an X2H mini actually plugged in.",
+    "Started as a transcription (not a capture) from two community Linux",
+    "projects that speak to Pulsar's Nordic wireless dongle:",
+    "packerlschupfer/pulsar-mouse-linux (drivers/nordic.py, an address-mapped",
+    "memory protocol for VID 0x3554) and andrewrabert/python-pulsar-mouse-tool,",
+    "its credited source. That gave the packet shape (17 bytes, opcode +",
+    "address + length, sum8_minus_55 checksum) but not this exact model's IDs.",
+    "",
+    "Confirmed since, statically, by running tools/analyze-driver.py against",
+    "the real Pulsar Fusion Windows installer (innoextract'd, then pointed at",
+    "'Pulsar Fusion Wireless Mice.exe' and the Cfg.ini it ships) -- no",
+    "hardware capture, but real vendor source, not a secondhand description:",
+    "",
+    "- Cfg.ini's [OPT] section: VID=25A7,3554  PID=fa7b,f507  PID2=fa7c,f508,f509",
+    "  -- matches the 3554:f507/f509 this project already found live via",
+    "  `hskctl probe` on real hardware, and adds a second vendor id (25a7,",
+    "  presumably an older USB bridge chip revision, same pattern as",
+    "  G-Wolves shipping several PIDs across hardware revisions) this",
+    "  project has no hardware to confirm.",
+    "- Cfg.ini's [DEV_13] is this exact model: Name=X2H Mini Wireless,",
+    "  CID=0x06 (shared by every wireless model in the file -- DEV_1 through",
+    "  DEV_21 are all CID=0x06, meaning the app treats them as one protocol",
+    "  family and tells them apart by a model id, MID=0x0D for this one),",
+    "  Sensor=0x3395 (PixArt PAW3395), DPI=400,800,1600,3200 (four stages",
+    "  out of the box -- NOT seven like the G-Wolves profile), Debounce=3.",
+    "  This is capability/default metadata the app's UI uses, not wire-",
+    "  protocol byte offsets -- it doesn't tell us where MID or the DPI",
+    "  stages live in a packet, only that they exist and what a fresh X2H",
+    "  mini ships with.",
+    "- The app itself ('Pulsar Fusion Wireless Mice.exe') is native C++/MFC,",
+    "  not .NET or Electron -- confirmed importing HidD_SetFeature,",
+    "  HidD_GetHidGuid, HidD_GetPreparsedData, HidP_GetCaps, so the transport",
+    "  really is HID Feature reports, matching this profile's `transport.kind`.",
+    "  But native code embeds packet bytes as immediate values in machine",
+    "  code, not as a labelled blob the way .NET's FieldRVA let this same",
+    "  script pull G-Wolves' HTS_*_CMD tables out directly -- so the actual",
+    "  opcode/address bytes below are still the pre-existing transcription,",
+    "  not decoded from this binary. Getting those needs either real",
+    "  disassembly of this exe, or a live USB capture while it runs.",
     "",
     "Every field below is marked _needsVerification, which hskctl already",
     "treats as a hard stop on writing (see Profile.field_writable) --",
@@ -40,14 +67,17 @@
     "refused until _needsVerification is removed field by field."
   ],
   "match": {
-    "_comment": "Confirmed on real hardware 2026-09 via `hskctl probe`: the cabled mouse itself enumerates as 3554:f507 (config endpoint on interface 11, vendor usage page 0xff04, feature report id 6 -- the wired probe's top candidate, score 125, fully identified). The RF receiver is a SEPARATE USB device, 3554:f509 ('Pulsar 4K Wireless Receiver') -- its config-endpoint interface has not been captured yet (the probe run so far only showed its interface 2, generic usage page, no feature reports, so it scored too low to identify; there is very likely another interface on that same node with a vendor usage page, same as the cabled mouse's interface 11). f508 is left in from the original guess (same Nordic family, unconfirmed) and can be dropped once disproven. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
+    "_comment": "vendorIds/productIds now match Cfg.ini's own [OPT] block from the real Pulsar Fusion installer (VID=25A7,3554  PID=fa7b,f507  PID2=fa7c,f508,f509) as well as what `hskctl probe` found live on real hardware: the cabled mouse enumerates as 3554:f507 (config endpoint on interface 11, vendor usage page 0xff04, feature report id 6 -- the wired probe's top candidate, score 125, fully identified). The RF receiver is a SEPARATE USB device, 3554:f509 ('Pulsar 4K Wireless Receiver') -- its config-endpoint interface has not been captured yet (the probe run so far only showed generic-usage-page interfaces, none of them identified). 25a7:fa7b/fa7c are Cfg.ini's alternate ids (presumably an older USB bridge chip revision) with no hardware here to confirm them against. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
     "vendorIds": [
-      "3554"
+      "3554",
+      "25a7"
     ],
     "productIds": [
       "f507",
       "f508",
-      "f509"
+      "f509",
+      "fa7b",
+      "fa7c"
     ],
     "interface": null,
     "usagePage": null,
@@ -268,9 +298,9 @@
     ]
   },
   "_followUp": [
-    "Confirm VID/PID: plug in an actual X2H mini and run `hskctl probe --json`.",
-    "Confirm transport kind (feature vs output report) and reportId by tracing real traffic per docs/PROTOCOL-DISCOVERY.md's method, adapted for this dongle.",
-    "Confirm every _needsVerification field with `hskctl get <field>` next to the Pulsar Fusion app, then delete the marker so writes unlock.",
-    "DPI stage values and LED colour need a record-level checksum (0x55 - value per byte, not the whole-packet checksum) that protocol.py does not support yet -- add an encoding for it before mapping dpiStage1..N here."
+    "VID/PID and reportId (6) are confirmed on real hardware for the cabled connection; the RF receiver's own config-endpoint interface is still not identified -- a fresh `hskctl probe --json` with the dongle connected, now that all five product ids are in match.productIds, may score it differently.",
+    "The opcode/address byte layout is still the pre-existing transcription, unconfirmed and evidently at least partly wrong (real hardware returns no data at all cabled, and duplicate garbage values for different fields over the dongle). Static analysis of the real app (tools/analyze-driver.py) confirmed the transport (HID Feature reports, real HidD_SetFeature/HidP_GetCaps imports) but not the packet bytes -- native C++/MFC embeds those as immediate values in machine code, not as an extractable blob the way G-Wolves' .NET FieldRVA tables were. Getting them needs either real disassembly of 'Pulsar Fusion Wireless Mice.exe', or a live USB capture (Wireshark/usbmon) while it runs against a real X2H mini.",
+    "Confirm every _needsVerification field with `hskctl get <field>` next to the Pulsar Fusion app once real packet bytes are known, then delete the marker so writes unlock.",
+    "DPI stage values and LED colour need a record-level checksum (0x55 - value per byte, not the whole-packet checksum) that protocol.py does not support yet -- add an encoding for it before mapping dpiStage1..N here. Cfg.ini confirms this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like the G-Wolves profile."
   ]
 }
