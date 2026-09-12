@@ -8,7 +8,7 @@ Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
 > **Renamed and moved from HSK Mouse.** This plugin used to be G-Wolves-only,
 > called `keasbeexd.hskmouse` / "HSK Mouse", and lived in the
 > [`omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) repo. Now that it
-> also speaks Pulsar's protocol, it's `keasbeexd.mousectl` / "Mouse Control"
+> also speaks Pulsar's protocol, it's `keasbeexd.mousectrl` / "Mouse Control"
 > instead, developed here in this repo (`mouse-ctrl`) going forward.
 > `omarchy-hsk` still exists with the G-Wolves-only version, unchanged, for
 > anyone not ready to move. If you have the old version installed, see
@@ -39,11 +39,11 @@ Two steps. **Both are required** — the second is not optional polish.
 
 ```bash
 omarchy plugin add https://github.com/keasbeexd/mouse-ctrl.git
-omarchy plugin enable keasbeexd.mousectl
+omarchy plugin enable keasbeexd.mousectrl
 ```
 
 ```bash
-~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev
+~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev
 ```
 
 Then **unplug and replug** the mouse or its dongle, and add the **Mouse
@@ -199,8 +199,8 @@ value, shown with one fewer step of rounding. `watch-battery` prints both.
 Omarchy IPC works too:
 
 ```bash
-omarchy-shell keasbeexd.mousectl cycleDpi
-omarchy-shell keasbeexd.mousectl setPollingRate 1000
+omarchy-shell keasbeexd.mousectrl cycleDpi
+omarchy-shell keasbeexd.mousectrl setPollingRate 1000
 ```
 
 ## Settings
@@ -220,7 +220,7 @@ whichever of the three layout arrays the widget sits in:
 {
   "bar": {
     "right": [
-      { "id": "keasbeexd.mousectl", "showBatteryLabel": true, "refreshIntervalSec": 30 }
+      { "id": "keasbeexd.mousectrl", "showBatteryLabel": true, "refreshIntervalSec": 30 }
     ]
   }
 }
@@ -249,14 +249,14 @@ refresh, if you want one sooner).
 ## Removing
 
 ```bash
-omarchy plugin remove keasbeexd.mousectl
+omarchy plugin remove keasbeexd.mousectrl
 ```
 
 That takes the plugin out of the shell. What survives, and how to remove it:
 
-- The **udev rule** at `/etc/udev/rules.d/60-mousectl.rules` stays in place
+- The **udev rule** at `/etc/udev/rules.d/60-mousectrl.rules` stays in place
   (it needs `sudo` to have got there in the first place). Remove it with
-  `sudo rm /etc/udev/rules.d/60-mousectl.rules && sudo udevadm control --reload-rules`
+  `sudo rm /etc/udev/rules.d/60-mousectrl.rules && sudo udevadm control --reload-rules`
   if you no longer want your user to have hidraw access to any of these mice.
 - If you ran `./install.sh --link`, a symlink at `~/.local/bin/hskctl` points
   at the plugin. `./install.sh --uninstall` removes it (and only if it still
@@ -284,8 +284,8 @@ changed, this is neither an automatic update nor an in-place one:
 ```bash
 omarchy plugin remove keasbeexd.hskmouse
 omarchy plugin add https://github.com/keasbeexd/mouse-ctrl.git
-omarchy plugin enable keasbeexd.mousectl
-~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev
+omarchy plugin enable keasbeexd.mousectrl
+~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev
 ```
 
 Re-add the widget under its new name in `shell.json` (or the bar settings UI)
@@ -378,7 +378,7 @@ git clone https://github.com/keasbeexd/mouse-ctrl.git
 cd mouse-ctrl
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
-omarchy plugin enable keasbeexd.mousectl
+omarchy plugin enable keasbeexd.mousectrl
 ```
 
 The tree that ships to the marketplace holds only what a user needs at

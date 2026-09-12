@@ -9,8 +9,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "keasbeexd.mousectl"
-  ipcTarget: "keasbeexd.mousectl"
+  moduleName: "keasbeexd.mousectrl"
+  ipcTarget: "keasbeexd.mousectrl"
   manageIpc: false
 
   property int cursorIndex: 0
@@ -502,7 +502,7 @@ Panel {
                 width: parent.width
                 visible: root.needsSetup || root.looksLikePermissions
                 text: root.looksLikePermissions
-                  ? "~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev"
+                  ? "~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev"
                   : "hskctl probe"
                 wrapMode: Text.WrapAnywhere
                 color: root.foreground

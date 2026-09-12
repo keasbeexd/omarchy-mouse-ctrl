@@ -35,7 +35,7 @@ RM="/usr/bin/rm"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
-UDEV_RULE="/etc/udev/rules.d/60-mousectl.rules"
+UDEV_RULE="/etc/udev/rules.d/60-mousectrl.rules"
 # Superseded by UDEV_RULE above once this plugin covered more than one vendor.
 # Still checked for and offered for removal below, so upgrading does not leave
 # a stale rule with the plugin's old name granting access nothing reads.
