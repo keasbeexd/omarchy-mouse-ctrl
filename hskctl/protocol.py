@@ -344,6 +344,19 @@ class Profile:
             offset = cmd.get("valueOffset", 5)
             buf[offset : offset + len(value_bytes)] = value_bytes
 
+            # Some protocols (Pulsar's Nordic memory map) checksum each
+            # written value on its own, immediately after it -- separate from
+            # the whole-packet checksum below, and required for the firmware
+            # to accept the write at all. "valueChecksum" names one of the
+            # functions in CHECKSUMS to run over just `value_bytes`.
+            value_checksum = cmd.get("valueChecksum")
+            if value_checksum:
+                fn = CHECKSUMS.get(value_checksum)
+                if fn is None:
+                    raise ProtocolError(f"unknown valueChecksum kind {value_checksum!r}")
+                csum_offset = offset + len(value_bytes)
+                buf[csum_offset] = fn(bytes(value_bytes))
+
         return bytes(self.checksum(buf))
 
     def check_ack(self, reply: bytes) -> bool:

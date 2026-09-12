@@ -113,6 +113,7 @@
       "get": "08 08 00 00 00 01",
       "set": "08 07 00 00 00 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6,
       "_note": "address 0x00. Raw<->Hz table confirmed from packerlschupfer/pulsar-mouse-linux's real source (drivers/nordic.py POLL_HZ_TO_VAL) -- 125/2000/4000/8000 credited there to an actual Pulsar Fusion USB capture (github.com/packerlschupfer/pulsar-mouse-linux issue #7 on the X2 CrazyLight, a different model sharing this same Nordic register map), 250/500/1000 to andrewrabert's earlier tool. The encoding itself (which raw byte means which rate) is solid; which of these seven rates the X2H mini specifically offers in Fusion's UI is not confirmed -- see the field's uiOptions note."
     },
@@ -120,54 +121,63 @@
       "get": "08 08 00 00 02 01",
       "set": "08 07 00 00 02 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "activeDpiStage": {
       "get": "08 08 00 00 04 01",
       "set": "08 07 00 00 04 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "liftOff": {
       "get": "08 08 00 00 0a 01",
       "set": "08 07 00 00 0a 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "debounce": {
       "get": "08 08 00 00 a9 01",
       "set": "08 07 00 00 a9 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "motion": {
       "get": "08 08 00 00 ab 01",
       "set": "08 07 00 00 ab 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "angle": {
       "get": "08 08 00 00 af 01",
       "set": "08 07 00 00 af 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "ripple": {
       "get": "08 08 00 00 b1 01",
       "set": "08 07 00 00 b1 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "turbo": {
       "get": "08 08 00 00 b5 01",
       "set": "08 07 00 00 b5 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
     "sleep": {
       "get": "08 08 00 00 b7 01",
       "set": "08 07 00 00 b7 01",
       "valueOffset": 6,
+      "valueChecksum": "sum8_minus_55",
       "responseOffset": 6,
       "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
     }
@@ -247,7 +257,7 @@
       "command": "motion",
       "encoding": "u8",
       "type": "bool",
-      "_needsVerification": "address transcribed, not confirmed"
+      "_note": "CANARY FIELD: unverified marker deliberately removed first, alone, to test the new valueChecksum write path on real hardware before trusting it for every other field. Confirm `hskctl set motionSync off` then `hskctl get motionSync` (and the reverse) round-trip correctly before removing _needsVerification from anything else in this profile."
     },
     "angleSnap": {
       "command": "angle",
