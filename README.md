@@ -34,7 +34,7 @@ Adding another mouse is a new file under `profiles/`, not a code change; see
 Two steps. **Both are required** — the second is not optional polish.
 
 ```bash
-omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
+omarchy plugin add https://github.com/keasbeexd/mouse-ctrl.git
 omarchy plugin enable keasbeexd.mousectl
 ```
 
@@ -256,7 +256,7 @@ in-place update:
 
 ```bash
 omarchy plugin remove keasbeexd.hskmouse
-omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
+omarchy plugin add https://github.com/keasbeexd/mouse-ctrl.git
 omarchy plugin enable keasbeexd.mousectl
 ~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev
 ```
@@ -344,7 +344,7 @@ Settings live on the mouse itself and follow it between machines.
 ## Local development
 
 ```bash
-git clone https://github.com/keasbeexd/omarchy-hsk.git
+git clone https://github.com/keasbeexd/mouse-ctrl.git
 cd omarchy-hsk
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
