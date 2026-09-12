@@ -230,21 +230,6 @@ Item {
 
   property string _setField: ""
 
-  function setDpiStage(stage) {
-    set("activeDpiStage", stage)
-  }
-
-  function cycleDpiStage() {
-    var stages = Model.dpiStages(effectiveValues)
-    if (stages.length === 0) return
-    var current = effectiveValues.activeDpiStage
-    var index = 0
-    for (var i = 0; i < stages.length; i++) {
-      if (stages[i].stage === current) { index = i; break }
-    }
-    setDpiStage(stages[(index + 1) % stages.length].stage)
-  }
-
   function canWrite(field) {
     return Model.canWrite(writable, field)
   }

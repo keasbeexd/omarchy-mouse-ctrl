@@ -4,14 +4,29 @@
   "status": "partial",
   "_source": [
     "CONFIRMED ON REAL HARDWARE: a Pulsar X2H mini with its 4K wireless",
-    "dongle. Every field in this profile except dpiStageCount (deliberately",
-    "kept read-only) has round-tripped a real write on that exact hardware,",
-    "not just a plausible-looking read -- including a polling-rate write to",
-    "4000 Hz (confirming the dongle really is the 4K variant and reaches it)",
-    "and an LED colour write the owner visually confirmed changed the",
-    "mouse's actual light. Cable and the 2.4GHz dongle both present the",
-    "identical 3554:f507 identity on the identical hidraw node -- there is",
-    "no separate wired/wireless split for this model.",
+    "dongle. Battery, firmware version, polling rate (up to 4000 Hz,",
+    "confirming the dongle really is the 4K variant), motion sync, angle",
+    "snap, ripple control, turbo mode, lift-off distance, debounce, sleep",
+    "timer, and DPI stage 1's value and LED colour have all round-tripped",
+    "real writes on that exact hardware, not just plausible-looking reads --",
+    "the LED colour write the owner visually confirmed actually changed the",
+    "mouse's light. Cable and the 2.4GHz dongle both present the identical",
+    "3554:f507 identity on the identical hidraw node -- there is no separate",
+    "wired/wireless split for this model.",
+    "",
+    "ONLY DPI STAGE 1 IS MAPPED, DELIBERATELY. This plugin's own design",
+    "choice, not a hardware limitation of the other stages' storage --",
+    "dpiStage2/3/4 and their colours DO read and write correctly (confirmed",
+    "before this decision), but nothing was ever found that makes the mouse",
+    "actually USE a stage other than whichever is 'active': activeDpiStage",
+    "writes round-trip correctly (the byte stores and reads back) but never",
+    "changed the mouse's live output, and the mouse's own physical DPI",
+    "button doesn't switch stages either. Rather than ship a 4-stage",
+    "selector where only one stage visibly does anything, this profile only",
+    "reads/writes stage 1, and the panel shows a single DPI slider + colour",
+    "field instead of a stage list. The other stages' addresses are still",
+    "documented in the _dpiComment below for whoever eventually finds the",
+    "real switch mechanism (see _followUp).",
     "",
     "IMPORTANT CAVEAT: this has only been verified against the 4K dongle",
     "variant. Pulsar sells the X2H mini with either a 1K or a 4K dongle;",
@@ -47,18 +62,7 @@
     "   (added for this). DPI stages needed a new `nordicDpi3` field",
     "   encoding, cross-checked byte-for-byte against the real driver's own",
     "   _dpi_to_raw/_raw_to_dpi for several DPI values before ever touching",
-    "   hardware with it.",
-    "",
-    "dpiStageCount was unlocked after activeDpiStage writes turned out to",
-    "have no live effect on the mouse -- the owner's dpiStageCount read back",
-    "1 (likely left from a single-stage Fusion config), which plausibly",
-    "means the firmware only drives the sensor from stages below that",
-    "count, ignoring activeDpiStage entirely while it says 1. Writing 4 --",
-    "Cfg.ini's own factory default for this model, not a guess -- is the",
-    "test for that theory. This mirrors the G-Wolves lesson (a stage count",
-    "of 0 there discarded every DPI record) without repeating its mistake:",
-    "that was an unreasoned value with no evidence behind it; this is the",
-    "vendor's own stated default for this exact model."
+    "   hardware with it."
   ],
   "match": {
     "_comment": "vendorIds/productIds match Cfg.ini's own [OPT] block from the real Pulsar Fusion installer (VID=25A7,3554  PID=fa7b,f507  PID2=fa7c,f508,f509) and what `hskctl probe` finds live on real hardware: the mouse enumerates as 3554:f507 (config endpoint on interface 11, vendor usage page 0xff04, feature report id 6) -- and, confirmed by the owner, that is the SAME identity and same hidraw node whether the mouse is connected by cable or through its 2.4GHz dongle. There is no separate 'wired' vs 'wireless' profile split for this model: the dongle appears to tunnel the mouse's own USB identity through transparently rather than exposing a distinct config interface of its own. The receiver's other USB identity, 3554:f509 ('Pulsar 4K Wireless Receiver'), is kept in match.productIds in case some other pairing state exposes it differently, but every read and write confirmed so far went through 3554:f507 regardless of physical connection. 25a7:fa7b/fa7c are Cfg.ini's alternate ids (presumably an older USB bridge chip revision) with no hardware here to confirm them against. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
@@ -175,7 +179,7 @@
       "responseOffset": 6,
       "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
     },
-    "_dpiComment": "DPI stages are 4-byte records (ADDR_DPI_BASE=0x0C, DPI_STAGE_SIZE=4 per drivers/nordic.py): 3 data bytes (nordicDpi3 encoding) + 1 valueChecksum byte, same mechanism as every scalar field above just with a 3-byte value instead of 1. LED colours are the same shape at ADDR_LED_COLOR_BASE=0x2C (rgb encoding, still 3 bytes + checksum). Byte 5 (length) is 3 for reads (only the 3 data bytes are decoded) and 4 for writes (3 value bytes + the checksum byte the device actually stores) -- matching _mem_write's real byte count for a 4-byte block, unlike the single-value fields above where byte 5 says 1 despite 2 bytes actually going out (which round-tripped fine in testing, but a 4-byte block is more of the packet to get right, so this matches the real driver's own accounting exactly rather than relying on the device not checking it).",
+    "_dpiComment": "DPI stages are 4-byte records (ADDR_DPI_BASE=0x0C, DPI_STAGE_SIZE=4 per drivers/nordic.py): 3 data bytes (nordicDpi3 encoding) + 1 valueChecksum byte, same mechanism as every scalar field above just with a 3-byte value instead of 1. LED colour is the same shape at ADDR_LED_COLOR_BASE=0x2C (rgb encoding, still 3 bytes + checksum). Byte 5 (length) is 3 for reads (only the 3 data bytes are decoded) and 4 for writes (3 value bytes + the checksum byte the device actually stores). Only stage 1's address is mapped here -- this plugin deliberately only ever reads/writes DPI stage 1, see the note on the `dpiStage1` field below for why.",
     "dpiStage1": {
       "get": "08 08 00 00 0c 03",
       "set": "08 07 00 00 0c 04",
@@ -183,51 +187,9 @@
       "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
     },
-    "dpiStage2": {
-      "get": "08 08 00 00 10 03",
-      "set": "08 07 00 00 10 04",
-      "valueOffset": 6,
-      "valueChecksum": "sum8_minus_55",
-      "responseOffset": 6
-    },
-    "dpiStage3": {
-      "get": "08 08 00 00 14 03",
-      "set": "08 07 00 00 14 04",
-      "valueOffset": 6,
-      "valueChecksum": "sum8_minus_55",
-      "responseOffset": 6
-    },
-    "dpiStage4": {
-      "get": "08 08 00 00 18 03",
-      "set": "08 07 00 00 18 04",
-      "valueOffset": 6,
-      "valueChecksum": "sum8_minus_55",
-      "responseOffset": 6
-    },
     "dpiColor1": {
       "get": "08 08 00 00 2c 03",
       "set": "08 07 00 00 2c 04",
-      "valueOffset": 6,
-      "valueChecksum": "sum8_minus_55",
-      "responseOffset": 6
-    },
-    "dpiColor2": {
-      "get": "08 08 00 00 30 03",
-      "set": "08 07 00 00 30 04",
-      "valueOffset": 6,
-      "valueChecksum": "sum8_minus_55",
-      "responseOffset": 6
-    },
-    "dpiColor3": {
-      "get": "08 08 00 00 34 03",
-      "set": "08 07 00 00 34 04",
-      "valueOffset": 6,
-      "valueChecksum": "sum8_minus_55",
-      "responseOffset": 6
-    },
-    "dpiColor4": {
-      "get": "08 08 00 00 38 03",
-      "set": "08 07 00 00 38 04",
       "valueOffset": 6,
       "valueChecksum": "sum8_minus_55",
       "responseOffset": 6
@@ -277,16 +239,17 @@
       "command": "dpiStageCount",
       "encoding": "u8",
       "min": 1,
-      "max": 4,
-      "_note": "Unlocked deliberately, not carelessly: the read-only caution here was about writing an unreasoned value (the G-Wolves lesson was a stage count of 0 discarding every DPI record). This is the opposite case -- the owner's mouse read back dpiStageCount=1 (probably left from a single-stage Fusion config), which very plausibly explains activeDpiStage writes having no live effect: the firmware likely only drives the sensor from stages < count, ignoring activeDpiStage entirely when count=1. 4 is not a guess -- it's Cfg.ini's own factory default for this exact model ([DEV_13]: DPI=400,800,1600,3200, four values). max lowered from 8 to 4 to match the number of DPI stage fields actually mapped in this profile."
+      "max": 8,
+      "readOnly": true,
+      "_note": "Briefly unlocked to test whether dpiStageCount=1 explained activeDpiStage writes having no live effect (a reasonable theory: the real driver's own logic gates how many stages the firmware considers live on this count). Setting it to 4 -- Cfg.ini's real factory default, not a guess -- had a real, confirmed side effect (it reset the DPI table to factory defaults, overwriting a custom stage 1 value/colour that had been set moments earlier) but did NOT fix stage switching: activeDpiStage still had no live effect afterward, and the physical DPI button does nothing either. Reverted to 1 (the owner's actual working setup) and locked read-only again -- not because writing it is inherently unsafe, but because it has a real destructive side effect and no longer serves a purpose now that this plugin only ever uses stage 1."
     },
     "activeDpiStage": {
       "command": "activeDpiStage",
       "encoding": "u8",
       "add": 1,
       "min": 1,
-      "max": 4,
-      "_note": "Wire value is 0-based (confirmed: owner's single-stage mouse reads back 0). `add: 1` translates it to the 1-based convention Model.js's dpiStages()/buildRows() and the G-Wolves profile both use -- without this, the panel's active-stage highlight would compare a 0-based value against a 1-based loop and never match. hskctl set/get activeDpiStage now takes/returns 1 for the first stage, matching G-Wolves; this changed from the earlier 0-based CLI convention. max:4 matches the 4 DPI stage fields mapped below, not necessarily this model's true hardware ceiling."
+      "max": 8,
+      "_note": "Kept mapped for diagnostics only -- not used by this plugin's UI, and not confirmed to do anything: the write round-trips (byte stores and reads back correctly) but has no observed live effect on the mouse, and the physical DPI button doesn't switch stages either. Wire value is 0-based; `add: 1` still applies for anyone reading/writing it directly via hskctl, matching the 1-based convention used elsewhere. If a future real capture finds the actual stage-switch mechanism, this is the field to revisit."
     },
     "liftOffDistance": {
       "command": "liftOff",
@@ -342,59 +305,17 @@
       "step": 50,
       "min": 50,
       "max": 26000,
-      "_note": "CANARY FIELD for the new nordicDpi3 encoding + multi-byte valueChecksum, same role motionSync played for the single-byte case. Encoding cross-checked byte-for-byte against packerlschupfer/pulsar-mouse-linux's own _dpi_to_raw/_raw_to_dpi for several values (400/800/1600/3200/50/100/26000, all exact matches). Confirm `hskctl set dpiStage1 <n>` round-trips correctly AND the mouse's actual cursor speed visibly changes before removing _needsVerification from dpiStage2/3/4."
-    },
-    "dpiStage2": {
-      "command": "dpiStage2",
-      "encoding": "nordicDpi3",
-      "step": 50,
-      "min": 50,
-      "max": 26000,
-      "_note": "Write path confirmed via the dpiStage1 canary (real hardware round-trip: set 3200, read back 3200; same encoding/address pattern here, just a different address)."
-    },
-    "dpiStage3": {
-      "command": "dpiStage3",
-      "encoding": "nordicDpi3",
-      "step": 50,
-      "min": 50,
-      "max": 26000,
-      "_note": "Write path confirmed via the dpiStage1 canary (real hardware round-trip: set 3200, read back 3200; same encoding/address pattern here, just a different address)."
-    },
-    "dpiStage4": {
-      "command": "dpiStage4",
-      "encoding": "nordicDpi3",
-      "step": 50,
-      "min": 50,
-      "max": 26000,
-      "_note": "Write path confirmed via the dpiStage1 canary (real hardware round-trip: set 3200, read back 3200; same encoding/address pattern here, just a different address)."
+      "_note": "Confirmed on real hardware: `hskctl set dpiStage1 3200` round-tripped exactly and the mouse's actual cursor speed changed. Only stage 1 is mapped, deliberately -- live switching to stages 2-4 turned out not to work on this firmware via any mechanism found (activeDpiStage writes round-trip but have no live effect, and the physical DPI button does nothing either), so this plugin only ever reads/writes stage 1 rather than exposing a switcher that looks like it works but does not."
     },
     "dpiStage1Color": {
       "command": "dpiColor1",
       "encoding": "rgb",
-      "_note": "CANARY FIELD alongside dpiStage1 -- this is the most visually obvious test in the whole profile: set a colour, look at the mouse's LED. Confirm it actually changes to the right colour before removing _needsVerification from dpiStage2Color/3Color/4Color."
-    },
-    "dpiStage2Color": {
-      "command": "dpiColor2",
-      "encoding": "rgb",
-      "_note": "Write path confirmed via the dpiStage1Color canary (real hardware: LED visibly changed to the set colour)."
-    },
-    "dpiStage3Color": {
-      "command": "dpiColor3",
-      "encoding": "rgb",
-      "_note": "Write path confirmed via the dpiStage1Color canary (real hardware: LED visibly changed to the set colour)."
-    },
-    "dpiStage4Color": {
-      "command": "dpiColor4",
-      "encoding": "rgb",
-      "_note": "Write path confirmed via the dpiStage1Color canary (real hardware: LED visibly changed to the set colour)."
+      "_note": "Confirmed on real hardware: the LED visibly changed to the set colour. Only stage 1's colour is mapped, same reasoning as dpiStage1."
     }
   },
   "ui": {
     "dpiStages": [
-      "dpiStage1",
-      "dpiStage2",
-      "dpiStage3",
-      "dpiStage4"
+      "dpiStage1"
     ],
     "quickToggles": [
       "motionSync",
@@ -432,11 +353,11 @@
     ]
   },
   "_followUp": [
-    "This profile is functionally complete for the 4K-dongle X2H mini: every field reads, and every field writes except dpiStageCount (deliberately read-only). What's left is narrower scope, not missing function:",
+    "KNOWN LIMITATION, not a bug to chase further without a real capture: switching which DPI stage is live doesn't work by any mechanism found. activeDpiStage writes round-trip (byte stores and reads back correctly) but never change the mouse's actual output, and the physical DPI button does nothing either. dpiStageCount was briefly tried as the explanation (the real driver's own logic gates on it) -- setting it to 4 reset the whole DPI table to factory defaults but did not fix switching, so it was reverted to 1 and locked read-only again. The real mechanism is most likely a dedicated command distinct from the plain memory writes nordic.py assumes for a different model (compare CMD_ACTIVE_PROFILE_SET, a separate opcode for switching *profiles*, not stages) -- finding it needs a live USB capture (Wireshark/usbmon) of Pulsar Fusion actually switching stages, per docs/PROTOCOL-DISCOVERY.md's method.",
+    "Given that, this plugin deliberately only reads/writes DPI stage 1 (see the note on the model's own _source block above) rather than exposing a 4-stage selector where only one stage visibly works. dpiStage2/3/4 and their colours were confirmed to read/write correctly before this decision -- their addresses are ADDR_DPI_BASE + 4*n and ADDR_LED_COLOR_BASE + 4*n (see _dpiComment) if a future capture finds the real switch mechanism and this profile should re-expose them.",
     "1K dongle variant unconfirmed -- if you have one, check whether it matches this profile's USB ids at all (`hskctl probe`), and whether pollingRate above 1000 Hz actually works (`hskctl set pollingRate 2000`) or the firmware rejects/clamps it. Adjust `values`/`uiOptions` accordingly; it may need a separate profile if the ids differ.",
     "The RF receiver's separate USB identity (3554:f509) has never actually been seen carrying the config protocol -- every confirmed read/write went through 3554:f507, dongle or cable alike. Plausibly unused for config and droppable from match.productIds, but no positive evidence either way, so it stays for now.",
     "pollingRate's `values` map includes 8000 Hz (from the real source, confirmed on a different Nordic-family model) but `uiOptions` stops at 4000 since this is specifically the 4K dongle -- do not widen it without an 8K dongle to test against.",
-    "Two low-risk gaps vs. the real driver, neither able to corrupt a setting: autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- needs a 'write to two addresses' hook if the firmware actually requires both in sync. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; check_ack here only supports a fixed expected byte, not 'echo the sent opcode'.",
-    "Multiple onboard profiles (some Pulsar Nordic-chipset mice have several) are not modelled -- this profile assumes one flat settings memory map, matching what's been observed on this hardware."
+    "Two low-risk gaps vs. the real driver, neither able to corrupt a setting: autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- needs a 'write to two addresses' hook if the firmware actually requires both in sync. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; check_ack here only supports a fixed expected byte, not 'echo the sent opcode'."
   ]
 }

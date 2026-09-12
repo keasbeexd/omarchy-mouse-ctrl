@@ -25,8 +25,8 @@ or from existing open-source Linux tooling (for Pulsar).
 
 | Vendor | Model | Status |
 |---|---|---|
-| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (7 stages + colour), polling rate, sensor settings, sleep timer |
-| Pulsar | X2H mini (4K dongle) | Confirmed on hardware — battery, DPI (4 stages + colour), polling rate up to 4K, sensor settings, sleep timer. 1K dongle variant unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate, sensor settings, sleep timer |
+| Pulsar | X2H mini (4K dongle) | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate up to 4K, sensor settings, sleep timer. 1K dongle variant unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -110,11 +110,21 @@ hardware — a Pulsar X2H mini with its 4K wireless dongle.** Every setting
 this plugin exposes for it, reads and writes, round-tripped on that exact
 mouse: battery, firmware version, polling rate (up to 4000 Hz), motion sync,
 angle snap, ripple control, turbo mode, lift-off distance, debounce, sleep
-timer, active DPI stage, and all four DPI stage values and their LED colours
-— the last of which the owner confirmed by watching the mouse's actual LED
-change colour on command. Only `dpiStageCount` is read-only, deliberately —
-writing DPI stage count wrong is exactly the class of bug that broke DPI
-entirely on the G-Wolves profile before it was repaired.
+timer, and DPI stage 1's value and LED colour — the colour confirmed by
+watching the mouse's actual LED change on command.
+
+**Only DPI stage 1 is mapped, deliberately.** The mouse's firmware has four
+DPI stages, and the obvious next step was to expose all four with a switcher.
+That turned out not to work: writes to `activeDpiStage` round-trip correctly
+(the byte you write reads back), but have no observed effect on the mouse's
+actual cursor speed or LED, and the mouse's own physical DPI button does
+nothing either. Rather than ship a stage switcher that looks like it works
+but doesn't, this plugin only ever reads and writes stage 1 — which is also
+all this plugin's own author uses on their G-Wolves mouse, so it costs
+nothing in practice. `dpiStageCount` and `activeDpiStage` stay mapped in the
+profile as read-only diagnostics for anyone chasing the real switch mechanism
+later (see the profile's own `_followUp` notes), but the UI never surfaces
+them.
 
 **If you have the 1K dongle variant instead of the 4K one, this is
 unconfirmed for you** — Pulsar sells the X2H mini with either, and only the
@@ -167,25 +177,28 @@ an issue with what you find on hardware this hasn't been tested against.
 
 ## Using it
 
-**Bar widget:** left click opens the panel, right click cycles DPI stage,
-middle click refreshes.
+**Bar widget:** left click opens the panel, middle click refreshes.
 
-**In the panel**, each DPI stage is a row: a selector for the active stage,
-`−`/`+` buttons that step by 50 DPI (hold to repeat), and a swatch that cycles
-the stage's LED colour.
+**In the panel**, DPI is one row: a draggable slider (50 DPI steps), its
+current value, a colour swatch that cycles through the firmware's stage
+palette on click, and a hex field you can type a colour into directly. There
+is deliberately no stage picker — see [Pulsar X2H mini](#pulsar-x2h-mini)
+above for why, and note this applies to the G-Wolves profile too even though
+its firmware's stage switching does actually work: this plugin only ever
+uses stage 1.
 
-Rapid input is coalesced — hold `+` from 400 to 3200 and the mouse gets one
-write, when you stop — and the panel says *Writing to the mouse…* whenever an
-exchange is in flight, because a write is a real USB round trip and silence
-reads as a dead click.
+Rapid input is coalesced — drag the slider from 400 to 3200 and the mouse
+gets one write, when you release — and the panel says *Writing to the
+mouse…* whenever an exchange is in flight, because a write is a real USB
+round trip and silence reads as a dead click.
 
 The version of the plugin you are running is in the bottom-right of the panel;
 hover it for the firmware version and which hidraw node is in use. `hskctl
 --version` reports the same number.
 
-**Keyboard:** `↑`/`↓` between rows, `←`/`→` to adjust the row under the cursor,
-`Enter` to select a stage, `c` to cycle its colour, `1`–`7` to switch straight
-to a stage, `d` to cycle DPI, `m` for motion sync, `r` to refresh.
+**Keyboard:** `↑`/`↓` between rows, `←`/`→` to adjust the row under the cursor
+(DPI in 50-unit steps), `c` to cycle the DPI colour, `m` for motion sync, `r`
+to refresh.
 
 The panel only renders controls for settings that can actually be written, so it
 never offers an action that comes back as an error.
@@ -212,7 +225,7 @@ value, shown with one fewer step of rounding. `watch-battery` prints both.
 Omarchy IPC works too:
 
 ```bash
-omarchy-shell keasbeexd.mousectrl cycleDpi
+omarchy-shell keasbeexd.mousectrl setDpi 1600
 omarchy-shell keasbeexd.mousectrl setPollingRate 1000
 ```
 

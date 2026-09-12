@@ -134,8 +134,10 @@ function summaryLine(status, settings) {
     var label = connectionLabel(settings.connection)
     if (label !== "") parts.push(label)
   }
-  if (has(settings, "activeDpiStage") && has(settings, "dpiStage" + settings.activeDpiStage)) {
-    parts.push(settings["dpiStage" + settings.activeDpiStage] + " DPI")
+  // Only stage 1 is ever mapped -- see the profiles' own notes on why DPI
+  // stage switching is not exposed.
+  if (has(settings, "dpiStage1")) {
+    parts.push(settings.dpiStage1 + " DPI")
   }
   if (has(settings, "pollingRate")) parts.push(settings.pollingRate + " Hz")
   return parts.length > 0 ? parts.join(" · ") : "No readings yet"
@@ -146,25 +148,21 @@ function barLabel(settings, showBattery) {
   return settings.batteryPercent + "%"
 }
 
-// Which DPI stages does the mouse actually have configured? Falls back to
-// whatever stages reported a value, so a partial mapping still renders.
-function dpiStages(settings) {
-  var stages = []
-  for (var i = 1; i <= 7; i++) {
-    var key = "dpiStage" + i
-    if (!has(settings, key)) continue
-    stages.push({
-      stage: i,
-      dpi: settings[key],
-      y: has(settings, key + "Y") ? settings[key + "Y"] : settings[key],
-      color: has(settings, key + "Color") ? settings[key + "Color"] : "",
-      active: has(settings, "activeDpiStage") && settings.activeDpiStage === i,
-      // The axes should track together; surface it when they do not so a
-      // split stage is visible rather than silently odd.
-      split: has(settings, key + "Y") && settings[key + "Y"] !== settings[key]
-    })
+// The mouse's one and only editable DPI stage. Every profile this plugin
+// ships only ever maps `dpiStage1` -- see the profiles' own `_note`/`_source`
+// blocks for why: switching which stage is live does not work on the
+// hardware this was built against, so the UI never offers a stage picker.
+// Returns null when the profile has no DPI reading at all.
+function dpiStage1Info(settings) {
+  if (!has(settings, "dpiStage1")) return null
+  return {
+    dpi: settings.dpiStage1,
+    y: has(settings, "dpiStage1Y") ? settings.dpiStage1Y : settings.dpiStage1,
+    color: has(settings, "dpiStage1Color") ? settings.dpiStage1Color : "",
+    // The axes should track together; surface it when they do not so a
+    // split stage is visible rather than silently odd.
+    split: has(settings, "dpiStage1Y") && settings.dpiStage1Y !== settings.dpiStage1
   }
-  return stages
 }
 
 // The sensor steps in 50 DPI increments.
@@ -220,21 +218,11 @@ function buildRows(state, settings, writable) {
   var rows = []
   if (state !== "ready") return rows
 
-  // Only writable settings become cursor stops. A DPI stage the profile can
-  // read but not yet write is still shown -- it just is not selectable, so
-  // the panel never offers an action that would come back as an error.
-  // One row per stage, whether or not the active-stage selector is writable --
-  // the slider and colour are useful on their own.
-  var stages = dpiStages(settings)
-  for (var i = 0; i < stages.length; i++) {
-    if (!canWrite(writable, "dpiStage" + stages[i].stage)) continue
-    rows.push({
-      kind: "dpiStage",
-      stage: stages[i].stage,
-      dpi: stages[i].dpi,
-      color: stages[i].color,
-      selectable: canWrite(writable, "activeDpiStage")
-    })
+  // Only writable settings become cursor stops. Only stage 1 is ever mapped
+  // (see dpiStage1Info), so there is at most one DPI row.
+  var dpi = dpiStage1Info(settings)
+  if (dpi && canWrite(writable, "dpiStage1")) {
+    rows.push({ kind: "dpiStage", dpi: dpi.dpi, color: dpi.color })
   }
   if (canWrite(writable, "pollingRate")) rows.push({ kind: "pollingRate" })
   if (canWrite(writable, "liftOffDistance")) rows.push({ kind: "liftOffDistance" })
