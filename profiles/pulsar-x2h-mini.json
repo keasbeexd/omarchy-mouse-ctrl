@@ -49,10 +49,16 @@
     "   _dpi_to_raw/_raw_to_dpi for several DPI values before ever touching",
     "   hardware with it.",
     "",
-    "dpiStageCount stays read-only on purpose, not for lack of confirmation:",
-    "writing DPI stage count wrong is exactly the class of bug that broke",
-    "DPI entirely on the G-Wolves profile until it was repaired (see that",
-    "profile's `repairOnWrite`)."
+    "dpiStageCount was unlocked after activeDpiStage writes turned out to",
+    "have no live effect on the mouse -- the owner's dpiStageCount read back",
+    "1 (likely left from a single-stage Fusion config), which plausibly",
+    "means the firmware only drives the sensor from stages below that",
+    "count, ignoring activeDpiStage entirely while it says 1. Writing 4 --",
+    "Cfg.ini's own factory default for this model, not a guess -- is the",
+    "test for that theory. This mirrors the G-Wolves lesson (a stage count",
+    "of 0 there discarded every DPI record) without repeating its mistake:",
+    "that was an unreasoned value with no evidence behind it; this is the",
+    "vendor's own stated default for this exact model."
   ],
   "match": {
     "_comment": "vendorIds/productIds match Cfg.ini's own [OPT] block from the real Pulsar Fusion installer (VID=25A7,3554  PID=fa7b,f507  PID2=fa7c,f508,f509) and what `hskctl probe` finds live on real hardware: the mouse enumerates as 3554:f507 (config endpoint on interface 11, vendor usage page 0xff04, feature report id 6) -- and, confirmed by the owner, that is the SAME identity and same hidraw node whether the mouse is connected by cable or through its 2.4GHz dongle. There is no separate 'wired' vs 'wireless' profile split for this model: the dongle appears to tunnel the mouse's own USB identity through transparently rather than exposing a distinct config interface of its own. The receiver's other USB identity, 3554:f509 ('Pulsar 4K Wireless Receiver'), is kept in match.productIds in case some other pairing state exposes it differently, but every read and write confirmed so far went through 3554:f507 regardless of physical connection. 25a7:fa7b/fa7c are Cfg.ini's alternate ids (presumably an older USB bridge chip revision) with no hardware here to confirm them against. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
@@ -271,9 +277,8 @@
       "command": "dpiStageCount",
       "encoding": "u8",
       "min": 1,
-      "max": 8,
-      "readOnly": true,
-      "_note": "Left read-only deliberately, not just unconfirmed: writing DPI stage count wrong is exactly the class of bug that broke DPI writes entirely on the G-Wolves profile until repaired (see gwolves-hsk-pro-4k.json's repairOnWrite). Read value (1) matches the owner's confirmed real single-stage setup."
+      "max": 4,
+      "_note": "Unlocked deliberately, not carelessly: the read-only caution here was about writing an unreasoned value (the G-Wolves lesson was a stage count of 0 discarding every DPI record). This is the opposite case -- the owner's mouse read back dpiStageCount=1 (probably left from a single-stage Fusion config), which very plausibly explains activeDpiStage writes having no live effect: the firmware likely only drives the sensor from stages < count, ignoring activeDpiStage entirely when count=1. 4 is not a guess -- it's Cfg.ini's own factory default for this exact model ([DEV_13]: DPI=400,800,1600,3200, four values). max lowered from 8 to 4 to match the number of DPI stage fields actually mapped in this profile."
     },
     "activeDpiStage": {
       "command": "activeDpiStage",
