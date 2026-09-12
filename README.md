@@ -26,7 +26,7 @@ or from existing open-source Linux tooling (for Pulsar).
 | Vendor | Model | Status |
 |---|---|---|
 | G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (7 stages + colour), polling rate, sensor settings, sleep timer |
-| Pulsar | X2H mini | Not working yet — detection is confirmed on both cable and dongle, but no field reads back real data on either connection, and nothing writes. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| Pulsar | X2H mini | Reads confirmed working, cabled — battery, firmware, polling rate, sensor settings. Dongle-only operation unconfirmed; nothing writes yet by design. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -105,52 +105,48 @@ device actually connected, the same way it decides whether it is safe to
 
 ## Pulsar X2H mini
 
-This is the newest addition, and its profile
-(`profiles/pulsar-x2h-mini.json`) is a **scaffold that does not work yet**,
-being actively tested against a real X2H mini rather than finished. It
-started as a transcription of two existing open-source Linux tools that
-speak to Pulsar's Nordic wireless dongle —
+This is the newest addition, and its profile (`profiles/pulsar-x2h-mini.json`)
+is under active development against a real X2H mini. **Reads work; writes are
+deliberately still disabled.** It started as a transcription of two
+open-source Linux tools that speak to Pulsar's Nordic wireless dongle —
 [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
 and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
-— rather than a capture off this exact hardware, and real-hardware testing
-has since confirmed parts of that transcription and disproven others.
+— and real-hardware testing plus cloning that source directly (rather than
+relying on a summary of it) has since corrected several wrong guesses.
 Current state:
 
-- **Detection is confirmed and working**, on both connections. Cabled, the
-  mouse enumerates as `3554:f507` with its config endpoint on a
-  vendor-specific usage page (`0xff04`) carrying feature report id `6` —
-  `match` and `transport.reportId` reflect this now, and it was wrong
-  (guessed as report id `0`) until a real probe caught it. The RF receiver
-  enumerates separately as `3554:f509` ("Pulsar 4K Wireless Receiver"),
-  now also in `match.productIds`.
-- **Reads do not work yet, on either connection**, and not in the same way:
-  cabled, every field comes back empty (`hskctl status` reports no
-  readings at all); over the dongle, reads return data, but it's the *same*
-  value for unrelated fields (battery percent and polling rate both read
-  back identically) — a strong sign the guessed opcode/address layout isn't
-  merely off by a byte, it isn't the protocol this hardware actually speaks.
-  Concretely: on the dongle, none of its own HID interfaces expose a
-  vendor-specific usage page the way the cabled mouse's does — the one
-  interface with a feature report is otherwise a plain "Generic
-  Desktop/Mouse" collection, not something we can tell to actually be the
-  config channel or the addressing scheme it uses. This needs a real
-  capture (Wireshark/usbmon against the Pulsar Fusion Windows app, or
-  running the upstream tools' own code directly against an X2H mini) rather
-  than more guessing from a description of a different model.
-- Every field is still marked `_needsVerification`, which `hskctl` already
-  treats as a hard stop on writing — the same gate that kept two uncertain
-  mappings out of the G-Wolves profile until they were confirmed on
-  hardware. No write path is open until each field is confirmed and the
-  marker removed.
-- DPI stage values and LED colour are not mapped at all yet: the source
-  material describes them as small records with their own per-byte checksum,
-  which the protocol engine does not have a hook for yet.
+- **Detection and reads are confirmed working, cabled.** The mouse
+  enumerates as `3554:f507`; its config endpoint answers real data over a
+  raw USB **Output** report at report id `8`, read back over the interrupt
+  endpoint — not the Feature-report transport first guessed from the HID
+  descriptor's feature report id (`6`), which turned out to belong to a
+  different report entirely. `hskctl status` now returns real values —
+  including `debounceMs: 3`, an exact match to the real Pulsar Fusion
+  installer's own factory-default config for this model. The RF receiver
+  enumerates separately as `3554:f509` ("Pulsar 4K Wireless Receiver"); its
+  own config endpoint isn't positively identified yet, so dongle-only
+  operation is still unconfirmed.
+- Two values from that first successful read (`dpiStageCount: 1`,
+  `sleepSeconds: 30`) don't yet have independent confirmation and are worth
+  a second look — everything else lines up with either real vendor
+  defaults or plain plausibility.
+- **Every field is still marked `_needsVerification`, which blocks writing
+  — and for good reason beyond just caution:** the real protocol writes a
+  *second* checksum byte alongside every single scalar value (`value` at its
+  address, `0x55 - value` at the next one), which this profile's `set`
+  templates don't do yet. Enabling writes before that hook exists in the
+  protocol engine would send structurally incomplete packets.
+- DPI stage values and LED colour are not mapped at all yet: they're
+  small records with their own per-record checksum, which the protocol
+  engine does not have a hook for yet. Cfg.ini (extracted from the real
+  installer) confirms this model ships 4 DPI stages by default
+  (400/800/1600/3200), not 7 like the G-Wolves profile.
 
-If you own an X2H mini, `hskctl probe --json` and `hskctl doctor --json`
+If you own an X2H mini, `hskctl probe --json` and `hskctl status --json`
 (pass `--device` with whichever node `probe` identifies) are exactly the
-verification this profile needs — see the `_followUp` list at the bottom of
-the profile's JSON for the concrete next steps, and open an issue with what
-either command reports.
+verification this profile still needs, especially with the dongle instead of
+the cable — see the `_followUp` list at the bottom of the profile's JSON for
+the concrete next steps, and open an issue with what either command reports.
 
 ## Using it
 
@@ -312,8 +308,8 @@ matches 14 product IDs across the HSK range, so variants other than the Pro
 `hskctl doctor` will tell you whether it's recognized, and adding a new
 product id (or a whole new profile, for a different protocol) is a data
 change, not a code change. Issues and PRs welcome — for Pulsar mice
-especially, since [Pulsar X2H mini](#pulsar-x2h-mini) above doesn't work yet
-and needs a real capture to get there.
+especially, since [Pulsar X2H mini](#pulsar-x2h-mini) above still needs its
+write path finished and dongle-only operation confirmed.
 
 ## How the protocol was recovered
 
