@@ -402,8 +402,22 @@ class Profile:
         return bytes(scratch)
 
     def allowed(self, name: str) -> list | None:
-        """The set of legal values for a field, for CLI help and the panel UI."""
+        """The set of legal values for a field, for CLI help and the panel UI.
+
+        `uiOptions` -- when a profile gives one -- narrows this to the values
+        worth offering as a button/selector, without touching what `set`
+        itself accepts. The G-Wolves polling register is the reason this
+        exists: `values` maps every raw byte the hardware was measured to
+        answer, including 333/200/167 Hz divisor artifacts nobody vendor-side
+        exposes as a selectable rate. Dumping all eight into an unwrapped
+        button row pushed 4000 Hz off the edge of the panel -- so the panel
+        gets the curated five, while `hskctl set pollingRate 200` still works
+        because encoding still goes through the full `values` map below.
+        """
         spec = self.data.get("fields", {}).get(name) or {}
+        curated = spec.get("uiOptions")
+        if curated:
+            return list(curated)
         values = spec.get("values")
         if values:
             return list(values.values())

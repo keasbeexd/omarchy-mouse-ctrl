@@ -204,6 +204,8 @@
       "command": "polling",
       "encoding": "u8",
       "_note": "Every value here was measured by timing the mouse's own input reports -- none inferred. The register is NOT a single formula: raw 1..6 divide a 1000 Hz base, while raw 32 and 64 are high-rate codes clocking 2000 and 4000 Hz. Non-monotonic, so an explicit map is the only honest model. Raw 8 (predicted 125 Hz) and raw 16 are untested.",
+      "_uiOptionsComment": "200/333/167 Hz are real, confirmed, settable values (see `values` below) -- they are just not the rates G-Wolves' own app offers as a selection, and the panel's button row has no wrap/scroll, so all eight pushed 4000 Hz off the edge. uiOptions is what the panel renders as buttons; `values` is still the full set `hskctl set pollingRate <n>` accepts.",
+      "uiOptions": [250, 500, 1000, 2000, 4000],
       "values": {
         "1": 1000,
         "2": 500,
