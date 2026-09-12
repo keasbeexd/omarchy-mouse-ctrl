@@ -35,7 +35,12 @@ Item {
   // waiting a full command round trip. Cleared once the re-read lands.
   property var pending: ({})
 
-  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 10, 3600)
+  // A status refresh is a handful of feature-report reads over an already
+  // idle USB link -- cheap enough to run often. The default favours noticing
+  // a charging-cable change quickly over shaving USB traffic that was never
+  // meaningful to begin with; lower it further in settings for something
+  // closer to instant.
+  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 5, 2, 3600)
   readonly property int lowBatteryPercent: intSetting("lowBatteryPercent", 15, 0, 50)
   readonly property bool showBatteryLabel: setting("showBatteryLabel", true) === true
   // Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, and the CLI

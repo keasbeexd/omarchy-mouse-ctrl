@@ -234,7 +234,7 @@ omarchy-shell keasbeexd.mousectrl setPollingRate 1000
 
 | Setting | Key | Default | |
 |---|---|---|---|
-| Refresh interval | `refreshIntervalSec` | 30 | how often the bar re-reads the mouse |
+| Refresh interval | `refreshIntervalSec` | 5 | how often the bar re-reads the mouse (min 2) — lower it further for near-instant charging-cable detection |
 | Low battery warning | `lowBatteryPercent` | 15 | when the icon turns urgent |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
 | Path to `hskctl` | `hskctlPath` | *(bundled)* | override only if you installed it yourself |
@@ -247,7 +247,7 @@ whichever of the three layout arrays the widget sits in:
 {
   "bar": {
     "right": [
-      { "id": "keasbeexd.mousectrl", "showBatteryLabel": true, "refreshIntervalSec": 30 }
+      { "id": "keasbeexd.mousectrl", "showBatteryLabel": true, "refreshIntervalSec": 5 }
     ]
   }
 }

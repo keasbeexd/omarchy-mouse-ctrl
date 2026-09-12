@@ -19,7 +19,7 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "refreshIntervalSec": 30,
+      "refreshIntervalSec": 5,
       "lowBatteryPercent": 15,
       "showBatteryLabel": true,
       "hskctlPath": ""
@@ -29,10 +29,10 @@
         "key": "refreshIntervalSec",
         "type": "integer",
         "label": "Refresh interval (seconds)",
-        "min": 10,
+        "min": 2,
         "max": 3600,
-        "step": 10,
-        "defaultValue": 30
+        "step": 1,
+        "defaultValue": 5
       },
       {
         "key": "lowBatteryPercent",
