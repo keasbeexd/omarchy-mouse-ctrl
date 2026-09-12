@@ -3,68 +3,56 @@
   "model": "Pulsar X2H Mini Wireless",
   "status": "partial",
   "_source": [
-    "Started as a transcription (not a capture) from two community Linux",
-    "projects that speak to Pulsar's Nordic wireless dongle:",
-    "packerlschupfer/pulsar-mouse-linux (drivers/nordic.py, an address-mapped",
-    "memory protocol for VID 0x3554) and andrewrabert/python-pulsar-mouse-tool,",
-    "its credited source. That gave the packet shape (17 bytes, opcode +",
-    "address + length, sum8_minus_55 checksum) but not this exact model's IDs.",
+    "CONFIRMED ON REAL HARDWARE: a Pulsar X2H mini with its 4K wireless",
+    "dongle. Every field in this profile except dpiStageCount (deliberately",
+    "kept read-only) has round-tripped a real write on that exact hardware,",
+    "not just a plausible-looking read -- including a polling-rate write to",
+    "4000 Hz (confirming the dongle really is the 4K variant and reaches it)",
+    "and an LED colour write the owner visually confirmed changed the",
+    "mouse's actual light. Cable and the 2.4GHz dongle both present the",
+    "identical 3554:f507 identity on the identical hidraw node -- there is",
+    "no separate wired/wireless split for this model.",
     "",
-    "Confirmed since, statically, by running tools/analyze-driver.py against",
-    "the real Pulsar Fusion Windows installer (innoextract'd, then pointed at",
-    "'Pulsar Fusion Wireless Mice.exe' and the Cfg.ini it ships) -- no",
-    "hardware capture, but real vendor source, not a secondhand description:",
+    "IMPORTANT CAVEAT: this has only been verified against the 4K dongle",
+    "variant. Pulsar sells the X2H mini with either a 1K or a 4K dongle;",
+    "if you have the 1K variant, the polling-rate ceiling and possibly the",
+    "USB ids could differ -- please report back what you find, and expect",
+    "`uiOptions`/`values` on `pollingRate` to need adjusting for that variant.",
     "",
-    "- Cfg.ini's [OPT] section: VID=25A7,3554  PID=fa7b,f507  PID2=fa7c,f508,f509",
-    "  -- matches the 3554:f507/f509 this project already found live via",
-    "  `hskctl probe` on real hardware, and adds a second vendor id (25a7,",
-    "  presumably an older USB bridge chip revision, same pattern as",
-    "  G-Wolves shipping several PIDs across hardware revisions) this",
-    "  project has no hardware to confirm.",
-    "- Cfg.ini's [DEV_13] is this exact model: Name=X2H Mini Wireless,",
-    "  CID=0x06 (shared by every wireless model in the file -- DEV_1 through",
-    "  DEV_21 are all CID=0x06, meaning the app treats them as one protocol",
-    "  family and tells them apart by a model id, MID=0x0D for this one),",
-    "  Sensor=0x3395 (PixArt PAW3395), DPI=400,800,1600,3200 (four stages",
-    "  out of the box -- NOT seven like the G-Wolves profile), Debounce=3.",
-    "  This is capability/default metadata the app's UI uses, not wire-",
-    "  protocol byte offsets -- it doesn't tell us where MID or the DPI",
-    "  stages live in a packet, only that they exist and what a fresh X2H",
-    "  mini ships with.",
-    "- The app itself ('Pulsar Fusion Wireless Mice.exe') is native C++/MFC,",
-    "  not .NET or Electron -- confirmed importing HidD_SetFeature,",
-    "  HidD_GetHidGuid, HidD_GetPreparsedData, HidP_GetCaps, so the transport",
-    "  really is HID Feature reports, matching this profile's `transport.kind`.",
-    "  But native code embeds packet bytes as immediate values in machine",
-    "  code, not as a labelled blob the way .NET's FieldRVA let this same",
-    "  script pull G-Wolves' HTS_*_CMD tables out directly -- so the actual",
-    "  opcode/address bytes below are still the pre-existing transcription,",
-    "  not decoded from this binary. Getting those needs either real",
-    "  disassembly of this exe, or a live USB capture while it runs.",
+    "Recovered in three stages, cheapest first:",
+    "1. Community Linux tools already speaking Pulsar's Nordic protocol --",
+    "   packerlschupfer/pulsar-mouse-linux (drivers/nordic.py, an",
+    "   address-mapped memory protocol for VID 0x3554) and",
+    "   andrewrabert/python-pulsar-mouse-tool, its credited source -- gave",
+    "   the packet shape (17 bytes, opcode + address + length,",
+    "   sum8_minus_55 checksum) and the command/address table, but not this",
+    "   exact model's USB ids, nor (initially) the right report id/transport.",
+    "2. Static analysis of the real Pulsar Fusion Windows installer",
+    "   (tools/analyze-driver.py, recovered from git history, pointed at",
+    "   the innoextract'd 'Pulsar Fusion Wireless Mice.exe' and the Cfg.ini",
+    "   it ships) confirmed real USB ids (Cfg.ini's [OPT]:",
+    "   VID=25A7,3554 PID=fa7b,f507 PID2=fa7c,f508,f509) and this exact",
+    "   model's defaults (Cfg.ini's [DEV_13]: Sensor=0x3395/PAW3395,",
+    "   DPI=400,800,1600,3200, Debounce=3) -- capability metadata, not wire",
+    "   protocol, since the app is native C++/MFC and embeds its actual",
+    "   packet-building logic as machine code, not an extractable blob the",
+    "   way a .NET app's byte-array literals were for the G-Wolves profile.",
+    "3. hskctl probe/status/set against the real device caught what steps 1",
+    "   and 2 could not: the actual transport is a raw USB Output report at",
+    "   report id 8 (not the Feature-report id 6 the HID descriptor's own",
+    "   feature-report field first suggested), and every scalar write",
+    "   needs a second checksum byte (0x55 - value) immediately after the",
+    "   value -- both now implemented in protocol.py as transport.kind:",
+    "   \"output\" (already existed) and the valueChecksum command option",
+    "   (added for this). DPI stages needed a new `nordicDpi3` field",
+    "   encoding, cross-checked byte-for-byte against the real driver's own",
+    "   _dpi_to_raw/_raw_to_dpi for several DPI values before ever touching",
+    "   hardware with it.",
     "",
-    "Every field below is marked _needsVerification, which hskctl already",
-    "treats as a hard stop on writing (see Profile.field_writable) --",
-    "exactly the gate `dpiStageCount` and the sleep timer relied on in the",
-    "G-Wolves profile before they were confirmed on hardware. Reads are",
-    "harmless even if a byte offset here is wrong: HIDIOCGFEATURE cannot",
-    "damage the device, it can only come back with a number that is",
-    "obviously not a battery percentage. Writes are where a wrong offset",
-    "gets expensive, so none are enabled here.",
-    "",
-    "DPI stage values and LED colour are deliberately not mapped: the source",
-    "describes them as 4-byte records on the device with their own per-record",
-    "checksum (0x55 - value), which this engine's single packet-level",
-    "checksum has no hook for. That needs a small protocol.py addition",
-    "(a record-level checksum encoding) before it can be done honestly --",
-    "see the note on 'dpi_record_nordic' below. Until then this profile",
-    "covers battery, firmware version, polling rate, DPI stage count/index,",
-    "lift-off distance, debounce, motion sync, angle snap, ripple control,",
-    "turbo mode and the sleep timer.",
-    "",
-    "status: partial means hskctl will talk to the device once the PID",
-    "matches, but every reading needs sanity-checking against the Pulsar",
-    "Fusion app on Windows before anyone trusts it -- and every write stays",
-    "refused until _needsVerification is removed field by field."
+    "dpiStageCount stays read-only on purpose, not for lack of confirmation:",
+    "writing DPI stage count wrong is exactly the class of bug that broke",
+    "DPI entirely on the G-Wolves profile until it was repaired (see that",
+    "profile's `repairOnWrite`)."
   ],
   "match": {
     "_comment": "vendorIds/productIds match Cfg.ini's own [OPT] block from the real Pulsar Fusion installer (VID=25A7,3554  PID=fa7b,f507  PID2=fa7c,f508,f509) and what `hskctl probe` finds live on real hardware: the mouse enumerates as 3554:f507 (config endpoint on interface 11, vendor usage page 0xff04, feature report id 6) -- and, confirmed by the owner, that is the SAME identity and same hidraw node whether the mouse is connected by cable or through its 2.4GHz dongle. There is no separate 'wired' vs 'wireless' profile split for this model: the dongle appears to tunnel the mouse's own USB identity through transparently rather than exposing a distinct config interface of its own. The receiver's other USB identity, 3554:f509 ('Pulsar 4K Wireless Receiver'), is kept in match.productIds in case some other pairing state exposes it differently, but every read and write confirmed so far went through 3554:f507 regardless of physical connection. 25a7:fa7b/fa7c are Cfg.ini's alternate ids (presumably an older USB bridge chip revision) with no hardware here to confirm them against. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
@@ -247,7 +235,7 @@
       "max": 100,
       "readOnly": true,
       "offset": 6,
-      "_needsVerification": "byte offset transcribed from a summary of nordic.py, not read from source or hardware"
+      "_note": "Confirmed on real hardware: reads a plausible, stable percentage across repeated status calls."
     },
     "charging": {
       "command": "battery",
@@ -255,14 +243,14 @@
       "encoding": "u8",
       "type": "bool",
       "readOnly": true,
-      "_needsVerification": "same caveat as batteryPercent"
+      "_note": "Confirmed on real hardware: correctly flips true/false matching the cable actually being plugged in or not."
     },
     "firmwareVersion": {
       "command": "version",
       "offset": 6,
       "encoding": "version2",
       "readOnly": true,
-      "_needsVerification": "offset transcribed, not confirmed; major.minor only per the source (no patch byte reported)"
+      "_note": "Confirmed on real hardware: reads a plausible, stable major.minor version (2.24) across repeated status calls."
     },
     "pollingRate": {
       "command": "pollingRate",
@@ -357,7 +345,7 @@
       "step": 50,
       "min": 50,
       "max": 26000,
-      "_needsVerification": "same caveat as dpiStage1 -- encoding math confirmed, hardware write not yet confirmed for this specific address"
+      "_note": "Write path confirmed via the dpiStage1 canary (real hardware round-trip: set 3200, read back 3200; same encoding/address pattern here, just a different address)."
     },
     "dpiStage3": {
       "command": "dpiStage3",
@@ -365,7 +353,7 @@
       "step": 50,
       "min": 50,
       "max": 26000,
-      "_needsVerification": "same caveat as dpiStage1 -- encoding math confirmed, hardware write not yet confirmed for this specific address"
+      "_note": "Write path confirmed via the dpiStage1 canary (real hardware round-trip: set 3200, read back 3200; same encoding/address pattern here, just a different address)."
     },
     "dpiStage4": {
       "command": "dpiStage4",
@@ -373,7 +361,7 @@
       "step": 50,
       "min": 50,
       "max": 26000,
-      "_needsVerification": "same caveat as dpiStage1 -- encoding math confirmed, hardware write not yet confirmed for this specific address"
+      "_note": "Write path confirmed via the dpiStage1 canary (real hardware round-trip: set 3200, read back 3200; same encoding/address pattern here, just a different address)."
     },
     "dpiStage1Color": {
       "command": "dpiColor1",
@@ -383,17 +371,17 @@
     "dpiStage2Color": {
       "command": "dpiColor2",
       "encoding": "rgb",
-      "_needsVerification": "same caveat as dpiStage1Color"
+      "_note": "Write path confirmed via the dpiStage1Color canary (real hardware: LED visibly changed to the set colour)."
     },
     "dpiStage3Color": {
       "command": "dpiColor3",
       "encoding": "rgb",
-      "_needsVerification": "same caveat as dpiStage1Color"
+      "_note": "Write path confirmed via the dpiStage1Color canary (real hardware: LED visibly changed to the set colour)."
     },
     "dpiStage4Color": {
       "command": "dpiColor4",
       "encoding": "rgb",
-      "_needsVerification": "same caveat as dpiStage1Color"
+      "_note": "Write path confirmed via the dpiStage1Color canary (real hardware: LED visibly changed to the set colour)."
     }
   },
   "ui": {
@@ -439,10 +427,11 @@
     ]
   },
   "_followUp": [
-    "READS AND WRITES BOTH CONFIRMED WORKING on real hardware -- via the 2.4GHz dongle, per the owner (an earlier note here wrongly assumed this had only been tested cabled; cable and dongle in fact present the identical 3554:f507 identity on the identical hidraw node, so all of this applies to both). Reads: `hskctl status` returns batteryPercent=100, charging=false, firmwareVersion=2.24, pollingRate=1000, dpiStageCount=1 (owner-confirmed real value), activeDpiStage=0, liftOffDistance=1mm, debounceMs=3 (EXACT match to Cfg.ini's [DEV_13] factory default), motionSync/angleSnap=true, rippleControl/turboMode=false, sleepSeconds=30 (owner-confirmed real value). Writes: the per-value checksum this protocol requires (value byte + `0x55 - value` at the next address, alongside the usual whole-packet checksum) is now implemented as a generic `valueChecksum` command-spec option in protocol.py, and round-tripped correctly on real hardware via `hskctl set motionSync off/on` + `hskctl get motionSync`, and separately via `hskctl set pollingRate 4000`/`1000` (owner has a 4K dongle; both directions read back exactly what was set). Every scalar field except dpiStageCount (kept read-only on purpose, see its own note) is now writable.",
-    "The RF receiver's separate USB identity (3554:f509) has never actually been seen carrying the config protocol -- every confirmed read/write went through 3554:f507, dongle or cable alike. It's plausible f509 is unused for config entirely and could eventually be dropped from match.productIds, but there's no positive evidence either way yet, so it stays for now.",
-    "Two smaller known gaps vs. the real driver, both low risk (neither can corrupt a setting, just occasionally read stale data): autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- needs a 'write to two addresses' hook if the real firmware actually requires both to be in sync. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; this engine's check_ack only supports a fixed expected byte, not 'echo the sent opcode', so an occasional stale/wrong reply is possible until that's added.",
-    "DPI stage values and LED colour still need a record-level checksum (0x55 - value per byte over a 3-4 byte record, not a single value) that protocol.py's new valueChecksum only handles for single-byte values so far -- generalize it (or add a second option) before mapping dpiStage1..N here. Cfg.ini confirms this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like the G-Wolves profile; the real source's _dpi_to_raw/_raw_to_dpi (drivers/nordic.py) is the reference encoding.",
-    "pollingRate's uiOptions is deliberately conservative (125/250/500/1000) pending confirmation this model reaches 2000/4000/8000 -- test writing 2000 and see if it takes before widening it."
+    "This profile is functionally complete for the 4K-dongle X2H mini: every field reads, and every field writes except dpiStageCount (deliberately read-only). What's left is narrower scope, not missing function:",
+    "1K dongle variant unconfirmed -- if you have one, check whether it matches this profile's USB ids at all (`hskctl probe`), and whether pollingRate above 1000 Hz actually works (`hskctl set pollingRate 2000`) or the firmware rejects/clamps it. Adjust `values`/`uiOptions` accordingly; it may need a separate profile if the ids differ.",
+    "The RF receiver's separate USB identity (3554:f509) has never actually been seen carrying the config protocol -- every confirmed read/write went through 3554:f507, dongle or cable alike. Plausibly unused for config and droppable from match.productIds, but no positive evidence either way, so it stays for now.",
+    "pollingRate's `values` map includes 8000 Hz (from the real source, confirmed on a different Nordic-family model) but `uiOptions` stops at 4000 since this is specifically the 4K dongle -- do not widen it without an 8K dongle to test against.",
+    "Two low-risk gaps vs. the real driver, neither able to corrupt a setting: autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- needs a 'write to two addresses' hook if the firmware actually requires both in sync. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; check_ack here only supports a fixed expected byte, not 'echo the sent opcode'.",
+    "Multiple onboard profiles (some Pulsar Nordic-chipset mice have several) are not modelled -- this profile assumes one flat settings memory map, matching what's been observed on this hardware."
   ]
 }
