@@ -224,11 +224,20 @@ Panel {
     function refresh(): string { hsk.refresh(); return "ok" }
     function status(): string { return hsk.summary }
     function setDpi(dpi: string): string {
-      hsk.set("dpiStage1", Model.clampDpi(parseInt(dpi, 10)))
+      var n = parseInt(dpi, 10)
+      if (isNaN(n)) return "error: not a number"
+      hsk.set("dpiStage1", Model.clampDpi(n))
       return "ok"
     }
     function setPollingRate(rate: string): string {
-      hsk.set("pollingRate", parseInt(rate, 10))
+      var n = parseInt(rate, 10)
+      // Same bound the UI's own ButtonGroup is built from -- hskctl would
+      // reject anything else anyway, but failing here is one exchange
+      // cheaper and gives the caller a reason instead of a raw CLI error.
+      if (isNaN(n) || Model.allowedRatesFor(hsk.allowed).indexOf(n) === -1) {
+        return "error: not one of this mouse's polling rates"
+      }
+      hsk.set("pollingRate", n)
       return "ok"
     }
   }
