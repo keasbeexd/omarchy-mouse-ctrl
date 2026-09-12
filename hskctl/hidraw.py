@@ -288,9 +288,9 @@ class HidrawDevice:
             self._fd = os.open(self.path, os.O_RDWR)
         except PermissionError as exc:
             raise HidrawError(
-                f"No write access to {self.path}. Install the udev rule "
-                f"(see install/60-gwolves-hsk.rules) and replug the mouse, "
-                f"or re-run with sudo."
+                f"No write access to {self.path}. Run "
+                f"`./install.sh --udev` (see the plugin's README) and replug "
+                f"the mouse, or re-run with sudo."
             ) from exc
         except FileNotFoundError as exc:
             raise HidrawError(f"{self.path} disappeared -- is the mouse plugged in?") from exc

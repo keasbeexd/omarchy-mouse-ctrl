@@ -1,0 +1,275 @@
+{
+  "profileVersion": 1,
+  "model": "Pulsar X2H mini",
+  "status": "partial",
+  "_source": [
+    "Not decoded from a captured trace on real hardware -- there is no Pulsar",
+    "X2H mini on hand for this project. Everything below is transcribed from",
+    "two community Linux projects that already speak to Pulsar's Nordic",
+    "wireless dongle: packerlschupfer/pulsar-mouse-linux (drivers/nordic.py,",
+    "which documents an address-mapped memory protocol for VID 0x3554,",
+    "PIDs 0xf507/0xf508 -- shipped for the 'Pulsar X2A Wireless / X2 V2",
+    "Mini' dongle) and the tool it credits as its source,",
+    "andrewrabert/python-pulsar-mouse-tool. X2H mini's own USB ids were not",
+    "published anywhere found by this search; 0xf507/0xf508 are the closest",
+    "confirmed relative (same Nordic receiver family) and are a placeholder",
+    "until someone runs `hskctl probe` with an X2H mini actually plugged in.",
+    "",
+    "Every field below is marked _needsVerification, which hskctl already",
+    "treats as a hard stop on writing (see Profile.field_writable) --",
+    "exactly the gate `dpiStageCount` and the sleep timer relied on in the",
+    "G-Wolves profile before they were confirmed on hardware. Reads are",
+    "harmless even if a byte offset here is wrong: HIDIOCGFEATURE cannot",
+    "damage the device, it can only come back with a number that is",
+    "obviously not a battery percentage. Writes are where a wrong offset",
+    "gets expensive, so none are enabled here.",
+    "",
+    "DPI stage values and LED colour are deliberately not mapped: the source",
+    "describes them as 4-byte records on the device with their own per-record",
+    "checksum (0x55 - value), which this engine's single packet-level",
+    "checksum has no hook for. That needs a small protocol.py addition",
+    "(a record-level checksum encoding) before it can be done honestly --",
+    "see the note on 'dpi_record_nordic' below. Until then this profile",
+    "covers battery, firmware version, polling rate, DPI stage count/index,",
+    "lift-off distance, debounce, motion sync, angle snap, ripple control,",
+    "turbo mode and the sleep timer.",
+    "",
+    "status: partial means hskctl will talk to the device once the PID",
+    "matches, but every reading needs sanity-checking against the Pulsar",
+    "Fusion app on Windows before anyone trusts it -- and every write stays",
+    "refused until _needsVerification is removed field by field."
+  ],
+  "match": {
+    "_comment": "0x3554 f507/f508 is the Nordic receiver pulsar-mouse-linux ships for 'X2A Wireless / X2 V2 Mini'. X2H mini's real PID is unconfirmed -- run `hskctl probe` with the mouse's dongle plugged in and add whatever PID it reports here. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
+    "vendorIds": [
+      "3554"
+    ],
+    "productIds": [
+      "f507",
+      "f508"
+    ],
+    "interface": null,
+    "usagePage": null,
+    "requireFeatureReport": true
+  },
+  "transport": {
+    "_comment": "17-byte packets: byte 0 report id (assumed 0, unconfirmed), byte 1 opcode, bytes 2-15 data, byte 16 checksum. Whether the host writes these as HID Feature reports (like the G-Wolves profile) or Output reports over an interrupt endpoint was not confirmed by either source project -- 'feature' is this engine's default and matches how hskctl already opens hidraw nodes; it may need to become 'kind': 'output' once someone traces real traffic.",
+    "kind": "feature",
+    "reportId": 0,
+    "packetLength": 17,
+    "readLength": 17,
+    "settleMs": 30,
+    "checksum": {
+      "kind": "sum8_minus_55",
+      "offset": 16,
+      "range": [0, 16]
+    }
+  },
+  "commands": {
+    "_comment": "Two shapes here. 'battery'/'version' are their own opcodes (byte 1) with data from byte 2, matching the G-Wolves style. Everything else rides the dongle's memory-mapped get/set (opcode 0x08 read / 0x07 write, at a fixed address baked into each command's template since every hskctl field is its own fixed address, not a runtime parameter) -- byte 3:4 address (endianness unconfirmed, written big-endian here), byte 5 length, value from byte 6.",
+    "battery": {
+      "get": "00 04",
+      "responseOffset": 6,
+      "readOnly": true,
+      "_note": "[6]=percent, [7]=power/charging, [8:10]=millivolts per the nordic.py summary. Only percent and charging are mapped here; battery_mv would need a u16 field of its own once confirmed."
+    },
+    "version": {
+      "get": "00 12",
+      "responseOffset": 6,
+      "readOnly": true
+    },
+    "pollingRate": {
+      "get": "00 08 00 00 00 01",
+      "set": "00 07 00 00 00 01",
+      "valueOffset": 6,
+      "responseOffset": 6,
+      "_note": "address 0x00. The raw<->Hz mapping (POLL_VAL_TO_HZ in the source) was not itself transcribed, so no `values` map is given -- see the field below."
+    },
+    "dpiStageCount": {
+      "get": "00 08 00 00 02 01",
+      "set": "00 07 00 00 02 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "activeDpiStage": {
+      "get": "00 08 00 00 04 01",
+      "set": "00 07 00 00 04 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "liftOff": {
+      "get": "00 08 00 00 0a 01",
+      "set": "00 07 00 00 0a 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "debounce": {
+      "get": "00 08 00 00 a9 01",
+      "set": "00 07 00 00 a9 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "motion": {
+      "get": "00 08 00 00 ab 01",
+      "set": "00 07 00 00 ab 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "angle": {
+      "get": "00 08 00 00 af 01",
+      "set": "00 07 00 00 af 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "ripple": {
+      "get": "00 08 00 00 b1 01",
+      "set": "00 07 00 00 b1 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "turbo": {
+      "get": "00 08 00 00 b5 01",
+      "set": "00 07 00 00 b5 01",
+      "valueOffset": 6,
+      "responseOffset": 6
+    },
+    "sleep": {
+      "get": "00 08 00 00 b7 01",
+      "set": "00 07 00 00 b7 01",
+      "valueOffset": 6,
+      "responseOffset": 6,
+      "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
+    }
+  },
+  "fields": {
+    "batteryPercent": {
+      "command": "battery",
+      "encoding": "u8",
+      "min": 0,
+      "max": 100,
+      "readOnly": true,
+      "offset": 6,
+      "_needsVerification": "byte offset transcribed from a summary of nordic.py, not read from source or hardware"
+    },
+    "charging": {
+      "command": "battery",
+      "offset": 7,
+      "encoding": "u8",
+      "type": "bool",
+      "readOnly": true,
+      "_needsVerification": "same caveat as batteryPercent"
+    },
+    "firmwareVersion": {
+      "command": "version",
+      "offset": 6,
+      "encoding": "version2",
+      "readOnly": true,
+      "_needsVerification": "offset transcribed, not confirmed; major.minor only per the source (no patch byte reported)"
+    },
+    "pollingRate": {
+      "command": "pollingRate",
+      "encoding": "u8",
+      "_needsVerification": "raw<->Hz table not transcribed -- this reads the raw register value only. Pulsar's Nordic mice are typically 125/250/500/1000/2000/4000/8000 Hz; do not assume the raw byte is one of these until confirmed with `hskctl get pollingRate` next to the Pulsar Fusion app."
+    },
+    "dpiStageCount": {
+      "command": "dpiStageCount",
+      "encoding": "u8",
+      "min": 1,
+      "max": 8,
+      "readOnly": true,
+      "_needsVerification": "address and width transcribed, not confirmed"
+    },
+    "activeDpiStage": {
+      "command": "activeDpiStage",
+      "encoding": "u8",
+      "min": 0,
+      "max": 7,
+      "_needsVerification": "source describes this as 0-based, unlike the G-Wolves profile's 1-based activeDpiStage -- do not compare the two raw"
+    },
+    "liftOffDistance": {
+      "command": "liftOff",
+      "encoding": "u8",
+      "values": {
+        "1": "1mm",
+        "2": "2mm"
+      },
+      "_needsVerification": "map transcribed from source, not confirmed on hardware"
+    },
+    "debounceMs": {
+      "command": "debounce",
+      "encoding": "u8",
+      "min": 0,
+      "max": 30,
+      "_needsVerification": "described as milliseconds directly (0-30), unlike the G-Wolves profile's opaque table-row byte -- still unconfirmed"
+    },
+    "motionSync": {
+      "command": "motion",
+      "encoding": "u8",
+      "type": "bool",
+      "_needsVerification": "address transcribed, not confirmed"
+    },
+    "angleSnap": {
+      "command": "angle",
+      "encoding": "u8",
+      "type": "bool",
+      "_needsVerification": "address transcribed, not confirmed"
+    },
+    "rippleControl": {
+      "command": "ripple",
+      "encoding": "u8",
+      "type": "bool",
+      "_needsVerification": "address transcribed, not confirmed"
+    },
+    "turboMode": {
+      "command": "turbo",
+      "encoding": "u8",
+      "type": "bool",
+      "_needsVerification": "address transcribed, not confirmed"
+    },
+    "sleepSeconds": {
+      "command": "sleep",
+      "encoding": "u8",
+      "scale": 10,
+      "min": 0,
+      "max": 2550,
+      "_needsVerification": "'units of 10s' per the source; scale applied here so the field speaks seconds like the G-Wolves profile does"
+    }
+  },
+  "ui": {
+    "dpiStages": [],
+    "quickToggles": [
+      "motionSync",
+      "angleSnap",
+      "rippleControl"
+    ],
+    "sections": [
+      {
+        "title": "PERFORMANCE",
+        "fields": [
+          "pollingRate"
+        ]
+      },
+      {
+        "title": "SENSOR",
+        "fields": [
+          "motionSync",
+          "liftOffDistance",
+          "angleSnap",
+          "rippleControl"
+        ]
+      },
+      {
+        "title": "POWER",
+        "fields": [
+          "sleepSeconds"
+        ]
+      }
+    ]
+  },
+  "_followUp": [
+    "Confirm VID/PID: plug in an actual X2H mini and run `hskctl probe --json`.",
+    "Confirm transport kind (feature vs output report) and reportId by tracing real traffic per docs/PROTOCOL-DISCOVERY.md's method, adapted for this dongle.",
+    "Confirm every _needsVerification field with `hskctl get <field>` next to the Pulsar Fusion app, then delete the marker so writes unlock.",
+    "DPI stage values and LED colour need a record-level checksum (0x55 - value per byte, not the whole-packet checksum) that protocol.py does not support yet -- add an encoding for it before mapping dpiStage1..N here."
+  ]
+}

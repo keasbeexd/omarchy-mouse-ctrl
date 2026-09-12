@@ -34,11 +34,21 @@ function plain(text, limit) {
   return out
 }
 
-// Every one of these was measured by timing the mouse's own reports. The
-// register is not a single formula -- 1/2/4 divide a 1000 Hz base while 32 and
-// 64 are high-rate codes -- so the panel offers exactly the rates confirmed on
-// hardware. 4K included.
+// Fallback only, for a profile that reports no `allowed` list of its own (an
+// older hskctl, or a field with no `values`/min-max in the profile). Every one
+// of these was measured by timing the G-Wolves mouse's own reports -- a
+// different mouse's real rates come from its profile via `allowedRatesFor`
+// below, since a fixed list here cannot know about an 8000 Hz Pulsar.
 var POLLING_RATES = [250, 500, 1000, 2000, 4000]
+
+// The polling rates this specific mouse actually offers, from the `allowed`
+// map hskctl derives from the profile's `values` table. Falls back to the
+// G-Wolves list so an older hskctl (no `allowed` in its JSON) still works.
+function allowedRatesFor(allowed) {
+  var rates = allowed && allowed.pollingRate
+  if (!rates || rates.length === 0) return POLLING_RATES
+  return rates.slice().sort(function(a, b) { return a - b })
+}
 
 function parseStatus(raw) {
   var text = String(raw || "").trim()
@@ -74,6 +84,7 @@ function parseStatus(raw) {
     settings: parsed.settings || {},
     writable: parsed.writable || [],
     unverified: parsed.unverified || [],
+    allowed: parsed.allowed || {},
     version: typeof parsed.version === "string" ? parsed.version : "",
     error: String(parsed.error || "")
   }
@@ -178,10 +189,11 @@ function nextStageColor(current) {
   return STAGE_COLORS[(i + 1) % STAGE_COLORS.length]
 }
 
-function pollingOptions(current) {
+function pollingOptions(current, allowed) {
+  var rates = allowedRatesFor(allowed)
   var options = []
-  for (var i = 0; i < POLLING_RATES.length; i++) {
-    var rate = POLLING_RATES[i]
+  for (var i = 0; i < rates.length; i++) {
+    var rate = rates[i]
     options.push({
       value: String(rate),
       label: rate >= 1000 ? (rate / 1000) + "K" : String(rate)
@@ -229,6 +241,7 @@ function buildRows(state, settings, writable) {
   if (canWrite(writable, "motionSync")) rows.push({ kind: "toggle", field: "motionSync" })
   if (canWrite(writable, "angleSnap")) rows.push({ kind: "toggle", field: "angleSnap" })
   if (canWrite(writable, "rippleControl")) rows.push({ kind: "toggle", field: "rippleControl" })
+  if (canWrite(writable, "turboMode")) rows.push({ kind: "toggle", field: "turboMode" })
   return rows
 }
 
@@ -236,6 +249,7 @@ function toggleLabel(field) {
   if (field === "motionSync") return "Motion Sync"
   if (field === "angleSnap") return "Angle snapping"
   if (field === "rippleControl") return "Ripple control"
+  if (field === "turboMode") return "Turbo mode"
   return field
 }
 
@@ -243,6 +257,7 @@ function toggleDescription(field) {
   if (field === "motionSync") return "Align sensor reads to the polling clock"
   if (field === "angleSnap") return "Straighten near-horizontal movement"
   if (field === "rippleControl") return "Smooth jitter at high DPI"
+  if (field === "turboMode") return "Report clicks faster than the switch debounces"
   return ""
 }
 

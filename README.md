@@ -1,14 +1,33 @@
-# HSK Mouse — an Omarchy plugin
+# Mouse Control — an Omarchy plugin
 
-Battery, DPI, polling rate and sensor settings for the **G-Wolves HSK Pro 4K**,
-in the Omarchy bar.
+Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
+**Pulsar** mice, in the Omarchy bar.
 
-![The HSK Mouse bar widget and panel](preview.png)
+![The Mouse Control bar widget and panel](preview.png)
 
-The HSK Pro 4K has no libratbag support, and G-Wolves' web configurator does not
-support this model — it ships a Windows-only app. So there was no way to change
-DPI or polling rate from Linux at all. This plugin talks to the mouse directly
-over raw HID, using a protocol recovered from that Windows app.
+> **Renamed from HSK Mouse.** This plugin used to be G-Wolves-only and was
+> called `keasbeexd.hskmouse` / "HSK Mouse". Now that it also speaks Pulsar's
+> protocol, it's `keasbeexd.mousectl` / "Mouse Control" instead. If you have
+> the old version installed, see [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse)
+> below — it is not an automatic, in-place update.
+
+Most of these mice have no libratbag support, and several vendors' own Linux
+story is "there isn't one" — DPI and polling rate configuration ships as a
+Windows-only app, if it ships at all. This plugin talks to the mouse directly
+over raw HID, using protocols recovered from those Windows apps (for G-Wolves)
+or from existing open-source Linux tooling (for Pulsar).
+
+## Supported mice
+
+| Vendor | Model | Status |
+|---|---|---|
+| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (7 stages + colour), polling rate, sensor settings, sleep timer |
+| Pulsar | X2H mini | Scaffold, unverified — detects the mouse and can attempt reads, but every field is marked unverified and nothing writes yet. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+
+The panel only ever shows the settings the connected mouse's profile actually
+reports and can write — see [How multiple mice work](#how-multiple-mice-work).
+Adding another mouse is a new file under `profiles/`, not a code change; see
+[Other models](#other-models).
 
 ## Install
 
@@ -16,23 +35,24 @@ Two steps. **Both are required** — the second is not optional polish.
 
 ```bash
 omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
-omarchy plugin enable keasbeexd.hskmouse
+omarchy plugin enable keasbeexd.mousectl
 ```
 
 ```bash
-~/.config/omarchy/plugins/keasbeexd.hskmouse/install.sh --udev
+~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev
 ```
 
-Then **unplug and replug** the mouse or its dongle, and add the **HSK Mouse**
-widget to your bar.
+Then **unplug and replug** the mouse or its dongle, and add the **Mouse
+Control** widget to your bar.
 
 Why the second step matters: configuring the mouse means sending HID *feature*
 reports, and the hidraw ioctls that carry those need the device node opened
 read-write. `/dev/hidraw*` is root-only by default, so without the rule the
 plugin cannot reach the mouse at all — not even to read the battery. The rule
 grants access to whoever is logged in at the seat (the same `uaccess` mechanism
-your sound card uses), scoped to G-Wolves' vendor id and nothing else. The
-script shows you exactly what it will write before asking for `sudo`.
+your sound card uses), scoped to one line per supported vendor's id and
+nothing else — see the script's `VENDOR_IDS` list. The script shows you
+exactly what it will write before asking for `sudo`.
 
 If something looks wrong, `hskctl doctor` says in the first few lines whether
 permissions are the problem.
@@ -42,6 +62,8 @@ service, no libratbag. The CLI the widget drives ships inside the plugin.
 
 ## What it does
 
+On the G-Wolves HSK Pro 4K, confirmed on real hardware:
+
 | | |
 |---|---|
 | **Battery** | percentage in the bar, low-battery warning, charging state |
@@ -50,8 +72,63 @@ service, no libratbag. The CLI the widget drives ships inside the plugin.
 | **Sensor** | motion sync, angle snapping, lift-off distance |
 | **Firmware** | version and link (dongle or cable) |
 
-Everything above is confirmed working on real hardware. Nothing is a guess
-carried over from another vendor's mouse.
+A different mouse shows only the rows above that its own profile actually
+maps and can write — see [How multiple mice work](#how-multiple-mice-work).
+Nothing here is a guess carried from one mouse's profile into another's.
+
+## How multiple mice work
+
+Every setting the panel can show or write comes from `profiles/*.json`, one
+file per mouse, interpreted by a generic protocol engine — there is no
+per-mouse code anywhere in this plugin. Plug a mouse in and `hskctl` picks the
+profile whose `match` block (vendor id, product id, HID usage page) fits a
+device actually connected, the same way it decides whether it is safe to
+*write* to that device. Nothing is shown or shared across mice by guesswork:
+
+- A row only appears if the connected mouse's profile reports that field in
+  `hskctl status` **and** the profile can write it. A mouse with no lift-off
+  distance setting has no lift-off row; one whose polling-rate mapping is
+  still unverified has a rate reading but no selector to change it.
+- Polling rate options, DPI ranges and similar per-field choices come from
+  the matched profile too (its `values`/`min`/`max`), not from a list baked
+  in for one mouse — so a mouse that goes to 8000 Hz offers 8000 Hz, and one
+  that tops out at 1000 Hz does not show rates it cannot reach.
+- `hskctl status` (no `--profile`) auto-detects: it asks every profile in
+  `profiles/` whether its `match` block fits a connected device, and uses the
+  first one that does. `hskctl status --profile <name>` or `--device <path>`
+  overrides detection when you are working on a profile that is not
+  matching yet.
+
+## Pulsar X2H mini
+
+This is the newest addition, and its profile
+(`profiles/pulsar-x2h-mini.json`) is a **scaffold, not a finished
+integration** — there is no X2H mini in this project's hands to verify
+against. It is transcribed from two existing open-source Linux tools that
+already speak to Pulsar's Nordic wireless dongle —
+[packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
+and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
+— rather than decoded from a capture on real hardware. Concretely, right now:
+
+- The `match` block's product ids (`f507`/`f508`) are borrowed from the
+  Nordic dongle those tools ship for "X2A Wireless / X2 V2 Mini" — the X2H
+  mini's own id was not published anywhere this search found. If your mouse
+  is not detected, run `hskctl probe --json` with it plugged in and open an
+  issue (or a PR) with what it reports.
+- Every field is marked `_needsVerification`, which `hskctl` already treats
+  as a hard stop on writing — the same gate that kept two uncertain mappings
+  out of the G-Wolves profile until they were confirmed on hardware. Reads
+  can be attempted and are harmless either way; a wrong byte offset just
+  reads back something obviously not a battery percentage. No write path is
+  open until each field is confirmed and the marker removed.
+- DPI stage values and LED colour are not mapped at all yet: the source
+  material describes them as small records with their own per-byte checksum,
+  which the protocol engine does not have a hook for yet.
+
+If you own an X2H mini, `hskctl probe`, `hskctl doctor`, and comparing
+`hskctl get <field>` against the Pulsar Fusion app on Windows is exactly the
+kind of verification this profile needs — see the `_followUp` list at the
+bottom of the profile's JSON for the concrete next steps.
 
 ## Using it
 
@@ -100,15 +177,15 @@ value, shown with one fewer step of rounding. `watch-battery` prints both.
 Omarchy IPC works too:
 
 ```bash
-omarchy-shell keasbeexd.hskmouse cycleDpi
-omarchy-shell keasbeexd.hskmouse setPollingRate 1000
+omarchy-shell keasbeexd.mousectl cycleDpi
+omarchy-shell keasbeexd.mousectl setPollingRate 1000
 ```
 
 ## Settings
 
 | Setting | Key | Default | |
 |---|---|---|---|
-| Refresh interval | `refreshIntervalSec` | 60 | how often the bar re-reads the mouse |
+| Refresh interval | `refreshIntervalSec` | 30 | how often the bar re-reads the mouse |
 | Low battery warning | `lowBatteryPercent` | 15 | when the icon turns urgent |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
 | Path to `hskctl` | `hskctlPath` | *(bundled)* | override only if you installed it yourself |
@@ -121,7 +198,7 @@ whichever of the three layout arrays the widget sits in:
 {
   "bar": {
     "right": [
-      { "id": "keasbeexd.hskmouse", "showBatteryLabel": true, "refreshIntervalSec": 60 }
+      { "id": "keasbeexd.mousectl", "showBatteryLabel": true, "refreshIntervalSec": 30 }
     ]
   }
 }
@@ -140,18 +217,25 @@ icon alone rather than a stale or invented figure — `hskctl status` will say
 why the read is failing — and in a vertical bar, which is one icon wide and has
 nowhere to put it.
 
+While the mouse has not been read successfully yet — right after login,
+before its dongle has finished enumerating — the bar retries every few
+seconds rather than waiting a full `refreshIntervalSec`, so a slow-to-wake
+dongle catches up on its own within a handful of seconds instead of showing a
+stale reading until you open the panel (which also forces an immediate
+refresh, if you want one sooner).
+
 ## Removing
 
 ```bash
-omarchy plugin remove keasbeexd.hskmouse
+omarchy plugin remove keasbeexd.mousectl
 ```
 
 That takes the plugin out of the shell. What survives, and how to remove it:
 
-- The **udev rule** at `/etc/udev/rules.d/60-gwolves-hsk.rules` stays in place
+- The **udev rule** at `/etc/udev/rules.d/60-mousectl.rules` stays in place
   (it needs `sudo` to have got there in the first place). Remove it with
-  `sudo rm /etc/udev/rules.d/60-gwolves-hsk.rules && sudo udevadm control --reload-rules`
-  if you no longer want your user to have hidraw access to the mouse.
+  `sudo rm /etc/udev/rules.d/60-mousectl.rules && sudo udevadm control --reload-rules`
+  if you no longer want your user to have hidraw access to any of these mice.
 - If you ran `./install.sh --link`, a symlink at `~/.local/bin/hskctl` points
   at the plugin. `./install.sh --uninstall` removes it (and only if it still
   points at this checkout — a shadow binary someone else put there is left
@@ -164,13 +248,42 @@ Nothing else persists: the plugin writes no cache, no log, no state file on
 its own, and it never runs anything in the background. Mouse configuration
 lives on the mouse itself and follows the mouse, not this plugin.
 
-## Other HSK models
+## Upgrading from HSK Mouse
 
-The protocol lives in `profiles/*.json` as data, interpreted by a generic
-engine — there is no device-specific code. The vendor app matches 14 product
-IDs across the HSK range, so the other variants very likely speak the same
-protocol. If you have one, `hskctl probe` and `hskctl doctor` will tell you, and
-adding it is a new profile rather than a code change. Issues welcome.
+Versions before 2.0 were `keasbeexd.hskmouse` / "HSK Mouse", G-Wolves only.
+Omarchy treats a changed plugin id as a different plugin, so this is not an
+in-place update:
+
+```bash
+omarchy plugin remove keasbeexd.hskmouse
+omarchy plugin add https://github.com/keasbeexd/omarchy-hsk.git
+omarchy plugin enable keasbeexd.mousectl
+~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev
+```
+
+Re-add the widget under its new name in `shell.json` (or the bar settings UI)
+and carry over any of the settings you had customized —
+`refreshIntervalSec`, `lowBatteryPercent`, `showBatteryLabel`, `hskctlPath` —
+onto the new entry; they were not renamed, only the `id` they hang off of.
+
+`install.sh --udev` notices the old `/etc/udev/rules.d/60-gwolves-hsk.rules`
+from a previous install and offers to remove it once the new rule is in place
+(it is otherwise harmless left behind — the new rule covers the same vendor
+id). Your G-Wolves mouse's own settings are unaffected either way: they live
+on the mouse, not in the plugin.
+
+## Other models
+
+The protocol for each vendor lives in `profiles/*.json` as data, interpreted
+by a generic engine — there is no per-mouse code. G-Wolves' vendor app
+matches 14 product IDs across the HSK range, so variants other than the Pro
+4K very likely speak the same protocol already described in
+`profiles/gwolves-hsk-pro-4k.json`. If you have one, `hskctl probe` and
+`hskctl doctor` will tell you whether it's recognized, and adding a new
+product id (or a whole new profile, for a different protocol) is a data
+change, not a code change. Issues and PRs welcome — for Pulsar mice
+especially, since [Pulsar X2H mini](#pulsar-x2h-mini) above is still an
+unverified scaffold that needs real hardware to finish.
 
 ## How the protocol was recovered
 
@@ -213,6 +326,13 @@ divide a 1000 Hz base, while 32 and 64 are separate high-rate codes for 2000 and
 
 Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
 
+The Pulsar profile above was not recovered the same way — it has no capture
+or decompile behind it yet, only a transcription of existing open-source
+tools. Credit and thanks to
+[packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
+and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
+for doing that original reverse-engineering work.
+
 ## Safety
 
 Factory reset (opcode `09`) is deliberately not bound to any field — nothing
@@ -228,7 +348,7 @@ git clone https://github.com/keasbeexd/omarchy-hsk.git
 cd omarchy-hsk
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
-omarchy plugin enable keasbeexd.hskmouse
+omarchy plugin enable keasbeexd.mousectl
 ```
 
 The tree that ships to the marketplace holds only what a user needs at
@@ -243,17 +363,19 @@ manifest.json  Panel.qml  Service.qml  Model.js   the plugin
 install.sh                                        udev rule, self-contained
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
-profiles/        the decoded protocol -- data, not code
-docs/            how the protocol was decoded, for anyone profiling a variant
+profiles/        one JSON file per supported mouse -- data, not code
+docs/            how the G-Wolves protocol was decoded, for anyone profiling a variant
 ```
 
 ## Contributing
 
-Bug reports and profiles for other HSK variants are both welcome. Open an
-issue at the GitHub repo above.
+Bug reports and profiles for other mouse models are both welcome -- G-Wolves
+variants and other Pulsar models alike. Open an issue at the GitHub repo
+above; for Pulsar mice, a `hskctl probe --json` and `hskctl doctor` capture
+from real hardware is the single most useful thing you can attach to it.
 
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
 
-Not affiliated with, sponsored by, or endorsed by G-Wolves.
+Not affiliated with, sponsored by, or endorsed by G-Wolves or Pulsar.

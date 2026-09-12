@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Setup for the HSK Mouse plugin.
+# Setup for the Mouse Control plugin.
 #
 #   --udev       grant your user access to the mouse            (REQUIRED)
 #   --link       put `hskctl` on your PATH for use in a terminal
@@ -35,8 +35,19 @@ RM="/usr/bin/rm"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
-UDEV_RULE="/etc/udev/rules.d/60-gwolves-hsk.rules"
-VENDOR_ID="33e4"
+UDEV_RULE="/etc/udev/rules.d/60-mousectl.rules"
+# Superseded by UDEV_RULE above once this plugin covered more than one vendor.
+# Still checked for and offered for removal below, so upgrading does not leave
+# a stale rule with the plugin's old name granting access nothing reads.
+OLD_UDEV_RULE="/etc/udev/rules.d/60-gwolves-hsk.rules"
+# One vendor id per supported mouse family. Every id here gets the same
+# uaccess rule -- broadening this list is how a new mouse's udev access is
+# added, the same way profiles/*.json is how its protocol is added.
+VENDOR_IDS=(
+  "33e4:G-Wolves (HSK Pro 4K and siblings)"
+  "3710:Pulsar (wired models, and the X2A/Feinmann wireless dongles)"
+  "3554:Pulsar (Nordic wireless dongle -- X2A/X2 V2 Mini family, X2H mini until confirmed)"
+)
 
 info() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m warn:\033[0m %s\n' "$*" >&2; }
@@ -101,8 +112,8 @@ public_dir() {
 }
 
 udev_rule_text() {
-  cat <<RULE
-# G-Wolves HSK (vendor id $VENDOR_ID) -- installed by the omarchy-hsk plugin.
+  cat <<HEADER
+# Mouse Control plugin -- hidraw access for every supported mouse vendor.
 #
 # Configuring the mouse means sending HID *feature* reports, and the hidraw
 # ioctls for those (HIDIOCSFEATURE / HIDIOCGFEATURE) require the device node to
@@ -111,13 +122,37 @@ udev_rule_text() {
 # all -- not even to read the battery.
 #
 # uaccess hands read-write to whoever is logged in at the seat, which is the
-# same mechanism your sound card and webcam use. It is scoped to this vendor id.
-KERNEL=="hidraw*", ATTRS{idVendor}=="$VENDOR_ID", MODE="0660", TAG+="uaccess"
-RULE
+# same mechanism your sound card and webcam use. Each line below is scoped to
+# one vendor id -- adding a mouse from a new vendor means adding a line here,
+# never widening one to match everything.
+HEADER
+  local entry vendor_id vendor_name
+  for entry in "${VENDOR_IDS[@]}"; do
+    vendor_id="${entry%%:*}"
+    vendor_name="${entry#*:}"
+    echo "# $vendor_name"
+    echo "KERNEL==\"hidraw*\", ATTRS{idVendor}==\"$vendor_id\", MODE=\"0660\", TAG+=\"uaccess\""
+  done
+}
+
+migrate_old_udev_rule() {
+  [[ -e "$OLD_UDEV_RULE" ]] || return 0
+  warn "Found $OLD_UDEV_RULE from an older install of this plugin (it used to"
+  warn "be named differently). It only covers G-Wolves' vendor id, and the"
+  warn "new rule below covers it too, so it is now redundant."
+  read -r -p "Remove $OLD_UDEV_RULE (needs sudo)? [y/N] " reply
+  if [[ "$reply" =~ ^[Yy] ]]; then
+    "$SUDO" "$RM" -f "$OLD_UDEV_RULE"
+    info "Removed $OLD_UDEV_RULE"
+  else
+    warn "Left in place. It does no harm alongside the new rule -- remove it"
+    warn "yourself later with: sudo rm $OLD_UDEV_RULE"
+  fi
 }
 
 install_udev() {
-  info "Granting your user access to hidraw devices with vendor id $VENDOR_ID"
+  migrate_old_udev_rule
+  info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
   echo
   udev_rule_text | sed 's/^/    /'
   echo

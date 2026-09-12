@@ -9,8 +9,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "keasbeexd.hskmouse"
-  ipcTarget: "keasbeexd.hskmouse"
+  moduleName: "keasbeexd.mousectl"
+  ipcTarget: "keasbeexd.mousectl"
   manageIpc: false
 
   property int cursorIndex: 0
@@ -134,7 +134,7 @@ Panel {
       // Coalesced, like the step buttons -- holding an arrow key is one write.
       if (wanted !== row.dpi) hsk.setSoon("dpiStage" + row.stage, wanted)
     } else if (row.kind === "pollingRate") {
-      var options = Model.POLLING_RATES
+      var options = Model.allowedRatesFor(hsk.allowed)
       var current = hsk.value("pollingRate")
       var index = options.indexOf(current)
       if (index < 0) index = 0
@@ -502,7 +502,7 @@ Panel {
                 width: parent.width
                 visible: root.needsSetup || root.looksLikePermissions
                 text: root.looksLikePermissions
-                  ? "~/.config/omarchy/plugins/keasbeexd.hskmouse/install.sh --udev"
+                  ? "~/.config/omarchy/plugins/keasbeexd.mousectl/install.sh --udev"
                   : "hskctl probe"
                 wrapMode: Text.WrapAnywhere
                 color: root.foreground
@@ -580,7 +580,7 @@ Panel {
               // ButtonGroup is a Row -- it sizes to its chips, so no explicit
               // width here or the group stretches past its content.
               ButtonGroup {
-                options: Model.pollingOptions(hsk.value("pollingRate"))
+                options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
                 value: String(hsk.value("pollingRate"))
                 foreground: root.foreground
                 accent: Color.accent
@@ -710,7 +710,7 @@ Panel {
                 // path) the same way as the bar tooltip. The literal prefix
                 // and the version stay as-is.
                 text: {
-                  var parts = ["HSK Mouse v" + Model.plain(hsk.pluginVersion, 32)]
+                  var parts = ["Mouse Control v" + Model.plain(hsk.pluginVersion, 32)]
                   if (hsk.has("firmwareVersion"))
                     parts.push("firmware " + Model.plain(hsk.value("firmwareVersion"), 40))
                   if (hsk.devicePath !== "") parts.push(Model.plain(hsk.devicePath, 60))

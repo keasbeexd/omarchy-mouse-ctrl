@@ -17,9 +17,9 @@ import tempfile
 from typing import Any
 
 from . import __version__
-from .device import DeviceBusy, DeviceNotFound, open_session, rank_candidates
+from .device import DeviceBusy, DeviceNotFound, detect_profile, open_session, rank_candidates
 from .hidraw import HidrawError, enumerate_devices
-from .protocol import NotDiscovered, ProtocolError, list_profiles, load_profile
+from .protocol import NotDiscovered, ProtocolError, list_profiles
 
 FRIENDLY_LABELS = {
     "batteryPercent": "Battery",
@@ -31,6 +31,8 @@ FRIENDLY_LABELS = {
     "liftOffDistance": "Lift-off distance",
     "debounceMs": "Debounce (raw)",
     "angleSnap": "Angle snapping",
+    "rippleControl": "Ripple control",
+    "turboMode": "Turbo mode",
     "sleepSeconds": "Sleep timer",
     "firmwareVersion": "Firmware",
 }
@@ -74,7 +76,7 @@ def _fail(message: str, as_json: bool, **extra) -> int:
 
 def cmd_probe(args) -> int:
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
     except ProtocolError:
         profile = None
 
@@ -120,7 +122,7 @@ def cmd_probe(args) -> int:
 
 def cmd_status(args) -> int:
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
@@ -179,6 +181,14 @@ def cmd_status(args) -> int:
             for f in settings
             if (profile.data["fields"].get(f) or {}).get("_needsVerification")
         ),
+        # The legal values for a field -- e.g. which polling rates this mouse
+        # actually offers -- so the panel can build its selectors from the
+        # profile instead of a hardcoded list that only fit one mouse.
+        "allowed": {
+            f: profile.allowed(f)
+            for f in settings
+            if profile.allowed(f) is not None
+        },
     }
 
     def human(p):
@@ -210,7 +220,7 @@ def cmd_status(args) -> int:
 
 def cmd_get(args) -> int:
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
         if getattr(args, "verbose", False):
             session.trace = []
@@ -255,7 +265,7 @@ def _print_trace(session) -> None:
 def cmd_set(args) -> int:
     value = _coerce(args.value)
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
         if getattr(args, "verbose", False):
             session.trace = []
@@ -298,7 +308,7 @@ def cmd_set(args) -> int:
 
 def cmd_fields(args) -> int:
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
@@ -369,7 +379,7 @@ def cmd_probe_write(args) -> int:
     Read, write, read. Nothing is retried and nothing is restored.
     """
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
         command = profile.field_command(args.field)
         before = bytes(session._read(command))
@@ -455,7 +465,7 @@ def cmd_doctor(args) -> int:
     import os
 
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
@@ -629,7 +639,7 @@ def cmd_watch_battery(args) -> int:
     import time as _time
 
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
@@ -768,7 +778,7 @@ def cmd_measure_polling(args) -> int:
     from .hidraw import HidrawDevice, enumerate_devices
 
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
@@ -882,7 +892,7 @@ def cmd_calibrate_polling(args) -> int:
     import time
 
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
         original = session.get_raw("pollingRate")
     except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
@@ -986,7 +996,7 @@ def cmd_fix_dpi(args) -> int:
     entire block, so a corrupt neighbour would be carried straight back.
     """
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
@@ -1152,7 +1162,7 @@ def cmd_save(args) -> int:
     you want these values back on the mouse, ask for them.
     """
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
         settings = session.read_all()
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
@@ -1191,7 +1201,7 @@ def cmd_apply(args) -> int:
         return _fail(f"{path} has no valid 'settings' object", args.json, path=path)
 
     try:
-        profile = load_profile(args.profile)
+        profile = detect_profile(args.profile)
         session = _session(args, profile, args.device)
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json)
@@ -1234,7 +1244,7 @@ def cmd_profiles(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hskctl",
-        description="Configure a G-Wolves HSK Pro 4K (and friends) from Linux.",
+        description="Configure a supported G-Wolves or Pulsar mouse from Linux.",
     )
     parser.add_argument("--version", action="version", version=f"hskctl {__version__}")
     parser.add_argument(

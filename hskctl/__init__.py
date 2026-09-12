@@ -1,4 +1,4 @@
-"""hskctl -- Linux configuration for G-Wolves HSK-family mice."""
+"""hskctl -- Linux configuration for supported G-Wolves and Pulsar mice."""
 
 import json
 import os

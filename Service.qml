@@ -13,7 +13,7 @@ Item {
   property var settings: ({})
 
   property string state: "loading"      // loading | ready | undiscovered | error
-  property string model: "HSK Mouse"
+  property string model: "Mouse"
   property string devicePath: ""
   property var values: ({})
   property string lastError: ""
@@ -26,12 +26,17 @@ Item {
   property bool suspended: false
   property var writable: []
   property var unverified: []
+  // Legal values per field, e.g. which polling rates *this* mouse offers --
+  // keyed by field name, from the profile via hskctl. Lets the panel build
+  // its selectors from whatever mouse is actually plugged in instead of a
+  // list baked in for one model.
+  property var allowed: ({})
 
   // Optimistic overlay: a click should move the UI immediately rather than
   // waiting a full command round trip. Cleared once the re-read lands.
   property var pending: ({})
 
-  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 60, 10, 3600)
+  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 10, 3600)
   readonly property int lowBatteryPercent: intSetting("lowBatteryPercent", 15, 0, 50)
   readonly property bool showBatteryLabel: setting("showBatteryLabel", true) === true
   // Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, and the CLI
@@ -149,6 +154,7 @@ Item {
     values = parsed.settings || {}
     writable = parsed.writable || []
     unverified = parsed.unverified || []
+    allowed = parsed.allowed || {}
     if (parsed.version !== "") pluginVersion = parsed.version
     pending = ({})
     lastError = parsed.ok ? "" : parsed.error
@@ -248,9 +254,18 @@ Item {
     set(field, value(field) ? "off" : "on")
   }
 
+  // While the mouse has never been read successfully -- at shell startup,
+  // before its dongle has finished enumerating, or after any failed read --
+  // poll every few seconds instead of waiting the full interval. Without
+  // this, one read losing a race with device enumeration at login left the
+  // bar showing a stale battery reading for a full refreshIntervalSec (60s
+  // by default), and the only way to see the real number sooner was to open
+  // the panel, which calls refresh() itself on open. `ready` flips back to
+  // true a few seconds later on its own now, with nothing to click.
+  readonly property int fastRetryMs: 5000
   Timer {
     id: refreshTimer
-    interval: root.refreshIntervalSec * 1000
+    interval: (root.ready ? root.refreshIntervalSec * 1000 : root.fastRetryMs)
     repeat: true
     running: true
     triggeredOnStart: true

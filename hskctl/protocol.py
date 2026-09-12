@@ -1,9 +1,9 @@
 """Declarative protocol engine.
 
-The whole point of this module: the *shape* of the G-Wolves config protocol is
-not yet known, but the machinery for speaking a vendor HID protocol is always
-the same -- build a packet, checksum it, send it as a Feature or Output report,
-read a reply, slice fields out of it.
+The whole point of this module: no two vendors' config protocols look alike,
+but the machinery for speaking a vendor HID protocol is always the same --
+build a packet, checksum it, send it as a Feature or Output report, read a
+reply, slice fields out of it.
 
 So all the device-specific knowledge lives in a JSON profile under profiles/,
 and this module is a generic interpreter for that JSON. When the capture work
@@ -97,6 +97,9 @@ def _decode_scalar(buf: bytes, spec: dict) -> Any:
     elif enc == "version3":
         # Three bytes of major.minor.patch, as the firmware reports it.
         return "%d.%d.%d" % (buf[off], buf[off + 1], buf[off + 2])
+    elif enc == "version2":
+        # Two bytes of major.minor, as some firmwares report it.
+        return "%d.%d" % (buf[off], buf[off + 1])
     else:
         raise ProtocolError(f"unknown encoding {enc!r}")
 

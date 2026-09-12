@@ -13,12 +13,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .hidraw import HidrawDevice, HidrawInfo, enumerate_devices
-from .protocol import NotDiscovered, Profile, ProtocolError
+from .protocol import NotDiscovered, Profile, ProtocolError, list_profiles, load_profile
 
-# G-Wolves ships several USB bridge chips across revisions, so name matching is
-# the fallback when the profile has no VID/PID yet. Deliberately broad -- this
+# Vendors ship several USB bridge chips across revisions, so name matching is
+# the fallback when a profile has no VID/PID yet. Deliberately broad -- this
 # only selects *candidates* to show the user, it never triggers a write.
-NAME_HINTS = ("g-wolves", "gwolves", "hsk", "wireless dongle", "compx", "vgn")
+NAME_HINTS = (
+    "g-wolves", "gwolves", "hsk", "wireless dongle", "compx", "vgn", "pulsar",
+)
 
 
 def is_vendor_usage_page(page: int | None) -> bool:
@@ -93,7 +95,7 @@ def rank_candidates(profile: Profile | None = None) -> list[Candidate]:
         lowered = info.name.lower()
         if any(hint in lowered for hint in NAME_HINTS):
             score += 10
-            reasons.append("device name looks like a G-Wolves node")
+            reasons.append("device name looks like a known mouse vendor's node")
 
         # Identification is a conjunction of everything the profile declares,
         # not a score. A score is a ranking heuristic and will happily elect
@@ -122,6 +124,40 @@ def rank_candidates(profile: Profile | None = None) -> list[Candidate]:
 
     results.sort(key=lambda c: (-c.score, c.info.path))
     return results
+
+
+def detect_profile(explicit: str | None = None) -> Profile:
+    """Pick the profile that matches whatever mouse is actually plugged in.
+
+    With several vendors' mice supported, `hskctl status` (no --profile) can no
+    longer default to any one of them. Instead it asks every profile whether
+    the hidraw nodes on this machine look like its `match` block, the same
+    conjunction `open_session` uses before it will write to a device -- so
+    "detected" here means the same thing it means everywhere else in hskctl.
+    An explicit --profile always wins and skips this entirely.
+    """
+    if explicit:
+        return load_profile(explicit)
+
+    names = list_profiles()
+    if not names:
+        raise ProtocolError("no profiles found -- is profiles/ missing?")
+
+    fallback: Profile | None = None
+    for name in names:
+        try:
+            candidate_profile = load_profile(name)
+        except ProtocolError:
+            continue
+        if fallback is None:
+            fallback = candidate_profile
+        if any(c.identified for c in rank_candidates(candidate_profile)):
+            return candidate_profile
+
+    # Nothing plugged in matched anything. Report against whichever profile
+    # sorts first, purely so `status`/`doctor` have a model name to talk
+    # about -- the "not detected" message does not depend on which one.
+    return fallback
 
 
 class DeviceNotFound(ProtocolError):
