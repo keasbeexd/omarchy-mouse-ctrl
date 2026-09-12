@@ -35,12 +35,18 @@ Item {
   // waiting a full command round trip. Cleared once the re-read lands.
   property var pending: ({})
 
-  // A status refresh is a handful of feature-report reads over an already
-  // idle USB link -- cheap enough to run often. The default favours noticing
-  // a charging-cable change quickly over shaving USB traffic that was never
-  // meaningful to begin with; lower it further in settings for something
-  // closer to instant.
-  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 5, 2, 3600)
+  // A full status refresh re-reads every field the profile knows -- DPI
+  // stages, polling rate, every sensor toggle -- one exchange per distinct
+  // command. Nothing but this plugin writes those, so there is little to
+  // catch by polling them often; the panel also forces one on open. Battery
+  // and charging are covered separately and far more often by batteryPollSec
+  // below, which is the one thing that changes on its own.
+  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 10, 3600)
+  // Battery percent and charging share one HID exchange on every shipped
+  // profile (`hskctl battery`), so polling just those is cheap enough to run
+  // every few seconds without the "Writing to the mouse..." banner: this poll
+  // never sets `busy`, only merges batteryPercent/charging into `values`.
+  readonly property int batteryPollSec: intSetting("batteryPollSec", 3, 2, 60)
   readonly property int lowBatteryPercent: intSetting("lowBatteryPercent", 15, 0, 50)
   readonly property bool showBatteryLabel: setting("showBatteryLabel", true) === true
   // Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, and the CLI
@@ -77,6 +83,9 @@ Item {
   // ever exceeded this cap the pipe is closed and the process killed, rather
   // than the shell allocating without bound.
   readonly property int _maxProcessBytes: 262144
+  // The battery poll's own payload is a few dozen bytes; a much smaller cap
+  // is still generous and this one runs far more often than the others.
+  readonly property int _maxBatteryBytes: 4096
   property string _statusStdout: ""
   property int _statusStdoutBytes: 0
   property string _statusStderr: ""
@@ -85,8 +94,11 @@ Item {
   property int _setStdoutBytes: 0
   property string _setStderr: ""
   property int _setStderrBytes: 0
+  property string _batteryStdout: ""
+  property int _batteryStdoutBytes: 0
   property bool _statusOverflow: false
   property bool _setOverflow: false
+  property bool _batteryOverflow: false
 
   // In UTF-16 each JavaScript character is 1..2 code units; a byte cap read as
   // .length is conservative but safe as an upper bound. The producer side of
@@ -149,6 +161,20 @@ Item {
     statusProcess.running = true
   }
 
+  // The fast, quiet path: one exchange for batteryPercent + charging, merged
+  // into `values` without touching `busy` or `pending`. Skips rather than
+  // queues behind a real read or write -- this cycle is cheap to lose, and
+  // the next one is batteryPollSec away.
+  function pollBattery() {
+    if (suspended || state !== "ready") return
+    if (statusProcess.running || setProcess.running || batteryProcess.running) return
+    if (_queue.length > 0 || Object.keys(_soon).length > 0) return
+    _batteryStdout = ""; _batteryStdoutBytes = 0
+    _batteryOverflow = false
+    batteryProcess.command = [hskctl, "--json", "battery"]
+    batteryProcess.running = true
+  }
+
   function applyStatus(raw) {
     var parsed = Model.parseStatus(raw)
     state = parsed.state
@@ -161,6 +187,21 @@ Item {
     if (parsed.version !== "") pluginVersion = parsed.version
     pending = ({})
     lastError = parsed.ok ? "" : parsed.error
+    changed()
+  }
+
+  // Merges rather than replaces `values` -- a failed or stale poll must not
+  // blank out DPI, polling rate and everything else read_all() last saw.
+  // Silent on failure: this cycle just did not learn anything new, and the
+  // next one is batteryPollSec away, so there is nothing useful to surface
+  // as an error for what is background upkeep.
+  function applyBattery(raw) {
+    var parsed = Model.parseBattery(raw)
+    if (!parsed.ok) return
+    var merged = {}
+    for (var key in values) merged[key] = values[key]
+    for (var field in parsed.settings) merged[field] = parsed.settings[field]
+    values = merged
     changed()
   }
 
@@ -260,6 +301,19 @@ Item {
     onTriggered: root.refresh()
   }
 
+  // The fast path that actually answers "did the cable come out": only once
+  // the mouse has been read successfully at least once -- before that,
+  // refreshTimer's fastRetryMs loop already covers getting to `ready` quickly,
+  // and there is no battery command to poll yet.
+  Timer {
+    id: batteryTimer
+    interval: root.batteryPollSec * 1000
+    repeat: true
+    running: root.ready
+    triggeredOnStart: true
+    onTriggered: root.pollBattery()
+  }
+
   Timer {
     // Waits for an in-flight read to finish, then releases the queued writes.
     id: drainTimer
@@ -312,6 +366,21 @@ Item {
     }
   }
 
+  Timer {
+    // Same idea as `watchdog`, kept separate so a stuck battery poll tears
+    // itself down quietly instead of setting `lastError` and disturbing
+    // whatever the panel is showing -- this process was never allowed to
+    // surface an error even when it exits cleanly (see applyBattery).
+    id: batteryWatchdog
+    interval: 15000
+    repeat: false
+    running: batteryProcess.running
+    onTriggered: {
+      batteryProcess.signal(15)
+      batteryKillTimer.restart()
+    }
+  }
+
   // StdioCollector holds the whole stream before we can see it, so we cannot
   // bound the byte count from the shell side. SplitParser fires on each chunk,
   // and we count against a hard cap; on overflow the process is TERMed and
@@ -331,6 +400,13 @@ Item {
     interval: 1500
     repeat: false
     onTriggered: if (setProcess.running) setProcess.signal(9)
+  }
+
+  Timer {
+    id: batteryKillTimer
+    interval: 1500
+    repeat: false
+    onTriggered: if (batteryProcess.running) batteryProcess.signal(9)
   }
 
   Process {
@@ -458,10 +534,39 @@ Item {
     }
   }
 
+  Process {
+    id: batteryProcess
+    running: false
+    command: []
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root._batteryOverflow) return
+        var s = String(chunk || "")
+        root._batteryStdoutBytes += s.length
+        root._batteryStdout = root._appendChunk(root._batteryStdout, s, root._maxBatteryBytes)
+        if (root._batteryStdoutBytes > root._maxBatteryBytes) {
+          root._batteryOverflow = true
+          batteryProcess.signal(15)
+          batteryKillTimer.restart()
+        }
+      }
+    }
+    // No stderr capture here -- a failed poll is silent by design (see
+    // applyBattery), so there is nothing to show a one-line error from.
+
+    onExited: function(exitCode, exitStatus) {
+      batteryKillTimer.stop()
+      if (root._batteryOverflow) return
+      root.applyBattery(root._batteryStdout)
+    }
+  }
+
   Component.onDestruction: {
     // Make sure any in-flight hskctl gets torn down when the panel is unloaded,
     // rather than surviving its own supervisor.
     if (statusProcess.running) statusProcess.signal(15)
     if (setProcess.running) setProcess.signal(15)
+    if (batteryProcess.running) batteryProcess.signal(15)
   }
 }

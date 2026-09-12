@@ -549,12 +549,27 @@ class Session:
         per field. A command that fails is skipped rather than aborting the
         whole read -- a mouse on the cable legitimately has no battery reading.
         """
+        fields = self.profile.data.get("fields", {})
+        names = [
+            name for name, spec in fields.items()
+            if not name.startswith("_") and isinstance(spec, dict)
+        ]
+        return self.read_some(names)
+
+    def read_some(self, names: list[str]) -> dict:
+        """Like `read_all`, restricted to the given fields.
+
+        Still shares one exchange per distinct command among the fields
+        asked for, same as `read_all` -- so asking for `batteryPercent` and
+        `charging` together (they share the `battery` command on every
+        shipped profile) still costs one exchange, not two. Exists for the
+        panel's fast battery poll, which should not pay for reading DPI
+        stages, polling rate and every sensor toggle just to notice a
+        charging-cable flip.
+        """
         out: dict[str, Any] = {}
         cache: dict[str, bytes] = {}
-        fields = self.profile.data.get("fields", {})
-        for name, spec in fields.items():
-            if name.startswith("_") or not isinstance(spec, dict):
-                continue
+        for name in names:
             if not self.profile.has_field(name):
                 continue
             command = self.profile.field_command(name)

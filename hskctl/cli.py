@@ -215,6 +215,41 @@ def cmd_status(args) -> int:
     return _emit(payload, args.json, human)
 
 
+def cmd_battery(args) -> int:
+    """Read only batteryPercent and charging -- one exchange, not the whole profile.
+
+    `status` reads every mapped field, one exchange per distinct command; for
+    a widget polling every few seconds just to notice a charging-cable flip,
+    that is DPI stages, polling rate and every sensor toggle re-read for no
+    reason. This is the same idea as `get`, but batteryPercent and charging
+    share one command on every shipped profile, so asking for both here still
+    costs one exchange rather than two separate process spawns.
+    """
+    try:
+        profile = detect_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    if not profile.discovered:
+        payload = {"ok": False, "state": "undiscovered", "settings": {}}
+        return _emit(payload, args.json, lambda p: print("not discovered"))
+
+    try:
+        session = _session(args, profile, args.device)
+        settings = session.read_some(["batteryPercent", "charging"])
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json, state="error", settings={})
+
+    payload = {"ok": True, "state": "ready", "settings": settings}
+    return _emit(
+        payload, args.json,
+        lambda p: print(
+            f"{p['settings'].get('batteryPercent', '?')}%"
+            + (" (charging)" if p["settings"].get("charging") else "")
+        ),
+    )
+
+
 # --- get / set --------------------------------------------------------------
 
 
@@ -1263,6 +1298,9 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_probe
     )
     sub.add_parser("status", help="read every mapped setting").set_defaults(func=cmd_status)
+    sub.add_parser(
+        "battery", help="read only battery percent and charging (one exchange)"
+    ).set_defaults(func=cmd_battery)
     sub.add_parser("fields", help="show which settings are mapped").set_defaults(
         func=cmd_fields
     )

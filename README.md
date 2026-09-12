@@ -234,10 +234,20 @@ omarchy-shell keasbeexd.mousectrl setPollingRate 1000
 
 | Setting | Key | Default | |
 |---|---|---|---|
-| Refresh interval | `refreshIntervalSec` | 5 | how often the bar re-reads the mouse (min 2) — lower it further for near-instant charging-cable detection |
+| Battery/charging poll | `batteryPollSec` | 3 | how often the bar checks just battery + charging (min 2) — this is what notices a cable coming out |
+| Full refresh interval | `refreshIntervalSec` | 30 | how often the bar re-reads everything else — DPI, polling rate, every sensor toggle (min 10) |
 | Low battery warning | `lowBatteryPercent` | 15 | when the icon turns urgent |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
 | Path to `hskctl` | `hskctlPath` | *(bundled)* | override only if you installed it yourself |
+
+Battery and charging are checked on their own, fast schedule (`batteryPollSec`)
+because that is the one thing that changes on its own and the one thing worth
+noticing quickly. Everything else only this plugin writes, so there is little
+to catch by re-reading it often — `refreshIntervalSec` covers it at a far more
+relaxed pace, and any write from the panel forces an immediate full refresh
+regardless of either interval. The battery poll is also silent: it never
+shows *Writing to the mouse…*, which is reserved for an actual write or a
+full refresh.
 
 There is no settings UI. Omarchy keeps every widget's options **inline on that
 widget's entry** in `~/.config/omarchy/shell.json`, under the `bar` key, in
@@ -247,7 +257,7 @@ whichever of the three layout arrays the widget sits in:
 {
   "bar": {
     "right": [
-      { "id": "keasbeexd.mousectrl", "showBatteryLabel": true, "refreshIntervalSec": 5 }
+      { "id": "keasbeexd.mousectrl", "showBatteryLabel": true, "batteryPollSec": 3 }
     ]
   }
 }
@@ -317,8 +327,9 @@ omarchy plugin enable keasbeexd.mousectrl
 
 Re-add the widget under its new name in `shell.json` (or the bar settings UI)
 and carry over any of the settings you had customized —
-`refreshIntervalSec`, `lowBatteryPercent`, `showBatteryLabel`, `hskctlPath` —
-onto the new entry; they were not renamed, only the `id` they hang off of.
+`refreshIntervalSec`, `batteryPollSec`, `lowBatteryPercent`, `showBatteryLabel`,
+`hskctlPath` — onto the new entry; they were not renamed (`batteryPollSec` is
+new in 2.0), only the `id` they hang off of.
 
 `install.sh --udev` notices the old `/etc/udev/rules.d/60-gwolves-hsk.rules`
 from a previous install and offers to remove it once the new rule is in place

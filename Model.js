@@ -89,6 +89,19 @@ function parseStatus(raw) {
   }
 }
 
+// Same shape of parsing as parseStatus, for `hskctl battery`'s much smaller
+// payload -- just ok/settings, no model/writable/allowed to carry.
+function parseBattery(raw) {
+  var text = String(raw || "").trim()
+  if (text === "") return { ok: false, settings: {} }
+  try {
+    var parsed = JSON.parse(text)
+    return { ok: parsed.ok === true, settings: parsed.settings || {} }
+  } catch (e) {
+    return { ok: false, settings: {} }
+  }
+}
+
 function has(settings, key) {
   return settings && settings[key] !== undefined && settings[key] !== null
 }
