@@ -5,11 +5,15 @@ Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
 
 ![The Mouse Control bar widget and panel](preview.png)
 
-> **Renamed from HSK Mouse.** This plugin used to be G-Wolves-only and was
-> called `keasbeexd.hskmouse` / "HSK Mouse". Now that it also speaks Pulsar's
-> protocol, it's `keasbeexd.mousectl` / "Mouse Control" instead. If you have
-> the old version installed, see [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse)
-> below — it is not an automatic, in-place update.
+> **Renamed and moved from HSK Mouse.** This plugin used to be G-Wolves-only,
+> called `keasbeexd.hskmouse` / "HSK Mouse", and lived in the
+> [`omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) repo. Now that it
+> also speaks Pulsar's protocol, it's `keasbeexd.mousectl` / "Mouse Control"
+> instead, developed here in this repo (`mouse-ctrl`) going forward.
+> `omarchy-hsk` still exists with the G-Wolves-only version, unchanged, for
+> anyone not ready to move. If you have the old version installed, see
+> [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse) below — it is neither
+> an automatic update nor an in-place one.
 
 Most of these mice have no libratbag support, and several vendors' own Linux
 story is "there isn't one" — DPI and polling rate configuration ships as a
@@ -22,7 +26,7 @@ or from existing open-source Linux tooling (for Pulsar).
 | Vendor | Model | Status |
 |---|---|---|
 | G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (7 stages + colour), polling rate, sensor settings, sleep timer |
-| Pulsar | X2H mini | Scaffold, unverified — detects the mouse and can attempt reads, but every field is marked unverified and nothing writes yet. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| Pulsar | X2H mini | Not working yet — detection is confirmed on both cable and dongle, but no field reads back real data on either connection, and nothing writes. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -102,33 +106,51 @@ device actually connected, the same way it decides whether it is safe to
 ## Pulsar X2H mini
 
 This is the newest addition, and its profile
-(`profiles/pulsar-x2h-mini.json`) is a **scaffold, not a finished
-integration** — there is no X2H mini in this project's hands to verify
-against. It is transcribed from two existing open-source Linux tools that
-already speak to Pulsar's Nordic wireless dongle —
+(`profiles/pulsar-x2h-mini.json`) is a **scaffold that does not work yet**,
+being actively tested against a real X2H mini rather than finished. It
+started as a transcription of two existing open-source Linux tools that
+speak to Pulsar's Nordic wireless dongle —
 [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
 and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
-— rather than decoded from a capture on real hardware. Concretely, right now:
+— rather than a capture off this exact hardware, and real-hardware testing
+has since confirmed parts of that transcription and disproven others.
+Current state:
 
-- The `match` block's product ids (`f507`/`f508`) are borrowed from the
-  Nordic dongle those tools ship for "X2A Wireless / X2 V2 Mini" — the X2H
-  mini's own id was not published anywhere this search found. If your mouse
-  is not detected, run `hskctl probe --json` with it plugged in and open an
-  issue (or a PR) with what it reports.
-- Every field is marked `_needsVerification`, which `hskctl` already treats
-  as a hard stop on writing — the same gate that kept two uncertain mappings
-  out of the G-Wolves profile until they were confirmed on hardware. Reads
-  can be attempted and are harmless either way; a wrong byte offset just
-  reads back something obviously not a battery percentage. No write path is
-  open until each field is confirmed and the marker removed.
+- **Detection is confirmed and working**, on both connections. Cabled, the
+  mouse enumerates as `3554:f507` with its config endpoint on a
+  vendor-specific usage page (`0xff04`) carrying feature report id `6` —
+  `match` and `transport.reportId` reflect this now, and it was wrong
+  (guessed as report id `0`) until a real probe caught it. The RF receiver
+  enumerates separately as `3554:f509` ("Pulsar 4K Wireless Receiver"),
+  now also in `match.productIds`.
+- **Reads do not work yet, on either connection**, and not in the same way:
+  cabled, every field comes back empty (`hskctl status` reports no
+  readings at all); over the dongle, reads return data, but it's the *same*
+  value for unrelated fields (battery percent and polling rate both read
+  back identically) — a strong sign the guessed opcode/address layout isn't
+  merely off by a byte, it isn't the protocol this hardware actually speaks.
+  Concretely: on the dongle, none of its own HID interfaces expose a
+  vendor-specific usage page the way the cabled mouse's does — the one
+  interface with a feature report is otherwise a plain "Generic
+  Desktop/Mouse" collection, not something we can tell to actually be the
+  config channel or the addressing scheme it uses. This needs a real
+  capture (Wireshark/usbmon against the Pulsar Fusion Windows app, or
+  running the upstream tools' own code directly against an X2H mini) rather
+  than more guessing from a description of a different model.
+- Every field is still marked `_needsVerification`, which `hskctl` already
+  treats as a hard stop on writing — the same gate that kept two uncertain
+  mappings out of the G-Wolves profile until they were confirmed on
+  hardware. No write path is open until each field is confirmed and the
+  marker removed.
 - DPI stage values and LED colour are not mapped at all yet: the source
   material describes them as small records with their own per-byte checksum,
   which the protocol engine does not have a hook for yet.
 
-If you own an X2H mini, `hskctl probe`, `hskctl doctor`, and comparing
-`hskctl get <field>` against the Pulsar Fusion app on Windows is exactly the
-kind of verification this profile needs — see the `_followUp` list at the
-bottom of the profile's JSON for the concrete next steps.
+If you own an X2H mini, `hskctl probe --json` and `hskctl doctor --json`
+(pass `--device` with whichever node `probe` identifies) are exactly the
+verification this profile needs — see the `_followUp` list at the bottom of
+the profile's JSON for the concrete next steps, and open an issue with what
+either command reports.
 
 ## Using it
 
@@ -250,9 +272,14 @@ lives on the mouse itself and follows the mouse, not this plugin.
 
 ## Upgrading from HSK Mouse
 
-Versions before 2.0 were `keasbeexd.hskmouse` / "HSK Mouse", G-Wolves only.
-Omarchy treats a changed plugin id as a different plugin, so this is not an
-in-place update:
+Versions before 2.0 were `keasbeexd.hskmouse` / "HSK Mouse", G-Wolves only,
+and lived in a **different repository**,
+[`keasbeexd/omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) — this
+plugin is not a new version published from that repo, it is a new repo
+(`keasbeexd/mouse-ctrl`) that continues the same project under a new name.
+`omarchy-hsk` has not been touched and still installs the old, G-Wolves-only
+plugin if you never move. Since both the plugin id and the source repo
+changed, this is neither an automatic update nor an in-place one:
 
 ```bash
 omarchy plugin remove keasbeexd.hskmouse
@@ -272,6 +299,9 @@ from a previous install and offers to remove it once the new rule is in place
 id). Your G-Wolves mouse's own settings are unaffected either way: they live
 on the mouse, not in the plugin.
 
+For anything about G-Wolves, Pulsar, or multi-mouse support going forward,
+file it here rather than on `omarchy-hsk`.
+
 ## Other models
 
 The protocol for each vendor lives in `profiles/*.json` as data, interpreted
@@ -282,8 +312,8 @@ matches 14 product IDs across the HSK range, so variants other than the Pro
 `hskctl doctor` will tell you whether it's recognized, and adding a new
 product id (or a whole new profile, for a different protocol) is a data
 change, not a code change. Issues and PRs welcome — for Pulsar mice
-especially, since [Pulsar X2H mini](#pulsar-x2h-mini) above is still an
-unverified scaffold that needs real hardware to finish.
+especially, since [Pulsar X2H mini](#pulsar-x2h-mini) above doesn't work yet
+and needs a real capture to get there.
 
 ## How the protocol was recovered
 
@@ -345,7 +375,7 @@ Settings live on the mouse itself and follow it between machines.
 
 ```bash
 git clone https://github.com/keasbeexd/mouse-ctrl.git
-cd omarchy-hsk
+cd mouse-ctrl
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
 omarchy plugin enable keasbeexd.mousectl
@@ -353,9 +383,10 @@ omarchy plugin enable keasbeexd.mousectl
 
 The tree that ships to the marketplace holds only what a user needs at
 runtime. Contributor tooling — the test suite, the vendor-binary decoder,
-and the internal development notes — lives in the repo's git history
-(everything up to and including the `v1.6.0` tag) rather than in the
-installed tree, so `omarchy plugin add` does not copy 300+ KiB of
+and the internal development notes — lives in this repo's git history
+(inherited from `omarchy-hsk`, where it was stripped from the shipped tree
+by the "Slim the shipped tree to what the marketplace needs" commit) rather
+than in the installed tree, so `omarchy plugin add` does not copy 300+ KiB of
 developer-only files onto every user's machine.
 
 ```
@@ -370,9 +401,10 @@ docs/            how the G-Wolves protocol was decoded, for anyone profiling a v
 ## Contributing
 
 Bug reports and profiles for other mouse models are both welcome -- G-Wolves
-variants and other Pulsar models alike. Open an issue at the GitHub repo
-above; for Pulsar mice, a `hskctl probe --json` and `hskctl doctor` capture
-from real hardware is the single most useful thing you can attach to it.
+variants and other Pulsar models alike. Open an issue at
+[keasbeexd/mouse-ctrl](https://github.com/keasbeexd/mouse-ctrl); for Pulsar
+mice, a `hskctl probe --json` and `hskctl doctor` capture from real hardware
+is the single most useful thing you can attach to it.
 
 ## Licence
 
