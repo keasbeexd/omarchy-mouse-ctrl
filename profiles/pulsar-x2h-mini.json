@@ -40,22 +40,23 @@
     "refused until _needsVerification is removed field by field."
   ],
   "match": {
-    "_comment": "0x3554 f507/f508 is the Nordic receiver pulsar-mouse-linux ships for 'X2A Wireless / X2 V2 Mini'. X2H mini's real PID is unconfirmed -- run `hskctl probe` with the mouse's dongle plugged in and add whatever PID it reports here. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
+    "_comment": "Confirmed on real hardware 2026-09 via `hskctl probe`: the cabled mouse itself enumerates as 3554:f507 (config endpoint on interface 11, vendor usage page 0xff04, feature report id 6 -- the wired probe's top candidate, score 125, fully identified). The RF receiver is a SEPARATE USB device, 3554:f509 ('Pulsar 4K Wireless Receiver') -- its config-endpoint interface has not been captured yet (the probe run so far only showed its interface 2, generic usage page, no feature reports, so it scored too low to identify; there is very likely another interface on that same node with a vendor usage page, same as the cabled mouse's interface 11). f508 is left in from the original guess (same Nordic family, unconfirmed) and can be dropped once disproven. Do NOT add 0x3710:0x1403 (X2H Wired Medium) to this profile: that model speaks a different, 64-byte, register-addressed protocol (the one x2a.py/x2h.py implement), not the 17-byte memory-mapped one this file describes -- it needs its own profile.",
     "vendorIds": [
       "3554"
     ],
     "productIds": [
       "f507",
-      "f508"
+      "f508",
+      "f509"
     ],
     "interface": null,
     "usagePage": null,
     "requireFeatureReport": true
   },
   "transport": {
-    "_comment": "17-byte packets: byte 0 report id (assumed 0, unconfirmed), byte 1 opcode, bytes 2-15 data, byte 16 checksum. Whether the host writes these as HID Feature reports (like the G-Wolves profile) or Output reports over an interrupt endpoint was not confirmed by either source project -- 'feature' is this engine's default and matches how hskctl already opens hidraw nodes; it may need to become 'kind': 'output' once someone traces real traffic.",
+    "_comment": "17-byte packet length is still an unconfirmed guess -- pending `hskctl doctor --json` on the real device to see the actual reply size. reportId IS confirmed, though: hskctl probe found the cabled mouse's config endpoint (3554:f507, interface 11) reporting feature report id 6, not the unnumbered id 0 originally guessed here -- byte 0 of every packet template below was fixed to match. Whether the host writes these as HID Feature reports (like the G-Wolves profile) or Output reports over an interrupt endpoint is still unconfirmed by either source project; 'feature' matches what the probe found (a feature report id existing at all), so it is now a better-than-guess default rather than an arbitrary one.",
     "kind": "feature",
-    "reportId": 0,
+    "reportId": 6,
     "packetLength": 17,
     "readLength": 17,
     "settleMs": 30,
@@ -68,74 +69,74 @@
   "commands": {
     "_comment": "Two shapes here. 'battery'/'version' are their own opcodes (byte 1) with data from byte 2, matching the G-Wolves style. Everything else rides the dongle's memory-mapped get/set (opcode 0x08 read / 0x07 write, at a fixed address baked into each command's template since every hskctl field is its own fixed address, not a runtime parameter) -- byte 3:4 address (endianness unconfirmed, written big-endian here), byte 5 length, value from byte 6.",
     "battery": {
-      "get": "00 04",
+      "get": "06 04",
       "responseOffset": 6,
       "readOnly": true,
       "_note": "[6]=percent, [7]=power/charging, [8:10]=millivolts per the nordic.py summary. Only percent and charging are mapped here; battery_mv would need a u16 field of its own once confirmed."
     },
     "version": {
-      "get": "00 12",
+      "get": "06 12",
       "responseOffset": 6,
       "readOnly": true
     },
     "pollingRate": {
-      "get": "00 08 00 00 00 01",
-      "set": "00 07 00 00 00 01",
+      "get": "06 08 00 00 00 01",
+      "set": "06 07 00 00 00 01",
       "valueOffset": 6,
       "responseOffset": 6,
       "_note": "address 0x00. The raw<->Hz mapping (POLL_VAL_TO_HZ in the source) was not itself transcribed, so no `values` map is given -- see the field below."
     },
     "dpiStageCount": {
-      "get": "00 08 00 00 02 01",
-      "set": "00 07 00 00 02 01",
+      "get": "06 08 00 00 02 01",
+      "set": "06 07 00 00 02 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "activeDpiStage": {
-      "get": "00 08 00 00 04 01",
-      "set": "00 07 00 00 04 01",
+      "get": "06 08 00 00 04 01",
+      "set": "06 07 00 00 04 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "liftOff": {
-      "get": "00 08 00 00 0a 01",
-      "set": "00 07 00 00 0a 01",
+      "get": "06 08 00 00 0a 01",
+      "set": "06 07 00 00 0a 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "debounce": {
-      "get": "00 08 00 00 a9 01",
-      "set": "00 07 00 00 a9 01",
+      "get": "06 08 00 00 a9 01",
+      "set": "06 07 00 00 a9 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "motion": {
-      "get": "00 08 00 00 ab 01",
-      "set": "00 07 00 00 ab 01",
+      "get": "06 08 00 00 ab 01",
+      "set": "06 07 00 00 ab 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "angle": {
-      "get": "00 08 00 00 af 01",
-      "set": "00 07 00 00 af 01",
+      "get": "06 08 00 00 af 01",
+      "set": "06 07 00 00 af 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "ripple": {
-      "get": "00 08 00 00 b1 01",
-      "set": "00 07 00 00 b1 01",
+      "get": "06 08 00 00 b1 01",
+      "set": "06 07 00 00 b1 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "turbo": {
-      "get": "00 08 00 00 b5 01",
-      "set": "00 07 00 00 b5 01",
+      "get": "06 08 00 00 b5 01",
+      "set": "06 07 00 00 b5 01",
       "valueOffset": 6,
       "responseOffset": 6
     },
     "sleep": {
-      "get": "00 08 00 00 b7 01",
-      "set": "00 07 00 00 b7 01",
+      "get": "06 08 00 00 b7 01",
+      "set": "06 07 00 00 b7 01",
       "valueOffset": 6,
       "responseOffset": 6,
       "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
