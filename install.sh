@@ -36,10 +36,15 @@ RM="/usr/bin/rm"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 UDEV_RULE="/etc/udev/rules.d/60-mousectrl.rules"
-# Superseded by UDEV_RULE above once this plugin covered more than one vendor.
-# Still checked for and offered for removal below, so upgrading does not leave
-# a stale rule with the plugin's old name granting access nothing reads.
-OLD_UDEV_RULE="/etc/udev/rules.d/60-gwolves-hsk.rules"
+# Superseded by UDEV_RULE above, across two renames: the original G-Wolves-only
+# plugin, then a short-lived id (keasbeexd.mousectl, dropped before its first
+# release) that used this same filename pattern with the id's spelling at the
+# time. Both are checked for and offered for removal below, so upgrading never
+# leaves a stale rule with a name nothing current reads.
+OLD_UDEV_RULES=(
+  "/etc/udev/rules.d/60-gwolves-hsk.rules"
+  "/etc/udev/rules.d/60-mousectl.rules"
+)
 # One vendor id per supported mouse family. Every id here gets the same
 # uaccess rule -- broadening this list is how a new mouse's udev access is
 # added, the same way profiles/*.json is how its protocol is added.
@@ -135,23 +140,26 @@ HEADER
   done
 }
 
-migrate_old_udev_rule() {
-  [[ -e "$OLD_UDEV_RULE" ]] || return 0
-  warn "Found $OLD_UDEV_RULE from an older install of this plugin (it used to"
-  warn "be named differently). It only covers G-Wolves' vendor id, and the"
-  warn "new rule below covers it too, so it is now redundant."
-  read -r -p "Remove $OLD_UDEV_RULE (needs sudo)? [y/N] " reply
-  if [[ "$reply" =~ ^[Yy] ]]; then
-    "$SUDO" "$RM" -f "$OLD_UDEV_RULE"
-    info "Removed $OLD_UDEV_RULE"
-  else
-    warn "Left in place. It does no harm alongside the new rule -- remove it"
-    warn "yourself later with: sudo rm $OLD_UDEV_RULE"
-  fi
+migrate_old_udev_rules() {
+  local old
+  for old in "${OLD_UDEV_RULES[@]}"; do
+    [[ -e "$old" ]] || continue
+    warn "Found $old from an older install of this plugin (it used to be"
+    warn "named differently). Every vendor id it granted is also in the rule"
+    warn "below, so it is now redundant."
+    read -r -p "Remove $old (needs sudo)? [y/N] " reply
+    if [[ "$reply" =~ ^[Yy] ]]; then
+      "$SUDO" "$RM" -f "$old"
+      info "Removed $old"
+    else
+      warn "Left in place. It does no harm alongside the new rule -- remove it"
+      warn "yourself later with: sudo rm $old"
+    fi
+  done
 }
 
 install_udev() {
-  migrate_old_udev_rule
+  migrate_old_udev_rules
   info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
   echo
   udev_rule_text | sed 's/^/    /'
