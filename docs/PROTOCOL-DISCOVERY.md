@@ -71,9 +71,19 @@ Then:
 ```
 
 `tools/analyze-driver.py` is not shipped in the installed tree (it is a
-one-time helper that has no runtime role). Get it by cloning the repository
-directly, or by checking out the `v1.6.0` tag or any earlier commit — the
-script lives at `tools/analyze-driver.py` in git history.
+one-time helper that has no runtime role), so `omarchy plugin add` never
+copies it onto a user's machine. Recover it from git history:
+
+```bash
+git show 21171e4~1:tools/analyze-driver.py > analyze-driver.py
+chmod +x analyze-driver.py
+```
+
+(`21171e4` is the "Slim the shipped tree..." commit that removed it; `~1` is
+the commit right before that, the last one where it still existed.) It is
+vendor-neutral — the same script decoded G-Wolves' driver here and works the
+same way against Pulsar Fusion or any other vendor's Windows configurator;
+see its own `--help` for usage.
 
 It never runs the vendor binary — it only parses it. What it reports:
 
