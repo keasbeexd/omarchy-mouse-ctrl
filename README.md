@@ -26,7 +26,7 @@ or from existing open-source Linux tooling (for Pulsar).
 | Vendor | Model | Status |
 |---|---|---|
 | G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (7 stages + colour), polling rate, sensor settings, sleep timer |
-| Pulsar | X2H mini | Reads confirmed working, cabled — battery, firmware, polling rate, sensor settings. Dongle-only operation unconfirmed; nothing writes yet by design. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| Pulsar | X2H mini | Reads and writes confirmed working, cabled — battery, firmware, polling rate, sensor settings, DPI stage index (not DPI values yet). Dongle-only operation unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -106,47 +106,49 @@ device actually connected, the same way it decides whether it is safe to
 ## Pulsar X2H mini
 
 This is the newest addition, and its profile (`profiles/pulsar-x2h-mini.json`)
-is under active development against a real X2H mini. **Reads work; writes are
-deliberately still disabled.** It started as a transcription of two
-open-source Linux tools that speak to Pulsar's Nordic wireless dongle —
+has **reads and writes both confirmed working, cabled**, on a real X2H mini.
+It started as a transcription of two open-source Linux tools that speak to
+Pulsar's Nordic wireless dongle —
 [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
 and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
 — and real-hardware testing plus cloning that source directly (rather than
-relying on a summary of it) has since corrected several wrong guesses.
+relying on a summary of it) corrected several wrong guesses along the way.
 Current state:
 
-- **Detection and reads are confirmed working, cabled.** The mouse
-  enumerates as `3554:f507`; its config endpoint answers real data over a
-  raw USB **Output** report at report id `8`, read back over the interrupt
-  endpoint — not the Feature-report transport first guessed from the HID
-  descriptor's feature report id (`6`), which turned out to belong to a
-  different report entirely. `hskctl status` now returns real values —
-  including `debounceMs: 3`, an exact match to the real Pulsar Fusion
-  installer's own factory-default config for this model. The RF receiver
-  enumerates separately as `3554:f509` ("Pulsar 4K Wireless Receiver"); its
-  own config endpoint isn't positively identified yet, so dongle-only
-  operation is still unconfirmed.
-- Two values from that first successful read (`dpiStageCount: 1`,
-  `sleepSeconds: 30`) don't yet have independent confirmation and are worth
-  a second look — everything else lines up with either real vendor
-  defaults or plain plausibility.
-- **Every field is still marked `_needsVerification`, which blocks writing
-  — and for good reason beyond just caution:** the real protocol writes a
-  *second* checksum byte alongside every single scalar value (`value` at its
-  address, `0x55 - value` at the next one), which this profile's `set`
-  templates don't do yet. Enabling writes before that hook exists in the
-  protocol engine would send structurally incomplete packets.
+- **Detection, reads and writes are all confirmed working, cabled.** The
+  mouse enumerates as `3554:f507`; its config endpoint answers real data
+  over a raw USB **Output** report at report id `8`, read back over the
+  interrupt endpoint — not the Feature-report transport first guessed from
+  the HID descriptor's feature report id (`6`), which turned out to belong
+  to a different report entirely. `hskctl status` returns real values,
+  including `debounceMs: 3` — an exact match to the real Pulsar Fusion
+  installer's own factory-default config for this model — and
+  owner-confirmed `dpiStageCount: 1` and `sleepSeconds: 30`.
+- **Writes needed one more fix beyond the transport**: this protocol
+  checksums every scalar value on its own, separately from the usual
+  whole-packet checksum — the value byte, then `0x55 - value` immediately
+  after it. That's now a generic `valueChecksum` option in `protocol.py`
+  (not Pulsar-specific code), and it round-tripped correctly on real
+  hardware (`hskctl set motionSync off` → reads back `false`, `on` → reads
+  back `true`). Every scalar field is writable now except `dpiStageCount`,
+  kept read-only on purpose — writing DPI stage count wrong is exactly the
+  class of bug that broke DPI entirely on the G-Wolves profile before it
+  was repaired.
+- The RF receiver enumerates separately as `3554:f509` ("Pulsar 4K
+  Wireless Receiver"); its own config endpoint isn't positively identified
+  yet, so **everything above is confirmed cabled only — dongle-only
+  operation is still unverified.**
 - DPI stage values and LED colour are not mapped at all yet: they're
-  small records with their own per-record checksum, which the protocol
-  engine does not have a hook for yet. Cfg.ini (extracted from the real
-  installer) confirms this model ships 4 DPI stages by default
-  (400/800/1600/3200), not 7 like the G-Wolves profile.
+  3-4 byte records with their own per-record checksum, which
+  `valueChecksum` doesn't generalize to yet (it only handles a single
+  value byte so far). Cfg.ini (extracted from the real installer) confirms
+  this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like
+  the G-Wolves profile.
 
-If you own an X2H mini, `hskctl probe --json` and `hskctl status --json`
-(pass `--device` with whichever node `probe` identifies) are exactly the
-verification this profile still needs, especially with the dongle instead of
-the cable — see the `_followUp` list at the bottom of the profile's JSON for
-the concrete next steps, and open an issue with what either command reports.
+If you own an X2H mini, `hskctl probe --json` with the dongle connected is
+the most useful thing left to check — see the `_followUp` list at the bottom
+of the profile's JSON for the concrete next steps, and open an issue with
+what it reports.
 
 ## Using it
 

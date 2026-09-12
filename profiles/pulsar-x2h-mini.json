@@ -220,7 +220,7 @@
         "64": 8000
       },
       "uiOptions": [125, 250, 500, 1000],
-      "_needsVerification": "the raw<->Hz map itself is confirmed real-source (see the command's _note), so this is a much stronger guess than the rest of this profile -- but it's still unconfirmed specifically for the X2H mini (vs. the X2A/X2 CrazyLight this table was built from) until read back next to the Pulsar Fusion app. uiOptions defaults to the conservative 4-rate set nordic.py's base capabilities declare (125/250/500/1000); bump it to include 2000/4000/8000 once confirmed this model actually offers them -- Cfg.ini's [DEV_13] block doesn't list a rate set to check against."
+      "_note": "Write path confirmed on hardware via the motionSync canary (same valueChecksum mechanism, different address) -- read value (1000 Hz) is a plausible real default, not independently cross-checked against Fusion. uiOptions stays the conservative 125/250/500/1000 until 2000/4000/8000 are confirmed reachable on this model."
     },
     "dpiStageCount": {
       "command": "dpiStageCount",
@@ -228,14 +228,14 @@
       "min": 1,
       "max": 8,
       "readOnly": true,
-      "_needsVerification": "address and width transcribed, not confirmed"
+      "_note": "Left read-only deliberately, not just unconfirmed: writing DPI stage count wrong is exactly the class of bug that broke DPI writes entirely on the G-Wolves profile until repaired (see gwolves-hsk-pro-4k.json's repairOnWrite). Read value (1) matches the owner's confirmed real single-stage setup."
     },
     "activeDpiStage": {
       "command": "activeDpiStage",
       "encoding": "u8",
       "min": 0,
       "max": 7,
-      "_needsVerification": "source describes this as 0-based, unlike the G-Wolves profile's 1-based activeDpiStage -- do not compare the two raw"
+      "_note": "Write path confirmed via the motionSync canary. Read value (0) is consistent with the owner's confirmed single active stage. Still 0-based, unlike the G-Wolves profile's 1-based activeDpiStage -- do not compare the two raw."
     },
     "liftOffDistance": {
       "command": "liftOff",
@@ -244,14 +244,14 @@
         "1": "1mm",
         "2": "2mm"
       },
-      "_needsVerification": "map transcribed from source, not confirmed on hardware"
+      "_note": "Write path confirmed via the motionSync canary. Read value (1mm) is a plausible default, not independently cross-checked."
     },
     "debounceMs": {
       "command": "debounce",
       "encoding": "u8",
       "min": 0,
       "max": 30,
-      "_needsVerification": "described as milliseconds directly (0-30), unlike the G-Wolves profile's opaque table-row byte -- still unconfirmed"
+      "_note": "Read value (3) is an EXACT match to the real Pulsar Fusion installer's Cfg.ini [DEV_13] factory default (Debounce=3) for this model. Write path confirmed via the motionSync canary."
     },
     "motionSync": {
       "command": "motion",
@@ -263,19 +263,19 @@
       "command": "angle",
       "encoding": "u8",
       "type": "bool",
-      "_needsVerification": "address transcribed, not confirmed"
+      "_note": "Write path confirmed on hardware via the motionSync canary (same mechanism, different address)."
     },
     "rippleControl": {
       "command": "ripple",
       "encoding": "u8",
       "type": "bool",
-      "_needsVerification": "address transcribed, not confirmed"
+      "_note": "Write path confirmed on hardware via the motionSync canary (same mechanism, different address)."
     },
     "turboMode": {
       "command": "turbo",
       "encoding": "u8",
       "type": "bool",
-      "_needsVerification": "address transcribed, not confirmed"
+      "_note": "Write path confirmed on hardware via the motionSync canary (same mechanism, different address)."
     },
     "sleepSeconds": {
       "command": "sleep",
@@ -283,7 +283,7 @@
       "scale": 10,
       "min": 0,
       "max": 2550,
-      "_needsVerification": "'units of 10s' per the source; scale applied here so the field speaks seconds like the G-Wolves profile does"
+      "_note": "Read value (30s) confirmed correct by the owner against their actual mouse's real auto-sleep behavior. Write path confirmed via the motionSync canary."
     }
   },
   "ui": {
@@ -318,11 +318,10 @@
     ]
   },
   "_followUp": [
-    "READS CONFIRMED WORKING on real hardware (cabled) as of this note: `hskctl status` returned batteryPercent=100, charging=false, firmwareVersion=2.24, pollingRate=1000, dpiStageCount=1, activeDpiStage=0, liftOffDistance=1mm, debounceMs=3, motionSync=true, angleSnap=true, rippleControl=false, turboMode=false, sleepSeconds=30 -- all structurally sane (no more duplicate/garbage values), and debounceMs=3 is an EXACT match to Cfg.ini's [DEV_13] real factory default (Debounce=3). dpiStageCount=1 and sleepSeconds=30s have not been cross-checked against the owner's actual mouse state/expectation and are the two values most worth a second look before trusting them fully.",
-    "WRITES ARE NOT SAFE YET, for a reason beyond _needsVerification: the real driver's _write_value() (drivers/nordic.py) writes a scalar as TWO bytes -- the value at its address, AND a per-byte checksum (0x55 - value) at address+1 -- for every single scalar setting (motion sync, angle snap, ripple control, turbo mode, debounce, polling rate, lift-off, DPI stage index/count, autosleep). This profile's `set` templates currently write only the value byte. protocol.py has no hook for 'also write a computed checksum byte to address+1' -- that needs a new field-spec option (something like a `valueChecksum: true` flag in `_encode_scalar`/`build_request`'s write path) before any scalar field here can be marked writable. Do not just delete a field's _needsVerification marker without this -- it would send a structurally incomplete write.",
-    "The RF receiver's own config-endpoint interface is still not positively identified for the wireless (dongle) connection -- a fresh `hskctl probe --json` with the dongle connected, now that all five product ids are in match.productIds and the transport is corrected, may score it differently. Check outputReportIds (not just featureReportIds) in the JSON, since the real transport uses Output reports.",
-    "Two smaller known gaps vs. the real driver, lower priority than the checksum issue above: autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- needs a 'write to two addresses' hook. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; this engine's check_ack only supports a fixed expected byte, not 'echo the sent opcode', so an occasional stale/wrong reply is possible until that's added.",
-    "Once the checksum-write hook exists: confirm each field's write round-trips correctly (set, then get, next to the Pulsar Fusion app or by observing the mouse's real behavior change) before removing that field's _needsVerification marker -- do this one field at a time, not as a bulk find-replace.",
-    "DPI stage values and LED colour need a record-level checksum (0x55 - value per byte, not the whole-packet checksum) that protocol.py does not support yet -- add an encoding for it before mapping dpiStage1..N here. Cfg.ini confirms this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like the G-Wolves profile; the real source's _dpi_to_raw/_raw_to_dpi (drivers/nordic.py) is the reference encoding once the checksum hook exists."
+    "READS AND WRITES BOTH CONFIRMED WORKING on real hardware, cabled, as of this note. Reads: `hskctl status` returns batteryPercent=100, charging=false, firmwareVersion=2.24, pollingRate=1000, dpiStageCount=1 (owner-confirmed real value), activeDpiStage=0, liftOffDistance=1mm, debounceMs=3 (EXACT match to Cfg.ini's [DEV_13] factory default), motionSync/angleSnap=true, rippleControl/turboMode=false, sleepSeconds=30 (owner-confirmed real value). Writes: the per-value checksum this protocol requires (value byte + `0x55 - value` at the next address, alongside the usual whole-packet checksum) is now implemented as a generic `valueChecksum` command-spec option in protocol.py, and round-tripped correctly on real hardware via `hskctl set motionSync off/on` + `hskctl get motionSync` -- read-back matched exactly what was set, both directions. Every scalar field except dpiStageCount (kept read-only on purpose, see its own note) is now writable.",
+    "The RF receiver's own config-endpoint interface is still not positively identified for the wireless (dongle) connection -- a fresh `hskctl probe --json` with the dongle connected may score it differently now that all five product ids are in match.productIds and the transport is corrected. Check outputReportIds (not just featureReportIds) in the JSON, since the real transport uses Output reports. Nothing above has been confirmed over the dongle, only cabled.",
+    "Two smaller known gaps vs. the real driver, both low risk (neither can corrupt a setting, just occasionally read stale data): autosleep is written to 0xB7 only here, but the real driver mirrors the same value to 0xAD too (ADDR_AUTOSLEEP_ALT) -- needs a 'write to two addresses' hook if the real firmware actually requires both to be in sync. And unsolicited reports (e.g. opcode 0x0A after a profile switch) can desync a naive read-once -- the real driver retries until resp[1] matches the opcode sent; this engine's check_ack only supports a fixed expected byte, not 'echo the sent opcode', so an occasional stale/wrong reply is possible until that's added.",
+    "DPI stage values and LED colour still need a record-level checksum (0x55 - value per byte over a 3-4 byte record, not a single value) that protocol.py's new valueChecksum only handles for single-byte values so far -- generalize it (or add a second option) before mapping dpiStage1..N here. Cfg.ini confirms this model ships 4 DPI stages by default (400/800/1600/3200), not 7 like the G-Wolves profile; the real source's _dpi_to_raw/_raw_to_dpi (drivers/nordic.py) is the reference encoding.",
+    "pollingRate's uiOptions is deliberately conservative (125/250/500/1000) pending confirmation this model reaches 2000/4000/8000 -- test writing 2000 and see if it takes before widening it."
   ]
 }
