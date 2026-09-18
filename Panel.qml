@@ -200,10 +200,13 @@ Panel {
     return -1
   }
 
+  // Opening the panel used to force a refresh too, on top of startup, the
+  // link watcher and the explicit triggers below (this button, middle-click,
+  // 'r'). Read/write is otherwise more than enough to keep `values` correct,
+  // so opening the panel just shows whatever it already knows.
   onOpenedChanged: if (opened) {
     cursorActive = false
     if (panelFlick) panelFlick.contentY = 0
-    hsk.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
