@@ -7,7 +7,7 @@ import "Model.js" as Model
 // Drives hskctl. Nothing but this plugin can change a setting on the mouse,
 // so there is nothing to gain by re-reading them on a timer: a full
 // `hskctl --json status` only ever runs once at startup, on an explicit
-// refresh (panel open, the refresh button, middle-click, 'r'), and whenever
+// refresh (the refresh button, middle-click, 'r'), and whenever
 // the cable/dongle is plugged or unplugged. A write applies its own readback
 // (`hskctl --json set <field> <value>`) directly rather than triggering a
 // separate re-read. Battery percent is the one thing that drifts on its own,
@@ -284,7 +284,7 @@ Item {
   }
 
   // The one and only unconditional refresh: everything after this is either
-  // an explicit user action (panel open, refresh button, middle-click, 'r')
+  // an explicit user action (refresh button, middle-click, 'r')
   // or triggered by linkWatchProcess below. A dongle that has not finished
   // enumerating yet at login used to be covered by polling every few seconds
   // until the first read landed -- now it is covered by the same event the
