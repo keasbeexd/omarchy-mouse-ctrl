@@ -198,8 +198,7 @@ hover it for the firmware version and which hidraw node is in use. `hskctl
 --version` reports the same number.
 
 **Keyboard:** `↑`/`↓` between rows, `←`/`→` to adjust the row under the cursor
-(DPI in 50-unit steps), `c` to cycle the DPI colour, `m` for motion sync, `r`
-to refresh.
+(DPI in 50-unit steps), `r` to refresh.
 
 The panel only renders controls for settings that can actually be written, so it
 never offers an action that comes back as an error.

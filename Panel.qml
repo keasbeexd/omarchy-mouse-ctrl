@@ -155,14 +155,6 @@ Panel {
     }
   }
 
-  // `c` cycles the DPI stage's colour, when the cursor is on it.
-  function cycleCurrentColor() {
-    var row = currentRow()
-    if (!row || row.kind !== "dpiStage") return
-    if (!hsk.canWrite("dpiStage1Color")) return
-    hsk.set("dpiStage1Color", Model.nextStageColor(row.color))
-  }
-
   function scrollItemIntoView(item) {
     if (!panelFlick || !item) return
     Qt.callLater(function() {
@@ -341,9 +333,7 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        if (t === "c" || t === "C") root.cycleCurrentColor()
-        else if (t === "r" || t === "R") hsk.refresh()
-        else if (t === "m" || t === "M") hsk.toggle("motionSync")
+        if (t === "r" || t === "R") hsk.refresh()
       }
 
       Flickable {
@@ -664,7 +654,22 @@ Panel {
           Item {
             visible: hsk.pluginVersion !== ""
             width: parent.width
-            implicitHeight: versionLabel.implicitHeight + Style.space(6)
+            implicitHeight: Math.max(hotkeyLabel.implicitHeight, versionLabel.implicitHeight) + Style.space(6)
+
+            // A standing reminder of the keys README documents -- arrows to
+            // move the cursor and adjust the row under it, 'r' to refresh
+            // (silent-by-design otherwise, see refresh()'s callers). The
+            // panel is the one place someone would actually go looking.
+            Text {
+              id: hotkeyLabel
+              textFormat: Text.PlainText
+              anchors.left: parent.left
+              anchors.bottom: parent.bottom
+              text: "↑↓←→ navigate  ·  r refresh"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
 
             Text {
               id: versionLabel
