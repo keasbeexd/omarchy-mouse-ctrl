@@ -102,6 +102,38 @@ function parseBattery(raw) {
   }
 }
 
+// hskctl's `set` payload: {ok, field, requested, value, link, error}. `value`
+// is the mouse's own readback of what it just wrote -- the authoritative
+// number to show, no separate re-read needed.
+function parseSet(raw) {
+  var text = String(raw || "").trim()
+  if (text === "") return { ok: false, field: "", value: undefined, error: "hskctl produced no output" }
+  try {
+    var parsed = JSON.parse(text)
+    return {
+      ok: parsed.ok === true,
+      field: String(parsed.field || ""),
+      value: parsed.value,
+      error: String(parsed.error || "")
+    }
+  } catch (e) {
+    return { ok: false, field: "", value: undefined, error: "could not parse hskctl output: " + text.split("\n")[0] }
+  }
+}
+
+// hskctl's `watch-link` payload: one line per event, {ok, event, connected}.
+function parseLinkEvent(raw) {
+  var text = String(raw || "").trim()
+  if (text === "") return null
+  try {
+    var parsed = JSON.parse(text)
+    if (parsed.ok !== true) return null
+    return { event: String(parsed.event || ""), connected: parsed.connected === true }
+  } catch (e) {
+    return null
+  }
+}
+
 function has(settings, key) {
   return settings && settings[key] !== undefined && settings[key] !== null
 }

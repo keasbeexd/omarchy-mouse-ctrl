@@ -4,9 +4,16 @@ import Quickshell.Io
 import qs.Commons
 import "Model.js" as Model
 
-// Drives hskctl. Every read is `hskctl --json status`; every write is
-// `hskctl --json set <field> <value>` followed by a re-read, so the panel
-// always shows what the mouse actually reports rather than what we asked for.
+// Drives hskctl. Nothing but this plugin can change a setting on the mouse,
+// so there is nothing to gain by re-reading them on a timer: a full
+// `hskctl --json status` only ever runs once at startup, on an explicit
+// refresh (panel open, the refresh button, middle-click, 'r'), and whenever
+// the cable/dongle is plugged or unplugged. A write applies its own readback
+// (`hskctl --json set <field> <value>`) directly rather than triggering a
+// separate re-read. Battery percent is the one thing that drifts on its own,
+// so it still gets a slow timer; plug/unplug is covered instantly by a
+// long-lived `hskctl --json watch-link`, which watches for the hidraw node
+// appearing/disappearing and never talks to the mouse itself.
 Item {
   id: root
 
@@ -35,18 +42,11 @@ Item {
   // waiting a full command round trip. Cleared once the re-read lands.
   property var pending: ({})
 
-  // A full status refresh re-reads every field the profile knows -- DPI
-  // stages, polling rate, every sensor toggle -- one exchange per distinct
-  // command. Nothing but this plugin writes those, so there is little to
-  // catch by polling them often; the panel also forces one on open. Battery
-  // and charging are covered separately and far more often by batteryPollSec
-  // below, which is the one thing that changes on its own.
-  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 10, 3600)
-  // Battery percent and charging share one HID exchange on every shipped
-  // profile (`hskctl battery`), so polling just those is cheap enough to run
-  // every few seconds without the "Writing to the mouse..." banner: this poll
-  // never sets `busy`, only merges batteryPercent/charging into `values`.
-  readonly property int batteryPollSec: intSetting("batteryPollSec", 3, 2, 60)
+  // Battery percent is the only reading that changes on its own (charging is
+  // covered instantly by the link watcher instead, see linkWatchProcess), so
+  // this can run slowly -- default every 5 minutes. This poll never sets
+  // `busy`, only merges batteryPercent into `values`.
+  readonly property int batteryPollSec: intSetting("batteryPollSec", 300, 30, 3600)
   readonly property int lowBatteryPercent: intSetting("lowBatteryPercent", 15, 0, 50)
   readonly property bool showBatteryLabel: setting("showBatteryLabel", true) === true
   // Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, and the CLI
@@ -283,28 +283,19 @@ Item {
     set(field, value(field) ? "off" : "on")
   }
 
-  // While the mouse has never been read successfully -- at shell startup,
-  // before its dongle has finished enumerating, or after any failed read --
-  // poll every few seconds instead of waiting the full interval. Without
-  // this, one read losing a race with device enumeration at login left the
-  // bar showing a stale battery reading for a full refreshIntervalSec (60s
-  // by default), and the only way to see the real number sooner was to open
-  // the panel, which calls refresh() itself on open. `ready` flips back to
-  // true a few seconds later on its own now, with nothing to click.
-  readonly property int fastRetryMs: 5000
-  Timer {
-    id: refreshTimer
-    interval: (root.ready ? root.refreshIntervalSec * 1000 : root.fastRetryMs)
-    repeat: true
-    running: true
-    triggeredOnStart: true
-    onTriggered: root.refresh()
+  // The one and only unconditional refresh: everything after this is either
+  // an explicit user action (panel open, refresh button, middle-click, 'r')
+  // or triggered by linkWatchProcess below. A dongle that has not finished
+  // enumerating yet at login used to be covered by polling every few seconds
+  // until the first read landed -- now it is covered by the same event the
+  // link watcher exists for: enumeration finishing is exactly a hidraw node
+  // appearing (or its permissions settling, IN_ATTRIB), which the watcher
+  // sees and turns into a "changed" event that calls refresh() itself.
+  Component.onCompleted: {
+    root.refresh()
+    root._startLinkWatch()
   }
 
-  // The fast path that actually answers "did the cable come out": only once
-  // the mouse has been read successfully at least once -- before that,
-  // refreshTimer's fastRetryMs loop already covers getting to `ready` quickly,
-  // and there is no battery command to poll yet.
   Timer {
     id: batteryTimer
     interval: root.batteryPollSec * 1000
@@ -327,11 +318,15 @@ Item {
     }
   }
 
+  // linkWatchProcess is meant to run for as long as the panel exists; if it
+  // ever exits (killed, hskctl crashed) restart it once after a short delay
+  // rather than silently leaving plug/unplug undetected for the rest of the
+  // session.
   Timer {
-    id: settleTimer
-    interval: 250
+    id: linkWatchRestartTimer
+    interval: 2000
     repeat: false
-    onTriggered: root.refresh()
+    onTriggered: if (!root._destroyed) root._startLinkWatch()
   }
 
   Timer {
@@ -510,18 +505,33 @@ Item {
           root._run(root._queue.shift())
         } else {
           drainTimer.stop()
-          settleTimer.restart()
         }
         return
       }
-      var parsed = Model.parseStatus(root._setStdout)
+      // `set`'s own readback is the authoritative value -- the mouse just
+      // confirmed it, so there is nothing a separate re-read would add.
+      var parsed = Model.parseSet(root._setStdout)
+      var field = root._setField
       if (exitCode !== 0 || !parsed.ok) {
-        root.pending = ({})
         root.actionStatus = parsed.error !== ""
           ? parsed.error
-          : ("Could not set " + root._setField)
+          : ("Could not set " + field)
         actionStatusTimer.restart()
+      } else if (parsed.field !== "") {
+        var merged = {}
+        for (var key in root.values) merged[key] = root.values[key]
+        merged[parsed.field] = parsed.value
+        root.values = merged
       }
+      // Either way the optimistic overlay for this field is resolved now --
+      // on success it matches what was just merged into `values`, and on
+      // failure showing the stale guess is worse than showing the truth.
+      var remaining = {}
+      for (var pendingKey in root.pending) {
+        if (pendingKey !== field) remaining[pendingKey] = root.pending[pendingKey]
+      }
+      root.pending = remaining
+      root.changed()
       root._setField = ""
 
       if (root._queue.length > 0) {
@@ -529,7 +539,6 @@ Item {
         root._run(next)
       } else {
         drainTimer.stop()
-        settleTimer.restart()
       }
     }
   }
@@ -562,9 +571,46 @@ Item {
     }
   }
 
+  // Long-lived, unlike every other Process here: started once and left
+  // running for the life of the panel, so the panel learns about a
+  // plug/unplug the instant hskctl's inotify watch sees it rather than
+  // waiting on any timer. Never touches the mouse itself -- see cmd_watch_link.
+  Process {
+    id: linkWatchProcess
+    running: false
+    command: []
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: function(line) {
+        if (!Model.parseLinkEvent(line)) return
+        // "initial" (cold start) and "changed" (a real plug/unplug) both
+        // mean the same thing here: go find out what the connection and
+        // settings actually are now. This also covers the one race the old
+        // fast-retry timer existed for -- a dongle still enumerating at
+        // login is exactly a hidraw node appearing a moment later, which is
+        // what this watcher is watching for.
+        root.refresh()
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (root._destroyed) return
+      linkWatchRestartTimer.restart()
+    }
+  }
+
+  property bool _destroyed: false
+
+  function _startLinkWatch() {
+    if (root._destroyed) return
+    linkWatchProcess.command = [hskctl, "--json", "watch-link"]
+    linkWatchProcess.running = true
+  }
+
   Component.onDestruction: {
     // Make sure any in-flight hskctl gets torn down when the panel is unloaded,
     // rather than surviving its own supervisor.
+    root._destroyed = true
+    if (linkWatchProcess.running) linkWatchProcess.signal(15)
     if (statusProcess.running) statusProcess.signal(15)
     if (setProcess.running) setProcess.signal(15)
     if (batteryProcess.running) batteryProcess.signal(15)

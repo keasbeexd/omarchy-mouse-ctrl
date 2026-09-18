@@ -250,6 +250,66 @@ def cmd_battery(args) -> int:
     )
 
 
+# --- watch-link ---------------------------------------------------------
+
+
+def cmd_watch_link(args) -> int:
+    """Print one JSON line whenever the mouse's cable or dongle is plugged
+    or unplugged, for as long as this process runs.
+
+    Deliberately never talks to the mouse: a hidraw node for this profile's
+    vendor/product IDs appearing or disappearing under /dev is the kernel's
+    own signal that something changed, and watching for that with inotify
+    costs nothing on the wire. A caller that wants to know *what* changed
+    (battery percent, charging) still has to ask the mouse itself -- this
+    just tells it when it is worth asking right now instead of on a timer.
+    """
+    from . import hidraw
+
+    try:
+        profile = detect_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    def snapshot() -> set[str]:
+        return {c.info.path for c in rank_candidates(profile) if c.identified}
+
+    def emit(event: str, present: set[str]) -> None:
+        line = json.dumps({"ok": True, "event": event, "connected": bool(present)})
+        print(line, flush=True)
+
+    last = snapshot()
+    emit("initial", last)
+
+    try:
+        fd = hidraw.inotify_init()
+    except OSError as exc:
+        return _fail(f"could not start inotify: {exc}", args.json)
+
+    try:
+        hidraw.inotify_add_watch(
+            fd, "/dev", hidraw.IN_CREATE | hidraw.IN_DELETE | hidraw.IN_ATTRIB
+        )
+        while True:
+            names = hidraw.read_inotify_events(fd)
+            if not any(name.startswith("hidraw") for name in names):
+                continue
+            # udev still has to run its rules (permissions, symlinks) after
+            # the node appears; without this a snapshot taken immediately on
+            # IN_CREATE can catch the node before it is readable yet.
+            import time as _time
+
+            _time.sleep(0.15)
+            current = snapshot()
+            if current != last:
+                last = current
+                emit("changed", current)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        os.close(fd)
+
+
 # --- get / set --------------------------------------------------------------
 
 
@@ -1301,6 +1361,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "battery", help="read only battery percent and charging (one exchange)"
     ).set_defaults(func=cmd_battery)
+    sub.add_parser(
+        "watch-link",
+        help="print a line whenever the cable/dongle is plugged or unplugged "
+             "(runs until killed; never talks to the mouse)",
+    ).set_defaults(func=cmd_watch_link)
     sub.add_parser("fields", help="show which settings are mapped").set_defaults(
         func=cmd_fields
     )

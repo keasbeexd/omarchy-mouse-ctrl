@@ -336,3 +336,54 @@ class HidrawDevice:
         if not ready:
             return None
         return os.read(self.fd, length)
+
+
+# --- inotify (dependency-free hotplug watching) ------------------------------
+#
+# A hidraw node appearing or disappearing under /dev is the kernel's own
+# signal that the mouse's cable or dongle was plugged or unplugged -- watching
+# for it costs nothing on the wire, unlike asking the mouse itself. There is
+# no `inotify` in the standard library, so this binds the three syscalls it
+# needs directly via ctypes, the same tier as the ioctl calls above.
+
+_libc = ctypes.CDLL("libc.so.6", use_errno=True)
+
+IN_CREATE = 0x00000100
+IN_DELETE = 0x00000200
+IN_ATTRIB = 0x00000004
+
+_INOTIFY_EVENT_FMT = "iIII"
+_INOTIFY_EVENT_SIZE = struct.calcsize(_INOTIFY_EVENT_FMT)
+
+
+def inotify_init() -> int:
+    fd = _libc.inotify_init()
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "inotify_init failed")
+    return fd
+
+
+def inotify_add_watch(fd: int, path: str, mask: int) -> int:
+    wd = _libc.inotify_add_watch(fd, path.encode(), mask)
+    if wd < 0:
+        raise OSError(ctypes.get_errno(), f"inotify_add_watch failed for {path}")
+    return wd
+
+
+def read_inotify_events(fd: int) -> list[str]:
+    """One read's worth of events, as the plain filenames they name.
+
+    Good enough for a watcher that only cares "something under this
+    directory changed, go look again" -- the wd/mask/cookie fields carry
+    nothing this caller needs.
+    """
+    buf = os.read(fd, 4096)
+    names = []
+    pos = 0
+    while pos + _INOTIFY_EVENT_SIZE <= len(buf):
+        _wd, _mask, _cookie, name_len = struct.unpack_from(_INOTIFY_EVENT_FMT, buf, pos)
+        pos += _INOTIFY_EVENT_SIZE
+        raw_name = buf[pos:pos + name_len]
+        pos += name_len
+        names.append(raw_name.split(b"\0", 1)[0].decode(errors="replace"))
+    return names

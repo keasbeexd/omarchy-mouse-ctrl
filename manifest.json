@@ -19,30 +19,20 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "refreshIntervalSec": 30,
-      "batteryPollSec": 3,
+      "batteryPollSec": 300,
       "lowBatteryPercent": 15,
       "showBatteryLabel": true,
       "hskctlPath": ""
     },
     "schema": [
       {
-        "key": "refreshIntervalSec",
-        "type": "integer",
-        "label": "Full refresh interval (seconds)",
-        "min": 10,
-        "max": 3600,
-        "step": 5,
-        "defaultValue": 30
-      },
-      {
         "key": "batteryPollSec",
         "type": "integer",
-        "label": "Battery/charging poll interval (seconds)",
-        "min": 2,
-        "max": 60,
-        "step": 1,
-        "defaultValue": 3
+        "label": "Battery percent poll interval (seconds) -- plug/unplug updates instantly regardless",
+        "min": 30,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 300
       },
       {
         "key": "lowBatteryPercent",
