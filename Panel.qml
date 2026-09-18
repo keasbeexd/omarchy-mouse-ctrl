@@ -664,7 +664,22 @@ Panel {
           Item {
             visible: hsk.pluginVersion !== ""
             width: parent.width
-            implicitHeight: versionLabel.implicitHeight + Style.space(6)
+            implicitHeight: Math.max(hotkeyLabel.implicitHeight, versionLabel.implicitHeight) + Style.space(6)
+
+            // A standing reminder of the keys README documents ('r' to
+            // refresh, 'c'/'m' to act on the row under the cursor) -- the
+            // panel is the one place someone would actually go looking for
+            // this while `r` is silent-by-design (see refresh()'s callers).
+            Text {
+              id: hotkeyLabel
+              textFormat: Text.PlainText
+              anchors.left: parent.left
+              anchors.bottom: parent.bottom
+              text: "r refresh  ·  c colour  ·  m motion sync"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
 
             Text {
               id: versionLabel
