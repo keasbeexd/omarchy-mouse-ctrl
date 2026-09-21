@@ -275,11 +275,12 @@ icon alone rather than a stale or invented figure — `hskctl status` will say
 why the read is failing — and in a vertical bar, which is one icon wide and has
 nowhere to put it.
 
-While the mouse has not been read successfully yet — right after login,
-before its dongle has finished enumerating — the bar retries every few
-seconds rather than waiting a full `refreshIntervalSec`, so a slow-to-wake
-dongle catches up on its own within a handful of seconds instead of showing a
-stale reading until you open the panel (which also forces an immediate
+While the mouse has not been read successfully — right after login before its
+dongle has finished enumerating, or right after the computer wakes from
+suspend before a wireless dongle's RF link to the mouse has reconnected — the
+bar retries every few seconds rather than waiting on the next scheduled poll,
+so it catches up on its own within a handful of seconds instead of showing a
+stale reading indefinitely (opening the panel also forces an immediate
 refresh, if you want one sooner).
 
 ## Removing

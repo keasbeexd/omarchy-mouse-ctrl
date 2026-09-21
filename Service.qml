@@ -286,14 +286,33 @@ Item {
   // The one and only unconditional refresh: everything after this is either
   // an explicit user action (refresh button, middle-click, 'r')
   // or triggered by linkWatchProcess below. A dongle that has not finished
-  // enumerating yet at login used to be covered by polling every few seconds
-  // until the first read landed -- now it is covered by the same event the
-  // link watcher exists for: enumeration finishing is exactly a hidraw node
+  // enumerating yet at login is usually covered by the same event the link
+  // watcher exists for: enumeration finishing is exactly a hidraw node
   // appearing (or its permissions settling, IN_ATTRIB), which the watcher
   // sees and turns into a "changed" event that calls refresh() itself.
   Component.onCompleted: {
     root.refresh()
     root._startLinkWatch()
+  }
+
+  // Covers the case the link watcher can't: a wireless dongle's hidraw node
+  // never disappears across a system suspend/resume (only the RF link to the
+  // mouse does), so no inotify event fires when the machine wakes, yet the
+  // very first refresh after resume can still land before that RF link is
+  // back up and come back as `error`. Without this, `pollBattery`/`batteryTimer`
+  // are gated on `state === "ready"` (see below), so a single failed refresh
+  // there means nothing else ever asks the mouse again until the panel is
+  // opened or refreshed by hand. Retrying every few seconds while not ready
+  // costs nothing when a mouse is actually there to answer, and matches the
+  // pre-inotify behaviour this plugin used to have for the login-enumeration
+  // case too.
+  readonly property int _retryMs: 5000
+  Timer {
+    id: retryTimer
+    interval: root._retryMs
+    repeat: true
+    running: !root.suspended && root.state !== "ready" && root.state !== "loading"
+    onTriggered: root.refresh()
   }
 
   Timer {
