@@ -71,9 +71,9 @@ On the G-Wolves HSK Pro 4K, confirmed on real hardware:
 | | |
 |---|---|
 | **Battery** | percentage in the bar, low-battery warning, charging state |
-| **DPI** | seven stages, each with its own value and LED colour |
+| **DPI** | stage 1's value and LED colour (the firmware has seven stages; see [Pulsar X2H mini](#pulsar-x2h-mini) for why only one is exposed) |
 | **Polling rate** | 250, 500, 1000, 2000 and 4000 Hz |
-| **Sensor** | motion sync, angle snapping, lift-off distance |
+| **Sensor** | motion sync, angle snapping, lift-off distance (1 or 2 mm) |
 | **Firmware** | version and link (dongle or cable) |
 
 A different mouse shows only the rows above that its own profile actually
@@ -227,6 +227,9 @@ Omarchy IPC works too:
 ```bash
 omarchy-shell keasbeexd.mousectrl setDpi 1600
 omarchy-shell keasbeexd.mousectrl setPollingRate 1000
+omarchy-shell keasbeexd.mousectrl refresh
+omarchy-shell keasbeexd.mousectrl status      # the panel's one-line summary
+omarchy-shell keasbeexd.mousectrl toggle      # also open, close
 ```
 
 ## Settings
@@ -246,9 +249,11 @@ it is read once at startup, on a manual refresh, and back from each write. The
 battery poll is also silent: it never shows *Writing to the mouse…*, which is
 reserved for an actual write or a full refresh.
 
-There is no settings UI. Omarchy keeps every widget's options **inline on that
+These are declared in the plugin's manifest, so the bar's widget settings can
+change them. Underneath, Omarchy keeps every widget's options **inline on that
 widget's entry** in `~/.config/omarchy/shell.json`, under the `bar` key, in
-whichever of the three layout arrays the widget sits in:
+whichever of the three layout arrays the widget sits in, and you can edit them
+there directly:
 
 ```json
 {
@@ -260,8 +265,8 @@ whichever of the three layout arrays the widget sits in:
 }
 ```
 
-Every key is optional — leave one out and the default above applies. Restart the
-shell after editing:
+Every key is optional — leave one out and the default above applies. After
+editing the file by hand, restart the shell:
 
 ```bash
 omarchy-restart-shell
@@ -278,8 +283,9 @@ dongle has finished enumerating, or right after the computer wakes from
 suspend before a wireless dongle's RF link to the mouse has reconnected — the
 bar retries every few seconds rather than waiting on the next scheduled poll,
 so it catches up on its own within a handful of seconds instead of showing a
-stale reading indefinitely (opening the panel also forces an immediate
-refresh, if you want one sooner).
+stale reading indefinitely. If you want one sooner, middle-click the widget or
+press `r` in the panel; opening the panel on its own does not re-read the
+mouse.
 
 ## Removing
 
@@ -298,12 +304,16 @@ That takes the plugin out of the shell. What survives, and how to remove it:
   points at this checkout — a shadow binary someone else put there is left
   alone).
 - Any `hskctl save` snapshot lives at `~/.config/hskctl/settings.json`; delete
-  it if you kept one. It only ever holds settings the mouse itself reports
-  (DPI stages, polling rate, motion sync), never anything private.
+  it if you kept one. It only ever holds the writable settings the mouse
+  itself reports (DPI, polling rate, sensor toggles and the like), never
+  anything private.
 
 Nothing else persists: the plugin writes no cache, no log, no state file on
-its own, and it never runs anything in the background. Mouse configuration
-lives on the mouse itself and follows the mouse, not this plugin.
+its own. The only thing it runs alongside the shell is `hskctl watch-link`,
+which watches for the mouse or dongle being plugged in or out, for as long
+as the widget is loaded, and never talks to the mouse itself. Mouse
+configuration lives on the mouse itself and follows the mouse, not this
+plugin.
 
 ## Upgrading from HSK Mouse
 
@@ -324,10 +334,11 @@ omarchy plugin enable keasbeexd.mousectrl
 ```
 
 Re-add the widget under its new name in `shell.json` (or the bar settings UI)
-and carry over any of the settings you had customized —
-`refreshIntervalSec`, `batteryPollSec`, `lowBatteryPercent`, `showBatteryLabel`,
-`hskctlPath` — onto the new entry; they were not renamed (`batteryPollSec` is
-new in 2.0), only the `id` they hang off of.
+and carry over any of the settings you had customized — `lowBatteryPercent`,
+`showBatteryLabel`, `hskctlPath` — onto the new entry; they were not renamed,
+only the `id` they hang off of. `batteryPollSec` is new in 2.0.
+`refreshIntervalSec` is gone: 2.0 no longer re-reads the whole mouse on a
+timer (see [Settings](#settings)), so drop it if you had set it.
 
 `install.sh --udev` notices the old `/etc/udev/rules.d/60-gwolves-hsk.rules`
 from a previous install and offers to remove it once the new rule is in place
