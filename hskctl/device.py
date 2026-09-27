@@ -7,7 +7,6 @@ import errno
 import fcntl
 import os
 import stat
-import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -175,75 +174,71 @@ class UnsafeLockPath(ProtocolError):
     pass
 
 
-def _lock_dir() -> str:
-    """A directory only this user can write to, for the lock file.
+def _open_lock_dir() -> int:
+    """Hold a descriptor on $XDG_RUNTIME_DIR, verified private to this user.
 
-    `$XDG_RUNTIME_DIR` is the right answer: systemd creates it 0700 and owned
-    by the user. The fallback matters more than it looks, though, because
-    without one a cron job or a bare login shell has nowhere to put the lock.
-
-    The old fallback was `/tmp/hskctl-<uid>.lock` opened with `open(path, "w")`
-    -- a predictable path in a world-writable directory, opened in a mode that
-    follows symlinks and truncates. Anyone with a local account could create
-    that symlink first and have hskctl truncate a file of their choosing, with
-    hskctl's privileges, the moment it next ran.
-
-    So: a per-user directory created 0700, verified to be a real directory
-    that we own, and never reused if it is anything else.
+    systemd creates it 0700 and owned by the user, which is exactly the
+    property the lock needs. There is deliberately no fallback: the old one
+    was a per-uid directory in /tmp, which is a predictable name in a
+    world-writable directory however carefully it is checked afterwards.
+    Without a runtime directory hskctl refuses to run rather than guessing.
     """
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime and os.path.isdir(runtime):
-        return runtime
-
-    path = os.path.join(tempfile.gettempdir(), f"hskctl-{os.getuid()}")
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or ""
+    if not os.path.isabs(runtime):
+        raise UnsafeLockPath(
+            "XDG_RUNTIME_DIR is not set, so there is no private place for "
+            "hskctl's device lock. Run it from a normal login session."
+        )
     try:
-        os.mkdir(path, 0o700)
-    except FileExistsError:
-        pass
-
-    # lstat, not stat -- the question is what the name itself is, and a stat
-    # through a symlink answers about the target instead.
-    info = os.lstat(path)
-    if not stat.S_ISDIR(info.st_mode):
-        raise UnsafeLockPath(f"{path} exists and is not a directory; refusing to use it")
-    if info.st_uid != os.getuid():
-        raise UnsafeLockPath(
-            f"{path} is owned by uid {info.st_uid}, not you. Someone else got "
-            f"there first -- remove it, or set XDG_RUNTIME_DIR."
-        )
-    if info.st_mode & 0o077:
-        raise UnsafeLockPath(
-            f"{path} is accessible to other users (mode "
-            f"{stat.S_IMODE(info.st_mode):04o}); refusing to use it"
-        )
-    return path
+        fd = os.open(runtime, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise UnsafeLockPath(f"XDG_RUNTIME_DIR={runtime} is unusable: {exc.strerror}") from exc
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid():
+            raise UnsafeLockPath(f"{runtime} is owned by uid {info.st_uid}, not you")
+        if info.st_mode & 0o077:
+            raise UnsafeLockPath(
+                f"{runtime} is accessible to other users (mode "
+                f"{stat.S_IMODE(info.st_mode):04o}); refusing to use it"
+            )
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
-def _lock_path() -> str:
-    return os.path.join(_lock_dir(), "hskctl.lock")
+_LOCK_NAME = "hskctl.lock"
 
 
-def _open_lock_file(path: str):
+def _open_lock_file():
     """Open the lock file without following a symlink and without truncating.
 
-    O_NOFOLLOW makes the open fail outright if the final component is a
-    symlink, which is the actual attack. Truncation is dropped because a lock
-    file has no contents worth clearing -- `open(path, "w")` was destroying
-    data for no reason at all.
+    Opened relative to the verified runtime directory descriptor, so the
+    directory checked is the directory used. O_NOFOLLOW makes the open fail
+    outright if the name is a symlink; O_NONBLOCK keeps a FIFO planted there
+    from hanging the open before the type check runs.
     """
+    dir_fd = _open_lock_dir()
+    path = os.path.join(os.environ["XDG_RUNTIME_DIR"], _LOCK_NAME)
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(
+            _LOCK_NAME,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            0o600,
+            dir_fd=dir_fd,
+        )
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             # O_NOFOLLOW reports a symlink as ELOOP, which reads like a
             # filesystem fault rather than what it is.
             raise UnsafeLockPath(
-                f"{path} is a symbolic link. hskctl will not write through it: "
-                f"a lock file in a shared directory is a predictable name, and "
-                f"following that link is how a local user gets hskctl to "
-                f"truncate a file of their choosing. Delete it."
+                f"{path} is a symbolic link. hskctl will not open a lock through "
+                f"it. Delete it."
             ) from exc
         raise
+    finally:
+        os.close(dir_fd)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
@@ -252,10 +247,11 @@ def _open_lock_file(path: str):
             raise UnsafeLockPath(
                 f"{path} is owned by uid {info.st_uid}, not you; refusing to use it"
             )
+        os.set_blocking(fd, True)
     except BaseException:
         os.close(fd)
         raise
-    return os.fdopen(fd, "r+b")
+    return path, os.fdopen(fd, "r+b")
 
 
 def acquire_device_lock(timeout: float = 6.0) -> None:
@@ -273,8 +269,7 @@ def acquire_device_lock(timeout: float = 6.0) -> None:
     global _LOCK_HANDLE
     if _LOCK_HANDLE is not None:
         return
-    path = _lock_path()
-    handle = _open_lock_file(path)
+    path, handle = _open_lock_file()
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -285,8 +280,8 @@ def acquire_device_lock(timeout: float = 6.0) -> None:
                 handle.close()
                 raise DeviceBusy(
                     f"another hskctl is talking to the mouse and did not finish "
-                    f"within {timeout:.0f}s (lock: {path}). If nothing else is "
-                    f"running, delete that file."
+                    f"within {timeout:.0f}s (lock: {path}). The lock is released "
+                    f"when that process exits, so wait for it or stop it."
                 )
             time.sleep(0.05)
     _LOCK_HANDLE = handle

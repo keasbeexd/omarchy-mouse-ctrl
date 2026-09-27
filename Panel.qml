@@ -218,23 +218,10 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): string { hsk.refresh(); return "ok" }
     function status(): string { return hsk.summary }
-    function setDpi(dpi: string): string {
-      var n = parseInt(dpi, 10)
-      if (isNaN(n)) return "error: not a number"
-      hsk.set("dpiStage1", Model.clampDpi(n))
-      return "ok"
-    }
-    function setPollingRate(rate: string): string {
-      var n = parseInt(rate, 10)
-      // Same bound the UI's own ButtonGroup is built from -- hskctl would
-      // reject anything else anyway, but failing here is one exchange
-      // cheaper and gives the caller a reason instead of a raw CLI error.
-      if (isNaN(n) || Model.allowedRatesFor(hsk.allowed).indexOf(n) === -1) {
-        return "error: not one of this mouse's polling rates"
-      }
-      hsk.set("pollingRate", n)
-      return "ok"
-    }
+    // Deliberately nothing that writes to the mouse. Every setting change
+    // lands in the mouse's own storage, and an IPC method is reachable by any
+    // process running as this user with nobody at the panel -- so changing
+    // DPI or polling rate needs the panel (or `hskctl set` in a terminal).
   }
 
   // --- bar item -----------------------------------------------------------
@@ -777,6 +764,7 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
+          maximumLength: 5
           validator: IntValidator { bottom: Model.DPI_MIN; top: Model.DPI_MAX }
 
           // Only follow the device (and the slider) while not focused, or a
@@ -896,6 +884,7 @@ Panel {
           color: root.foreground
           font.family: "monospace"
           font.pixelSize: Style.font.caption
+          maximumLength: 7
           validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
 
           // Only follow the device while the field is not focused, or a

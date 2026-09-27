@@ -5,18 +5,13 @@
 # travels with it and the widget works straight after `omarchy plugin add`
 # with nothing else installed.
 #
-# Absolute paths for the interpreter and the launcher itself so a same-user
-# process cannot elect a shadow python3 on PATH -- the reviewer's rule for
-# anything on a privileged or credential path applies here even without a
-# secret, because a rogue python3 would be given the hidraw file descriptor.
-# `-I` runs Python in isolated mode (no `PYTHONPATH`, no user site-packages),
-# for the same reason: hskctl imports the bundled package by explicit path.
+# The interpreter is always /usr/bin/python3, with no override: a rogue
+# python3 would be handed the hidraw file descriptor, so nothing on PATH or in
+# the environment gets to choose it. `-I` is isolated mode (no PYTHONPATH, no
+# user site-packages) and `-S` skips site-packages entirely -- hskctl uses
+# only the standard library and imports the bundled package by explicit path.
 set -euo pipefail
-HERE="$(cd "$(dirname "$(/usr/bin/readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+SELF="$(/usr/bin/readlink -f -- "${BASH_SOURCE[0]}")"
+HERE="${SELF%/bin/hskctl}"
 
-# The interpreter is either /usr/bin/python3 (the distro one) or whatever the
-# user has aliased via HSKCTL_PYTHON. The environment override is documented,
-# so an unusual setup does not have to edit this file, but the default has no
-# PATH search in it.
-PY="${HSKCTL_PYTHON:-/usr/bin/python3}"
-exec "$PY" -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.cli import main; sys.exit(main(sys.argv[2:]))' "$HERE" "$@"
+exec /usr/bin/python3 -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.cli import main; sys.exit(main(sys.argv[2:]))' "$HERE" "$@"

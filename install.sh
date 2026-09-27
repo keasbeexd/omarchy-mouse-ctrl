@@ -5,7 +5,8 @@
 #   --link       put `hskctl` on your PATH for use in a terminal
 #   --plugin     copy the plugin into place by hand, if you cloned it yourself
 #   --dev        symlink this checkout into the plugins dir, for hacking on it
-#   --uninstall  undo --link and --plugin
+#   --uninstall  undo --link and --dev (a --plugin copy is removed with
+#                `omarchy plugin remove <id>`)
 #
 # With no arguments it does --udev and --link.
 #
@@ -79,28 +80,6 @@ PLUGIN_ID="$(
 [[ "$PLUGIN_ID" =~ ^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$ ]] \
   || die "plugin id from manifest is not a plain dotted-lowercase id: $PLUGIN_ID"
 PLUGIN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$PLUGIN_ID"
-
-# Create a directory only we can write, refusing to reuse anything that is a
-# symlink or belongs to another user. `mkdir -p -m 700` neither fails on an
-# existing wider directory nor tightens it, so we verify after: type, owner,
-# mode, and non-symlink separately (mkdir -p follows a symlink to a directory
-# silently, which is exactly what section 1 of the review guidance names).
-private_dir() {
-  local dir="$1" mode="${2:-700}"
-  mkdir -p -m "$mode" "$dir"
-  local kind owner perm
-  kind=$(stat -Lc %F "$dir" 2>/dev/null || true)
-  [[ "$kind" == "directory" ]] || die "$dir is not a directory (got: ${kind:-missing})"
-  # -L on the last component too, so a symlink there fails the check even
-  # though the target is a real directory.
-  [[ ! -L "$dir" ]] || die "$dir is a symlink; refusing to use it"
-  owner=$(stat -Lc %u "$dir")
-  [[ "$owner" == "$(id -u)" ]] || die "$dir is not owned by you (uid $owner)"
-  if [[ "$mode" == "700" ]]; then
-    perm=$(stat -Lc %a "$dir")
-    [[ "$perm" == "700" ]] || chmod 700 "$dir"
-  fi
-}
 
 # A directory a script we ship must not follow into. Rejects a symlink at
 # the leaf and everything not a real directory. Never used to hold secrets --
@@ -178,7 +157,9 @@ install_udev() {
   udev_rule_text \
     | "$SUDO" "$INSTALL_BIN" -o root -g root -m 0644 /dev/stdin "$UDEV_RULE"
   "$SUDO" "$UDEVADM" control --reload-rules
-  "$SUDO" "$UDEVADM" trigger
+  # Only hidraw nodes -- re-triggering every device on the system is not
+  # this plugin's business.
+  "$SUDO" "$UDEVADM" trigger --subsystem-match=hidraw --action=change
   info "Installed $UDEV_RULE"
   info "Now unplug and replug the mouse or its dongle -- the rule applies when"
   info "the device next appears, not to one that is already plugged in."
@@ -218,9 +199,9 @@ copy_plugin() {
   # .git keeps the copy small.
   "$TAR" -C "$REPO_DIR" --exclude=.git -cf - . \
     | "$TAR" -C "$PLUGIN_DIR" --no-same-owner -xf -
-  if command -v omarchy-shell >/dev/null 2>&1; then
-    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || warn "rescan failed -- is the shell running?"
-  fi
+  # Not run from here: omarchy-shell would be whatever `omarchy-shell` is
+  # first on PATH, and this script does not execute tools it cannot pin.
+  info "Rescan with: omarchy-shell shell rescanPlugins"
   info "Now run: omarchy plugin enable $PLUGIN_ID"
 }
 
@@ -235,24 +216,24 @@ link_plugin() {
     die "$PLUGIN_DIR already exists and is a real directory. Move it aside first."
   fi
   "$LN" -sfn "$REPO_DIR" "$PLUGIN_DIR"
-  if command -v omarchy-shell >/dev/null 2>&1; then
-    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || warn "rescan failed -- is the shell running?"
-  fi
+  # Not run from here: omarchy-shell would be whatever `omarchy-shell` is
+  # first on PATH, and this script does not execute tools it cannot pin.
+  info "Rescan with: omarchy-shell shell rescanPlugins"
   info "Edits in $REPO_DIR are now live. Run:  omarchy plugin enable $PLUGIN_ID"
   warn "Auto-reload on save may not follow the symlink; use 'omarchy-shell shell rescanPlugins' after edits."
 }
 
 uninstall() {
-  # Two removals, each guarded so we only unlink what this script installed.
-  # The bin entry must be a symlink pointing at our launcher; a real file
-  # somebody else placed there is left alone. The plugin dir must either be
-  # a symlink (from --dev) or a real dir with our own manifest at its root
-  # (from --plugin), so we never rm -rf a foreign tree.
+  # Only symlinks this script created, each checked to still point where this
+  # script pointed it. Nothing here deletes a directory tree: a real plugin
+  # directory (from --plugin, or from `omarchy plugin add`) belongs to
+  # Omarchy's own plugin manager, which removes it.
   local link_target
   if [[ -L "$BIN_DIR/hskctl" ]]; then
     link_target=$(readlink -- "$BIN_DIR/hskctl" || true)
     if [[ "$link_target" == "$REPO_DIR/bin/hskctl" ]]; then
       "$RM" -f -- "$BIN_DIR/hskctl"
+      info "Removed $BIN_DIR/hskctl"
     else
       warn "$BIN_DIR/hskctl points elsewhere ($link_target); leaving it in place"
     fi
@@ -261,21 +242,16 @@ uninstall() {
   fi
 
   if [[ -L "$PLUGIN_DIR" ]]; then
-    "$RM" -f -- "$PLUGIN_DIR"
-  elif [[ -d "$PLUGIN_DIR" ]]; then
-    if [[ -f "$PLUGIN_DIR/manifest.json" ]]; then
-      local installed_id
-      installed_id=$("$PYTHON" -I -c \
-        "import json,sys;print(json.load(open(sys.argv[1]))['id'])" \
-        "$PLUGIN_DIR/manifest.json" 2>/dev/null || true)
-      if [[ "$installed_id" == "$PLUGIN_ID" ]]; then
-        "$RM" -rf -- "$PLUGIN_DIR"
-      else
-        warn "$PLUGIN_DIR carries a different plugin ($installed_id); leaving it in place"
-      fi
+    link_target=$(readlink -- "$PLUGIN_DIR" || true)
+    if [[ "$link_target" == "$REPO_DIR" ]]; then
+      "$RM" -f -- "$PLUGIN_DIR"
+      info "Removed $PLUGIN_DIR"
     else
-      warn "$PLUGIN_DIR has no manifest.json; refusing to remove"
+      warn "$PLUGIN_DIR points elsewhere ($link_target); leaving it in place"
     fi
+  elif [[ -d "$PLUGIN_DIR" ]]; then
+    info "$PLUGIN_DIR is a real directory; remove it with:"
+    info "  omarchy plugin remove $PLUGIN_ID"
   fi
   info "Uninstall done."
   info "Left in place: $UDEV_RULE (remove with sudo if you want)"
@@ -289,7 +265,7 @@ case "${1:-}" in
   --uninstall) uninstall ;;
   -h|--help)   awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}" ;;
   "")
-    [[ -x "$PYTHON" ]] || die "$PYTHON is required (or set HSKCTL_PYTHON to a python3 you have)"
+    [[ -x "$PYTHON" ]] || die "$PYTHON is required"
     install_udev
     link_cli
     echo
