@@ -61,7 +61,8 @@ exactly what it will write before asking for `sudo`.
 If something looks wrong, `hskctl doctor` says in the first few lines whether
 permissions are the problem.
 
-Requires Python 3.9+. Nothing else — no pip packages, no daemon, no background
+Requires Python 3.9+ at `/usr/bin/python3` — the distro one, always; the
+widget never looks for Python anywhere else. Nothing else — no pip packages, no daemon, no background
 service, no libratbag. The CLI the widget drives ships inside the plugin.
 
 ## What it does
@@ -228,6 +229,10 @@ value, shown with one fewer step of rounding. `watch-battery` prints both.
 
 `--json` on any command gives parseable output, including on failure.
 
+Anything that talks to the mouse takes a lock in `$XDG_RUNTIME_DIR`, so it
+needs a normal login session. From cron or a bare `su` shell with no runtime
+directory, hskctl refuses to run rather than fall back to `/tmp`.
+
 Omarchy IPC works too, for everything that does not change the mouse:
 
 ```bash
@@ -289,11 +294,18 @@ nowhere to put it.
 While the mouse has not been read successfully — right after login before its
 dongle has finished enumerating, or right after the computer wakes from
 suspend before a wireless dongle's RF link to the mouse has reconnected — the
-bar retries every few seconds rather than waiting on the next scheduled poll,
-so it catches up on its own within a handful of seconds instead of showing a
-stale reading indefinitely. If you want one sooner, middle-click the widget or
-press `r` in the panel; opening the panel on its own does not re-read the
-mouse.
+bar retries on its own rather than waiting on the next scheduled poll: first
+after about 5 seconds, then backing off (10 s, 20 s, … up to 5 minutes) for
+eight attempts, roughly a quarter of an hour in all, before it stops asking.
+That catches the usual cases within seconds without starting a process every
+few seconds forever when the mouse is simply not there or the udev rule is
+missing. Plugging the mouse or dongle in, a manual refresh, or IPC `refresh`
+starts the retries over. To refresh sooner, middle-click the widget or press
+`r` in the panel; opening the panel on its own does not re-read the mouse.
+
+The plug/unplug watcher is restarted the same way if it exits: backing off
+from 2 seconds, and giving up after six crashes in a row that each lasted
+under a minute, rather than respawning forever.
 
 ## Removing
 
@@ -438,6 +450,7 @@ git clone https://github.com/keasbeexd/mouse-ctrl.git
 cd mouse-ctrl
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
+omarchy-shell shell rescanPlugins
 omarchy plugin enable keasbeexd.mousectrl
 ```
 
