@@ -25,7 +25,7 @@ or from existing open-source Linux tooling (for Pulsar).
 
 | Vendor | Model | Status |
 |---|---|---|
-| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate, sensor settings, sleep timer |
+| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate, sensor settings, sleep timer. See [G-Wolves HSK Pro 4K](#g-wolves-hsk-pro-4k) below |
 | Pulsar | X2H mini (4K dongle) | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate up to 4K, sensor settings, sleep timer. 1K dongle variant unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
@@ -67,15 +67,23 @@ service, no libratbag. The CLI the widget drives ships inside the plugin.
 
 ## What it does
 
-On the G-Wolves HSK Pro 4K, confirmed on real hardware:
+Both mice are confirmed on real hardware: every setting below was written
+and read back on the actual mouse, not just decoded from a plausible-looking
+reply.
 
-| | |
-|---|---|
-| **Battery** | percentage in the bar, low-battery warning, charging state |
-| **DPI** | stage 1's value and LED colour (the firmware has seven stages; see [Pulsar X2H mini](#pulsar-x2h-mini) for why only one is exposed) |
-| **Polling rate** | 250, 500, 1000, 2000 and 4000 Hz |
-| **Sensor** | motion sync, angle snapping, lift-off distance (1 or 2 mm) |
-| **Firmware** | version and link (dongle or cable) |
+| | G-Wolves HSK Pro 4K | Pulsar X2H mini (4K dongle) |
+|---|---|---|
+| **Battery** | percentage in the bar, low-battery warning, charging state | same |
+| **DPI** | stage 1's value and LED colour | same |
+| **Polling rate** | 250, 500, 1000, 2000, 4000 Hz | 125, 250, 500, 1000, 2000, 4000 Hz |
+| **Lift-off distance** | 1 or 2 mm | 1 or 2 mm |
+| **Sensor** | motion sync, angle snapping | motion sync, angle snapping, ripple control |
+| **Firmware** | version, and link (dongle or cable) | version |
+| **`hskctl` only** | sleep timer | sleep timer, debounce, turbo mode |
+
+The last row is writable from the command line (`hskctl set`) but has no
+control in the panel. Only DPI stage 1 is exposed on either mouse; see
+[Using it](#using-it) for why.
 
 A different mouse shows only the rows above that its own profile actually
 maps and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -110,78 +118,6 @@ device actually connected, the same way it decides whether it is safe to
   one no-symlink descriptor, capped at 256 KiB, and refused if anyone other
   than you (or root) owns it or can write to it.
 
-## Pulsar X2H mini
-
-Its profile (`profiles/pulsar-x2h-mini.json`) is **fully confirmed on real
-hardware — a Pulsar X2H mini with its 4K wireless dongle.** Every setting
-this plugin exposes for it, reads and writes, round-tripped on that exact
-mouse: battery, firmware version, polling rate (up to 4000 Hz), motion sync,
-angle snap, ripple control, turbo mode, lift-off distance, debounce, sleep
-timer, and DPI stage 1's value and LED colour — the colour confirmed by
-watching the mouse's actual LED change on command.
-
-**Only DPI stage 1 is mapped, deliberately.** The mouse's firmware has four
-DPI stages, and the obvious next step was to expose all four with a switcher.
-That turned out not to work: writes to `activeDpiStage` round-trip correctly
-(the byte you write reads back), but have no observed effect on the mouse's
-actual cursor speed or LED, and the mouse's own physical DPI button does
-nothing either. Rather than ship a stage switcher that looks like it works
-but doesn't, this plugin only ever reads and writes stage 1 — which is also
-all this plugin's own author uses on their G-Wolves mouse, so it costs
-nothing in practice. `dpiStageCount` and `activeDpiStage` stay mapped in the
-profile as read-only diagnostics for anyone chasing the real switch mechanism
-later (see the profile's own `_followUp` notes), but the UI never surfaces
-them.
-
-**If you have the 1K dongle variant instead of the 4K one, this is
-unconfirmed for you** — Pulsar sells the X2H mini with either, and only the
-4K dongle has been tested. The polling-rate ceiling in particular may differ;
-please open an issue with what `hskctl probe` and a `hskctl set pollingRate
-2000` attempt report on a 1K dongle.
-
-It started as a transcription of two open-source Linux tools that speak to
-Pulsar's Nordic wireless dongle —
-[packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
-and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
-— which got the packet shape and command/address table right but not this
-exact model's USB ids or (initially) its transport details. Getting the rest
-right took two more steps, in order of how cheap they were:
-
-- **Static analysis of the real Pulsar Fusion Windows installer**
-  (`tools/analyze-driver.py`, a vendor-neutral script recovered from this
-  repo's own git history — see [Local development](#local-development))
-  found real vendor data with no hardware needed: extracting the installer
-  (it's an Inno Setup package; `innoextract` unpacks it) and pointing the
-  script at `Pulsar Fusion Wireless Mice.exe` and the `Cfg.ini` it ships
-  confirmed the real USB ids (`VID=25A7,3554 PID=fa7b,f507
-  PID2=fa7c,f508,f509`) and this exact model's factory defaults
-  (`Sensor=0x3395` — a PixArt PAW3395 — `DPI=400,800,1600,3200`,
-  `Debounce=3`). The app turned out to be native C++/MFC, not .NET or
-  Electron, so its actual packet-building logic is machine code rather than
-  an extractable blob the way it was for G-Wolves' .NET app.
-- **Live testing against the real device** caught what static analysis
-  couldn't: the transport is a raw USB **Output** report at report id `8`,
-  not the Feature-report transport the HID descriptor's own feature-report
-  id (`6`) first suggested, and every scalar write needs a *second*
-  checksum byte (`0x55 - value`) immediately after the value, separate from
-  the usual whole-packet checksum. Both are now generic engine features —
-  `transport.kind: "output"` and a `valueChecksum` command option — not
-  Pulsar-specific code. DPI stages needed a new field encoding
-  (`nordicDpi3`) for their bit-packed 3-byte format, cross-checked
-  byte-for-byte against the real driver's own math for several DPI values
-  before it ever touched hardware.
-
-One more real finding along the way: cable and the 2.4GHz dongle present the
-**identical** `3554:f507` identity on the identical hidraw node — there is no
-separate wired/wireless split for this model the way there might be for
-others, and the RF receiver's own separate USB identity (`3554:f509`) has
-never actually been seen carrying the config protocol at all.
-
-See the `_followUp` list at the bottom of the profile's JSON for the
-remaining narrower gaps (the 1K dongle, a couple of low-risk protocol-engine
-edge cases, multiple onboard profiles on chipsets that have them), and open
-an issue with what you find on hardware this hasn't been tested against.
-
 ## Using it
 
 **Bar widget:** left click opens the panel, middle click refreshes.
@@ -189,11 +125,17 @@ an issue with what you find on hardware this hasn't been tested against.
 **In the panel**, DPI is one row: a number field you can type an exact value
 into, a draggable slider (50 DPI steps) below it, then three one-click
 preset colours, a swatch showing the current colour (click it to cycle the
-firmware's full palette), and a hex field for typing an exact colour. There
-is deliberately no stage picker — see [Pulsar X2H mini](#pulsar-x2h-mini)
-above for why, and note this applies to the G-Wolves profile too even though
-its firmware's stage switching does actually work: this plugin only ever
-uses stage 1.
+firmware's full palette), and a hex field for typing an exact colour.
+
+**Why only DPI stage 1.** There is deliberately no stage picker, on either
+mouse. On the Pulsar, switching stages does not work: writes to
+`activeDpiStage` round-trip (the byte you write reads back) but change
+neither the cursor speed nor the LED, and the mouse's own DPI button does
+nothing either. A switcher that looks like it works but doesn't is worse
+than none. On the G-Wolves, stage switching does work, but one DPI is all
+this plugin's author uses, and one control that behaves the same on every
+supported mouse beats a picker that works on some of them. The other stages
+are left exactly as the mouse has them.
 
 Rapid input is coalesced — drag the slider from 400 to 3200 and the mouse
 gets one write, when you release — and the panel says *Writing to the
@@ -372,6 +314,38 @@ on the mouse, not in the plugin.
 For anything about G-Wolves, Pulsar, or multi-mouse support going forward,
 file it here rather than on `omarchy-hsk`.
 
+## Model notes
+
+### G-Wolves HSK Pro 4K
+
+- The firmware has seven DPI stages and its own stage button works; the
+  panel edits stage 1 only (see [Using it](#using-it)).
+- Cable and dongle are separate endpoints, and the panel shows which one is
+  in use. With both plugged in, hskctl picks the endpoint that answers with
+  real data (see [How the protocol was recovered](#g-wolves)).
+- Other HSK variants very likely speak the same protocol; see
+  [Other models](#other-models).
+
+### Pulsar X2H mini
+
+- **Only the 4K dongle variant is confirmed.** Pulsar sells the X2H mini
+  with either a 4K or a 1K dongle, and the polling-rate ceiling in
+  particular may differ on the 1K one. If you have it, please open an issue
+  with what `hskctl probe` and a `hskctl set pollingRate 2000` attempt
+  report.
+- Cable and the 2.4 GHz dongle present the **identical** `3554:f507`
+  identity on the identical hidraw node, so there is no wired/wireless link
+  to show for this model. The RF receiver's own separate USB identity
+  (`3554:f509`) has never been seen carrying the config protocol at all.
+- `dpiStageCount` and `activeDpiStage` stay mapped in the profile as
+  read-only diagnostics for anyone chasing the real stage-switch mechanism
+  later; the UI never surfaces them.
+- The `_followUp` list at the bottom of `profiles/pulsar-x2h-mini.json`
+  tracks the remaining narrower gaps (the 1K dongle, a couple of low-risk
+  protocol-engine edge cases, multiple onboard profiles on chipsets that
+  have them). Open an issue with what you find on hardware this hasn't been
+  tested against.
+
 ## Other models
 
 The protocol for each vendor lives in `profiles/*.json` as data, interpreted
@@ -386,6 +360,8 @@ and mice especially, since only the X2H mini's 4K dongle variant is confirmed
 so far; see [Pulsar X2H mini](#pulsar-x2h-mini) above.
 
 ## How the protocol was recovered
+
+### G-Wolves
 
 Statically, from `G-Wolves_Software_V1.0.20.07` — a C++/CLI mixed-mode .NET
 binary. The `hts_*` functions compile to managed CIL, so `hts_send_cmd` and the
@@ -426,14 +402,42 @@ divide a 1000 Hz base, while 32 and 64 are separate high-rate codes for 2000 and
 
 Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
 
-The Pulsar profile above was recovered differently — starting from a
-transcription of existing open-source tools rather than a capture of its
-own, then corrected against a real installer's static analysis and finally
-against the real device itself (see [Pulsar X2H mini](#pulsar-x2h-mini)
-above for the full path). Credit and thanks to
+### Pulsar
+
+The Pulsar profile started as a transcription of two open-source Linux
+tools that speak to Pulsar's Nordic wireless dongle —
 [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux)
 and [andrewrabert/python-pulsar-mouse-tool](https://github.com/andrewrabert/python-pulsar-mouse-tool)
-for the original reverse-engineering work that made the rest possible.
+— which got the packet shape and command/address table right but not this
+exact model's USB ids or (initially) its transport details. Getting the rest
+right took two more steps, in order of how cheap they were:
+
+- **Static analysis of the real Pulsar Fusion Windows installer**
+  (`tools/analyze-driver.py`, a vendor-neutral script recovered from this
+  repo's own git history — see [Local development](#local-development))
+  found real vendor data with no hardware needed: extracting the installer
+  (it's an Inno Setup package; `innoextract` unpacks it) and pointing the
+  script at `Pulsar Fusion Wireless Mice.exe` and the `Cfg.ini` it ships
+  confirmed the real USB ids (`VID=25A7,3554 PID=fa7b,f507
+  PID2=fa7c,f508,f509`) and this exact model's factory defaults
+  (`Sensor=0x3395` — a PixArt PAW3395 — `DPI=400,800,1600,3200`,
+  `Debounce=3`). The app turned out to be native C++/MFC, not .NET or
+  Electron, so its actual packet-building logic is machine code rather than
+  an extractable blob the way it was for G-Wolves' .NET app.
+- **Live testing against the real device** caught what static analysis
+  couldn't: the transport is a raw USB **Output** report at report id `8`,
+  not the Feature-report transport the HID descriptor's own feature-report
+  id (`6`) first suggested, and every scalar write needs a *second*
+  checksum byte (`0x55 - value`) immediately after the value, separate from
+  the usual whole-packet checksum. Both are now generic engine features —
+  `transport.kind: "output"` and a `valueChecksum` command option — not
+  Pulsar-specific code. DPI stages needed a new field encoding
+  (`nordicDpi3`) for their bit-packed 3-byte format, cross-checked
+  byte-for-byte against the real driver's own math for several DPI values
+  before it ever touched hardware.
+
+Credit and thanks to both projects for the original reverse-engineering
+work that made the rest possible.
 
 ## Safety
 
