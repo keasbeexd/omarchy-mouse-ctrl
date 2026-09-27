@@ -605,9 +605,13 @@ Panel {
               readonly property bool hasAny: hsk.canWrite("motionSync")
                 || hsk.canWrite("angleSnap")
                 || hsk.canWrite("rippleControl")
+                || hsk.canWrite("turboMode")
 
               Repeater {
-                model: ["motionSync", "angleSnap", "rippleControl"]
+                // Same fields, same order, as the toggle rows Model.buildRows
+                // makes cursor stops for -- a field missing here is a cursor
+                // stop with nothing drawn under it.
+                model: ["motionSync", "angleSnap", "rippleControl", "turboMode"]
                 Toggle {
                   required property var modelData
                   visible: hsk.canWrite(modelData)

@@ -77,9 +77,9 @@ reply.
 | **DPI** | stage 1's value and LED colour | same |
 | **Polling rate** | 250, 500, 1000, 2000, 4000 Hz | 125, 250, 500, 1000, 2000, 4000 Hz |
 | **Lift-off distance** | 1 or 2 mm | 1 or 2 mm |
-| **Sensor** | motion sync, angle snapping | motion sync, angle snapping, ripple control |
+| **Sensor** | motion sync, angle snapping | motion sync, angle snapping, ripple control, turbo mode |
 | **Firmware** | version, and link (dongle or cable) | version |
-| **`hskctl` only** | sleep timer | sleep timer, debounce, turbo mode |
+| **`hskctl` only** | sleep timer | sleep timer, debounce |
 
 The last row is writable from the command line (`hskctl set`) but has no
 control in the panel. Only DPI stage 1 is exposed on either mouse; see
