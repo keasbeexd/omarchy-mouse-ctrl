@@ -46,8 +46,93 @@ var POLLING_RATES = [250, 500, 1000, 2000, 4000]
 // G-Wolves list so an older hskctl (no `allowed` in its JSON) still works.
 function allowedRatesFor(allowed) {
   var rates = allowed && allowed.pollingRate
-  if (!rates || rates.length === 0) return POLLING_RATES
-  return rates.slice().sort(function(a, b) { return a - b })
+  if (!Array.isArray(rates)) return POLLING_RATES
+  var clean = []
+  for (var i = 0; i < rates.length && clean.length < MAX_ALLOWED_VALUES; i++) {
+    var r = rates[i]
+    if (typeof r === "number" && isFinite(r) && r === Math.floor(r) && r > 0 && r <= 100000
+        && clean.indexOf(r) === -1) clean.push(r)
+  }
+  if (clean.length === 0) return POLLING_RATES
+  return clean.sort(function(a, b) { return a - b })
+}
+
+// --- the shape of hskctl's JSON ---------------------------------------------
+//
+// hskctl is our own CLI, but what it reports comes from the mouse's firmware
+// and from profiles, one of which can live in the user's ~/.config. So its
+// output is validated like any other input before anything is installed as a
+// model: field names are short identifiers, values are finite numbers,
+// booleans or short strings, and every collection is capped. Anything else
+// is dropped rather than coerced into shape.
+
+var MAX_FIELDS = 64
+var MAX_ALLOWED_VALUES = 32
+var MAX_VALUE_CHARS = 64
+var FIELD_NAME = /^[A-Za-z][A-Za-z0-9]{0,39}$/
+var STATES = ["loading", "ready", "undiscovered", "error"]
+
+function isFieldName(key) {
+  return typeof key === "string" && FIELD_NAME.test(key)
+      && key !== "constructor" && key !== "prototype"
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+}
+
+// A single reading: a finite number, a boolean, or a short plain string.
+// Returns undefined for anything else so callers can drop the field.
+function cleanValue(v) {
+  if (typeof v === "boolean") return v
+  if (typeof v === "number") return isFinite(v) ? v : undefined
+  if (typeof v === "string") return plain(v, MAX_VALUE_CHARS)
+  if (v === null) return null
+  return undefined
+}
+
+function cleanSettings(raw) {
+  var out = {}
+  if (!isPlainObject(raw)) return out
+  var n = 0
+  for (var key in raw) {
+    if (n >= MAX_FIELDS) break
+    if (!Object.prototype.hasOwnProperty.call(raw, key) || !isFieldName(key)) continue
+    var v = cleanValue(raw[key])
+    if (v === undefined) continue
+    out[key] = v
+    n++
+  }
+  return out
+}
+
+function cleanWritable(raw) {
+  var out = []
+  if (!Array.isArray(raw)) return out
+  for (var i = 0; i < raw.length && out.length < MAX_FIELDS; i++) {
+    if (isFieldName(raw[i]) && out.indexOf(raw[i]) === -1) out.push(raw[i])
+  }
+  return out
+}
+
+function cleanAllowed(raw) {
+  var out = {}
+  if (!isPlainObject(raw)) return out
+  var n = 0
+  for (var key in raw) {
+    if (n >= MAX_FIELDS) break
+    if (!Object.prototype.hasOwnProperty.call(raw, key) || !isFieldName(key)) continue
+    var list = raw[key]
+    if (!Array.isArray(list)) continue
+    var clean = []
+    for (var i = 0; i < list.length && clean.length < MAX_ALLOWED_VALUES; i++) {
+      var v = cleanValue(list[i])
+      if (v !== undefined && v !== null) clean.push(v)
+    }
+    out[key] = clean
+    n++
+  }
+  return out
 }
 
 function parseStatus(raw) {
@@ -72,20 +157,25 @@ function parseStatus(raw) {
       settings: {},
       // hskctl always emits JSON, so non-JSON here means the wrapper itself
       // failed -- a missing interpreter, a stale PATH, a partial install.
-      error: "could not parse hskctl output: " + text.split("\n")[0]
+      error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200)
     }
   }
+  if (!isPlainObject(parsed)) {
+    return { ok: false, state: "error", model: "", settings: {}, error: "hskctl output is not an object" }
+  }
+  var state = typeof parsed.state === "string" ? parsed.state : (parsed.ok === true ? "ready" : "error")
+  if (STATES.indexOf(state) === -1) state = "error"
   return {
     ok: parsed.ok === true,
-    state: String(parsed.state || (parsed.ok ? "ready" : "error")),
-    model: String(parsed.model || ""),
-    device: String(parsed.device || ""),
+    state: state,
+    model: typeof parsed.model === "string" ? plain(parsed.model, 120) : "",
+    device: typeof parsed.device === "string" ? plain(parsed.device, 120) : "",
     detected: parsed.detected === true,
-    settings: parsed.settings || {},
-    writable: parsed.writable || [],
-    allowed: parsed.allowed || {},
-    version: typeof parsed.version === "string" ? parsed.version : "",
-    error: String(parsed.error || "")
+    settings: cleanSettings(parsed.settings),
+    writable: cleanWritable(parsed.writable),
+    allowed: cleanAllowed(parsed.allowed),
+    version: typeof parsed.version === "string" ? plain(parsed.version, 32) : "",
+    error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
   }
 }
 
@@ -96,7 +186,8 @@ function parseBattery(raw) {
   if (text === "") return { ok: false, settings: {} }
   try {
     var parsed = JSON.parse(text)
-    return { ok: parsed.ok === true, settings: parsed.settings || {} }
+    if (!isPlainObject(parsed)) return { ok: false, settings: {} }
+    return { ok: parsed.ok === true, settings: cleanSettings(parsed.settings) }
   } catch (e) {
     return { ok: false, settings: {} }
   }
@@ -110,14 +201,18 @@ function parseSet(raw) {
   if (text === "") return { ok: false, field: "", value: undefined, error: "hskctl produced no output" }
   try {
     var parsed = JSON.parse(text)
+    if (!isPlainObject(parsed)) return { ok: false, field: "", value: undefined, error: "hskctl output is not an object" }
+    var field = isFieldName(parsed.field) ? parsed.field : ""
+    var value = cleanValue(parsed.value)
     return {
-      ok: parsed.ok === true,
-      field: String(parsed.field || ""),
-      value: parsed.value,
-      error: String(parsed.error || "")
+      // A readback the panel cannot represent is not a success.
+      ok: parsed.ok === true && field !== "" && value !== undefined,
+      field: field,
+      value: value,
+      error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
     }
   } catch (e) {
-    return { ok: false, field: "", value: undefined, error: "could not parse hskctl output: " + text.split("\n")[0] }
+    return { ok: false, field: "", value: undefined, error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200) }
   }
 }
 
@@ -127,7 +222,7 @@ function parseLinkEvent(raw) {
   if (text === "") return null
   try {
     var parsed = JSON.parse(text)
-    if (parsed.ok !== true) return null
+    if (!isPlainObject(parsed) || parsed.ok !== true) return null
     return { event: String(parsed.event || ""), connected: parsed.connected === true }
   } catch (e) {
     return null

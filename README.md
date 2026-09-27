@@ -102,6 +102,12 @@ device actually connected, the same way it decides whether it is safe to
   first one that does. `hskctl status --profile <name>` or `--device <path>`
   overrides detection when you are working on a profile that is not
   matching yet.
+- Profiles are looked up in the plugin's own `profiles/` first, then
+  `/usr/share/hskctl/profiles`, then `~/.config/hskctl/profiles`. A file in
+  your config directory can add a mouse this plugin does not ship, but cannot
+  replace a bundled profile of the same name. Every profile is read through
+  one no-symlink descriptor, capped at 256 KiB, and refused if anyone other
+  than you (or root) owns it or can write to it.
 
 ## Pulsar X2H mini
 
@@ -222,15 +228,18 @@ value, shown with one fewer step of rounding. `watch-battery` prints both.
 
 `--json` on any command gives parseable output, including on failure.
 
-Omarchy IPC works too:
+Omarchy IPC works too, for everything that does not change the mouse:
 
 ```bash
-omarchy-shell keasbeexd.mousectrl setDpi 1600
-omarchy-shell keasbeexd.mousectrl setPollingRate 1000
 omarchy-shell keasbeexd.mousectrl refresh
 omarchy-shell keasbeexd.mousectrl status      # the panel's one-line summary
 omarchy-shell keasbeexd.mousectrl toggle      # also open, close
 ```
+
+There is deliberately no IPC method that writes a setting. Anything running
+as your user can call IPC, with nobody looking at the panel, and every
+setting lands in the mouse's own storage. Use `hskctl set` from a terminal
+to script a change.
 
 ## Settings
 
@@ -239,7 +248,6 @@ omarchy-shell keasbeexd.mousectrl toggle      # also open, close
 | Battery poll | `batteryPollSec` | 300 | how often the bar re-reads the battery percentage, in seconds (30–3600) |
 | Low battery warning | `lowBatteryPercent` | 15 | when the icon turns urgent |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
-| Path to `hskctl` | `hskctlPath` | *(bundled)* | override only if you installed it yourself |
 
 The battery percentage is the only reading that changes on its own, so it is
 the only thing re-read on a timer (`batteryPollSec`). Plugging or unplugging the
@@ -309,7 +317,9 @@ That takes the plugin out of the shell. What survives, and how to remove it:
   anything private.
 
 Nothing else persists: the plugin writes no cache, no log, no state file on
-its own. The only thing it runs alongside the shell is `hskctl watch-link`,
+its own. While it runs, hskctl holds an empty lock file,
+`$XDG_RUNTIME_DIR/hskctl.lock`, which goes away with the runtime directory
+at logout. The only thing it runs alongside the shell is `hskctl watch-link`,
 which watches for the mouse or dongle being plugged in or out, for as long
 as the widget is loaded, and never talks to the mouse itself. Mouse
 configuration lives on the mouse itself and follows the mouse, not this
@@ -335,10 +345,11 @@ omarchy plugin enable keasbeexd.mousectrl
 
 Re-add the widget under its new name in `shell.json` (or the bar settings UI)
 and carry over any of the settings you had customized — `lowBatteryPercent`,
-`showBatteryLabel`, `hskctlPath` — onto the new entry; they were not renamed,
-only the `id` they hang off of. `batteryPollSec` is new in 2.0.
-`refreshIntervalSec` is gone: 2.0 no longer re-reads the whole mouse on a
-timer (see [Settings](#settings)), so drop it if you had set it.
+`showBatteryLabel` — onto the new entry; they were not renamed, only the
+`id` they hang off of. `batteryPollSec` is new in 2.0. `refreshIntervalSec`
+is gone: 2.0 no longer re-reads the whole mouse on a timer (see
+[Settings](#settings)), so drop it if you had set it. `hskctlPath` is gone
+too: the widget only ever runs the copy of hskctl that ships beside it.
 
 `install.sh --udev` notices the old `/etc/udev/rules.d/60-gwolves-hsk.rules`
 from a previous install and offers to remove it once the new rule is in place

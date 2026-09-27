@@ -11,15 +11,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import stat
+import secrets
 import sys
-import tempfile
 from typing import Any
 
 from . import __version__
 from .device import DeviceBusy, DeviceNotFound, detect_profile, open_session, rank_candidates
 from .hidraw import HidrawError, enumerate_devices
 from .protocol import NotDiscovered, ProtocolError, list_profiles
+from .safeio import read_bounded_json
 
 FRIENDLY_LABELS = {
     "batteryPercent": "Battery",
@@ -1147,101 +1147,88 @@ SETTINGS_PATH = os.path.join(
 _MAX_SETTINGS_BYTES = 65536
 
 
-def _prepare_state_dir(path: str) -> str:
-    """Create the parent of `path` as a 0700 directory owned by us.
+def _open_state_dir(path: str, private: bool) -> int:
+    """Open the parent of `path` as a held directory descriptor.
 
-    `os.makedirs(exist_ok=True)` is silent about what it did or did not find,
-    which is precisely what the review guidance names as the parent-chain
-    problem: if the state directory already exists as a symlink to somewhere
-    else the process happily follows it. So after creating we `lstat`
-    (`follow_symlinks=False`) and refuse anything that is not a real
-    directory we own.
+    For hskctl's own directory (`private`), create it 0700 if missing, refuse
+    it if the name is a symlink or not ours, and set it to 0700 on *every*
+    run through the descriptor -- not only when it looks wider, and not by
+    pathname. Its contents need no repair: the settings file inside is always
+    replaced by a fresh 0600 inode (see _atomic_write_json), and the
+    directory is shared with user profiles, so nothing in it is deleted.
+
+    For a directory the user named with --file it is only opened and checked
+    for being a real directory: it is theirs, and hskctl has no business
+    changing its mode.
     """
     parent = os.path.dirname(path) or "."
-    os.makedirs(parent, mode=0o700, exist_ok=True)
-    st = os.stat(parent, follow_symlinks=False)
-    if not stat.S_ISDIR(st.st_mode):
-        raise OSError(f"{parent} exists and is not a directory")
-    if st.st_uid != os.geteuid():
-        raise OSError(f"{parent} is owned by uid {st.st_uid}, not you")
-    if st.st_mode & 0o077:
-        # Not a hard refuse -- reviewers accept a repair for a state directory
-        # that is plugin-owned but wider than we want. If chmod fails we do
-        # refuse, because at that point we cannot make it private.
-        os.chmod(parent, 0o700)
-    return parent
+    if private:
+        os.makedirs(parent, mode=0o700, exist_ok=True)
+    try:
+        dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise OSError(f"{parent} is not a directory hskctl can use: {exc.strerror}") from exc
+    try:
+        if private:
+            st = os.fstat(dir_fd)
+            if st.st_uid != os.geteuid():
+                raise OSError(f"{parent} is owned by uid {st.st_uid}, not you")
+            os.fchmod(dir_fd, 0o700)
+    except BaseException:
+        os.close(dir_fd)
+        raise
+    return dir_fd
 
 
-def _atomic_write_json(path: str, payload: dict) -> None:
-    """Write JSON to `path` atomically, refusing to follow a symlink.
+def _atomic_write_json(path: str, payload: dict, private: bool = True) -> None:
+    """Write JSON to `path` atomically, never writing through a symlink.
 
-    A same-user attacker can plant a symlink at any predictable path in a
-    directory they can write to. This tool's settings file is $XDG_CONFIG_HOME
-    which is not sticky, so the risk applies. mkstemp + fchmod + rename
-    replaces the target inode-by-inode: rename(2) does not follow a symlink
-    at the destination, and mkstemp names the temporary randomly.
+    A fresh, randomly named 0600 file is created O_EXCL|O_NOFOLLOW relative to
+    the held directory descriptor, written and fsynced, then renamed over the
+    target relative to the same descriptor -- rename(2) replaces a symlink at
+    the destination rather than following it -- and the directory is fsynced.
     """
-    parent = _prepare_state_dir(path)
     encoded = json.dumps(payload, indent=2).encode("utf-8") + b"\n"
     if len(encoded) > _MAX_SETTINGS_BYTES:
         raise OSError(
             f"settings serialise to {len(encoded)} bytes, over the {_MAX_SETTINGS_BYTES} cap"
         )
-    fd, tmp = tempfile.mkstemp(prefix=".hskctl-settings-", dir=parent)
+    name = os.path.basename(path)
+    if not name or name in (".", ".."):
+        raise OSError(f"{path} does not name a file")
+    dir_fd = _open_state_dir(path, private)
     try:
-        os.fchmod(fd, 0o600)
-        view = memoryview(encoded)
-        while view:
-            n = os.write(fd, view)
-            view = view[n:]
-        os.fsync(fd)
-        os.close(fd)
-        fd = -1
-        os.replace(tmp, path)
-        dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        tmp = f".hskctl-settings-{secrets.token_hex(8)}.tmp"
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=dir_fd,
+        )
         try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(encoded)
+            while view:
+                n = os.write(fd, view)
+                view = view[n:]
+            os.fsync(fd)
+            os.rename(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
             os.fsync(dir_fd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
         finally:
-            os.close(dir_fd)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        if fd != -1:
             os.close(fd)
-        raise
+    finally:
+        os.close(dir_fd)
 
 
 def _read_bounded_json(path: str) -> dict:
-    """Read a settings file through an fd we validated, with a byte cap.
-
-    `open(path, "r")` follows symlinks, blocks on a FIFO planted at the path,
-    and reads to EOF before any size check. This does one open(O_NOFOLLOW|
-    O_NONBLOCK), fstats the descriptor for regular file / owner / size, then
-    reads MAX + 1 bytes and rejects overflow.
-    """
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError(f"{path} is not a regular file")
-        if st.st_uid != os.geteuid():
-            raise OSError(f"{path} is not owned by you")
-        if st.st_size > _MAX_SETTINGS_BYTES:
-            raise OSError(f"{path} is larger than {_MAX_SETTINGS_BYTES} bytes; refusing")
-        os.set_blocking(fd, True)
-        data = b""
-        while len(data) <= _MAX_SETTINGS_BYTES:
-            chunk = os.read(fd, min(65536, _MAX_SETTINGS_BYTES + 1 - len(data)))
-            if not chunk:
-                break
-            data += chunk
-        if len(data) > _MAX_SETTINGS_BYTES:
-            raise OSError(f"{path} grew past the {_MAX_SETTINGS_BYTES} byte cap during read")
-    finally:
-        os.close(fd)
-    return json.loads(data.decode("utf-8"))
+    """The settings file, through one validated O_NOFOLLOW descriptor, capped."""
+    return read_bounded_json(path, _MAX_SETTINGS_BYTES)
 
 
 def cmd_save(args) -> int:
@@ -1266,7 +1253,9 @@ def cmd_save(args) -> int:
     keep = {k: v for k, v in settings.items() if profile.field_writable(k)}
     path = args.file or SETTINGS_PATH
     try:
-        _atomic_write_json(path, {"model": profile.model, "settings": keep})
+        _atomic_write_json(
+            path, {"model": profile.model, "settings": keep}, private=not args.file
+        )
     except OSError as exc:
         return _fail(f"could not write {path}: {exc}", args.json)
 

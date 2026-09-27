@@ -21,8 +21,7 @@
     "defaults": {
       "batteryPollSec": 300,
       "lowBatteryPercent": 15,
-      "showBatteryLabel": true,
-      "hskctlPath": ""
+      "showBatteryLabel": true
     },
     "schema": [
       {
@@ -48,12 +47,6 @@
         "type": "boolean",
         "label": "Show battery percentage in the bar",
         "defaultValue": true
-      },
-      {
-        "key": "hskctlPath",
-        "type": "string",
-        "label": "Path to hskctl (blank = the copy bundled with this plugin)",
-        "defaultValue": ""
       }
     ]
   }

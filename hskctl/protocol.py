@@ -13,16 +13,30 @@ not this file.
 
 from __future__ import annotations
 
-import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
+from .safeio import read_bounded_json
+
+# Bundled profiles first, so the protocol this plugin shipped with (and was
+# reviewed with) is the one that drives writes to the mouse. A same-named file
+# under ~/.config can no longer shadow it; the user directory only adds new
+# profile names, for someone mapping a mouse this plugin does not ship.
 PROFILE_SEARCH_PATHS = [
-    os.path.expanduser("~/.config/hskctl/profiles"),
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles"),
     "/usr/share/hskctl/profiles",
+    os.path.expanduser("~/.config/hskctl/profiles"),
 ]
+
+# The largest shipped profile is ~21 KiB. A profile decides which bytes are
+# written to the mouse, so it is read like any other untrusted file: one
+# O_NOFOLLOW descriptor, validated, capped.
+_MAX_PROFILE_BYTES = 262144
+# Bounds `list_profiles`, which runs on every `status` without --profile.
+_MAX_PROFILES_PER_DIR = 64
+_PROFILE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 class ProtocolError(Exception):
@@ -503,13 +517,31 @@ class Profile:
         return None
 
 
+def _valid_profile_name(name: str) -> bool:
+    return bool(_PROFILE_NAME_RE.fullmatch(name)) and ".." not in name
+
+
 def load_profile(name: str | None = None) -> Profile:
-    filename = f"{name}.json" if name else "gwolves-hsk-pro-4k.json"
+    name = name or "gwolves-hsk-pro-4k"
+    if not _valid_profile_name(name):
+        raise ProtocolError(f"{name!r} is not a profile name (letters, digits, . _ -)")
+    filename = f"{name}.json"
     for directory in PROFILE_SEARCH_PATHS:
         candidate = os.path.join(directory, filename)
-        if os.path.exists(candidate):
-            with open(candidate, "r", encoding="utf-8") as fh:
-                return Profile(json.load(fh), candidate)
+        try:
+            # Root may own /usr/share; nobody else may own any of them, and
+            # nobody but the owner may be able to rewrite one.
+            data = read_bounded_json(
+                candidate,
+                _MAX_PROFILE_BYTES,
+                allowed_owners=(os.geteuid(), 0),
+                reject_shared_write=True,
+            )
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            raise ProtocolError(f"refusing profile {candidate}: {exc}") from exc
+        return Profile(data, candidate)
     raise ProtocolError(
         f"no profile named {filename!r} found in: {', '.join(PROFILE_SEARCH_PATHS)}"
     )
@@ -518,9 +550,22 @@ def load_profile(name: str | None = None) -> Profile:
 def list_profiles() -> list[str]:
     seen = []
     for directory in PROFILE_SEARCH_PATHS:
-        if not os.path.isdir(directory):
+        try:
+            entries = os.scandir(directory)
+        except OSError:
             continue
-        for entry in sorted(os.listdir(directory)):
-            if entry.endswith(".json") and entry[:-5] not in seen:
-                seen.append(entry[:-5])
+        found = []
+        with entries:
+            for entry in entries:
+                if not entry.name.endswith(".json"):
+                    continue
+                name = entry.name[:-5]
+                if not _valid_profile_name(name):
+                    continue
+                found.append(name)
+                if len(found) >= _MAX_PROFILES_PER_DIR:
+                    break
+        for name in sorted(found):
+            if name not in seen:
+                seen.append(name)
     return seen

@@ -50,15 +50,28 @@ Item {
   readonly property int lowBatteryPercent: intSetting("lowBatteryPercent", 15, 0, 50)
   readonly property bool showBatteryLabel: setting("showBatteryLabel", true) === true
   // Omarchy clones the plugin to ~/.config/omarchy/plugins/<id>/, and the CLI
-  // ships inside it, so the widget works with nothing else installed. A
-  // non-empty hskctlPath setting overrides this.
-  readonly property string bundledHskctl: {
+  // ships inside it, so the widget works with nothing else installed. There
+  // is deliberately no setting to point this elsewhere: whatever runs here is
+  // handed the mouse's hidraw descriptor, so it is always the reviewed copy
+  // beside this file.
+  readonly property string hskctl: {
     var url = Qt.resolvedUrl("bin/hskctl").toString()
     return url.indexOf("file://") === 0 ? url.substring(7) : url
   }
-  readonly property string hskctl: {
-    var configured = String(setting("hskctlPath", "") || "").trim()
-    return configured !== "" ? configured : bundledHskctl
+
+  // Every hskctl child gets this environment and nothing inherited. The
+  // launcher is a bash script, and a non-interactive bash still sources
+  // $BASH_ENV; PYTHON*, LD_PRELOAD and the like would ride in the same way.
+  // hskctl needs HOME (user profiles) and XDG_RUNTIME_DIR (its device lock),
+  // and every executable it names is an absolute path, so PATH is fixed.
+  readonly property var childEnvironment: {
+    var env = { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }
+    var names = ["HOME", "XDG_RUNTIME_DIR"]
+    for (var i = 0; i < names.length; i++) {
+      var v = Quickshell.env(names[i])
+      if (v !== undefined && v !== null && String(v) !== "") env[names[i]] = String(v)
+    }
+    return env
   }
 
   // Which build is running, for the panel footer. It comes back in hskctl's
@@ -142,23 +155,31 @@ Item {
     return effectiveValues[field]
   }
 
+  // Anything asking for a refresh on purpose -- the user, IPC, a plug/unplug
+  // event -- also gives the automatic retry its full budget back.
   function refresh() {
+    _retryFailures = 0
+    return _refresh()
+  }
+
+  function _refresh() {
     // A read must not overlap a write. Both are separate hskctl processes and
     // the device has one reply buffer, so interleaving them makes a write look
     // ignored and a read-back report the old value. hskctl also takes a file
     // lock, which covers the other bar instances and the CLI; this just avoids
     // queueing behind ourselves.
-    if (suspended) return
-    if (statusProcess.running || setProcess.running || _queue.length > 0) return
+    if (suspended) return false
+    if (statusProcess.running || setProcess.running || _queue.length > 0) return false
     // A refresh clears `pending`, so one landing between a click and its write
     // would snap the number back to the old value and then forward again.
-    if (Object.keys(_soon).length > 0) return
+    if (Object.keys(_soon).length > 0) return false
     refreshing = true
     _statusStdout = ""; _statusStdoutBytes = 0
     _statusStderr = ""; _statusStderrBytes = 0
     _statusOverflow = false
     statusProcess.command = [hskctl, "--json", "status"]
     statusProcess.running = true
+    return true
   }
 
   // The fast, quiet path: one exchange for batteryPercent + charging, merged
@@ -302,17 +323,41 @@ Item {
   // back up and come back as `error`. Without this, `pollBattery`/`batteryTimer`
   // are gated on `state === "ready"` (see below), so a single failed refresh
   // there means nothing else ever asks the mouse again until the panel is
-  // opened or refreshed by hand. Retrying every few seconds while not ready
-  // costs nothing when a mouse is actually there to answer, and matches the
-  // pre-inotify behaviour this plugin used to have for the login-enumeration
-  // case too.
+  // opened or refreshed by hand.
+  //
+  // Bounded, though: exponential backoff with jitter from 5 s up to 5 min,
+  // and a budget of eight attempts (about a quarter of an hour in all) before
+  // it gives up. A missing udev rule or a mouse that is simply not there
+  // would otherwise start a Python process every few seconds for the rest of
+  // the session. Any deliberate refresh -- including the link watcher seeing
+  // a plug/unplug -- restores the budget.
   readonly property int _retryMs: 5000
+  readonly property int _retryMaxMs: 300000
+  readonly property int _retryBudget: 8
+  property int _retryFailures: 0
+
+  function _afterStatus() {
+    if (state === "ready") {
+      _retryFailures = 0
+      retryTimer.stop()
+      return
+    }
+    if (_destroyed || suspended || _retryFailures >= _retryBudget) return
+    var base = Math.min(_retryMaxMs, _retryMs * Math.pow(2, _retryFailures))
+    retryTimer.interval = base + Math.floor(Math.random() * base * 0.2)
+    _retryFailures += 1
+    retryTimer.restart()
+  }
+
   Timer {
     id: retryTimer
-    interval: root._retryMs
-    repeat: true
-    running: !root.suspended && root.state !== "ready" && root.state !== "loading"
-    onTriggered: root.refresh()
+    repeat: false
+    // Skipped because a write or read was in flight: try again at the same
+    // spacing without spending budget -- that attempt never happened.
+    onTriggered: {
+      if (root._destroyed || root.suspended) return
+      if (!root._refresh()) retryTimer.restart()
+    }
   }
 
   Timer {
@@ -338,12 +383,30 @@ Item {
   }
 
   // linkWatchProcess is meant to run for as long as the panel exists; if it
-  // ever exits (killed, hskctl crashed) restart it once after a short delay
-  // rather than silently leaving plug/unplug undetected for the rest of the
-  // session.
+  // exits (killed, hskctl crashed) restart it, rather than silently leaving
+  // plug/unplug undetected for the rest of the session. A watcher that keeps
+  // dying straight away backs off exponentially (2 s up to 5 min, with
+  // jitter) and stops after six quick failures in a row instead of
+  // respawning every two seconds forever. One that ran for a minute or more
+  // was healthy, so its exit starts the count over.
+  readonly property int _linkRestartMs: 2000
+  readonly property int _linkRestartMaxMs: 300000
+  readonly property int _linkRestartBudget: 6
+  readonly property int _linkHealthyMs: 60000
+  property int _linkFailures: 0
+  property real _linkStartedAt: 0
+
+  function _scheduleLinkRestart() {
+    if (Date.now() - _linkStartedAt >= _linkHealthyMs) _linkFailures = 0
+    if (_linkFailures >= _linkRestartBudget) return
+    var base = Math.min(_linkRestartMaxMs, _linkRestartMs * Math.pow(2, _linkFailures))
+    linkWatchRestartTimer.interval = base + Math.floor(Math.random() * base * 0.2)
+    _linkFailures += 1
+    linkWatchRestartTimer.restart()
+  }
+
   Timer {
     id: linkWatchRestartTimer
-    interval: 2000
     repeat: false
     onTriggered: if (!root._destroyed) root._startLinkWatch()
   }
@@ -427,6 +490,8 @@ Item {
     id: statusProcess
     running: false
     command: []
+    clearEnvironment: true
+    environment: root.childEnvironment
     stdout: SplitParser {
       splitMarker: ""
       onRead: function(chunk) {
@@ -464,11 +529,13 @@ Item {
         root.pending = ({})
         root.lastError = "hskctl output exceeded " + root._maxProcessBytes + " bytes; killed"
         root.changed()
+        root._afterStatus()
         return
       }
       var out = root._statusStdout
       if (out.trim() !== "") {
         root.applyStatus(out)
+        root._afterStatus()
         return
       }
       // Empty stdout means hskctl never ran -- not installed, or not on the
@@ -482,6 +549,7 @@ Item {
         ? err.split("\n")[0]
         : "Could not run " + root.hskctl + " (exit " + exitCode + ")"
       root.changed()
+      root._afterStatus()
     }
   }
 
@@ -489,6 +557,8 @@ Item {
     id: setProcess
     running: false
     command: []
+    clearEnvironment: true
+    environment: root.childEnvironment
     stdout: SplitParser {
       splitMarker: ""
       onRead: function(chunk) {
@@ -566,6 +636,8 @@ Item {
     id: batteryProcess
     running: false
     command: []
+    clearEnvironment: true
+    environment: root.childEnvironment
     stdout: SplitParser {
       splitMarker: ""
       onRead: function(chunk) {
@@ -598,6 +670,8 @@ Item {
     id: linkWatchProcess
     running: false
     command: []
+    clearEnvironment: true
+    environment: root.childEnvironment
     stdout: SplitParser {
       splitMarker: "\n"
       onRead: function(line) {
@@ -613,7 +687,7 @@ Item {
     }
     onExited: function(exitCode, exitStatus) {
       if (root._destroyed) return
-      linkWatchRestartTimer.restart()
+      root._scheduleLinkRestart()
     }
   }
 
@@ -622,6 +696,7 @@ Item {
   function _startLinkWatch() {
     if (root._destroyed) return
     linkWatchProcess.command = [hskctl, "--json", "watch-link"]
+    root._linkStartedAt = Date.now()
     linkWatchProcess.running = true
   }
 
