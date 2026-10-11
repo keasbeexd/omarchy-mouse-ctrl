@@ -13,6 +13,7 @@ import fcntl
 import glob
 import os
 import re
+import stat
 import struct
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -224,17 +225,32 @@ def parse_report_descriptor(desc: bytes) -> dict:
     }
 
 
+def _require_char_device(fd: int, path: str) -> None:
+    """Refuse anything but a character device on the descriptor just opened.
+
+    `--device` takes any path, and a FIFO or a regular file planted there
+    would otherwise be handed ioctls and writes meant for a mouse. Checked on
+    the descriptor, so the node checked is the node used.
+    """
+    if not stat.S_ISCHR(os.fstat(fd).st_mode):
+        raise HidrawError(f"{path} is not a character device; refusing it")
+
+
 def describe(path: str) -> HidrawInfo | None:
     """Read everything about one hidraw node. Returns None if unreadable."""
     try:
-        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError:
         # Fall back to read-only: enough for enumeration, not for feature reports.
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
         except OSError:
             return None
     try:
+        try:
+            _require_char_device(fd, path)
+        except OSError:
+            return None
         buf = array.array("B", [0] * 8)
         try:
             fcntl.ioctl(fd, HIDIOCGRAWINFO, buf, True)
@@ -292,7 +308,9 @@ class HidrawDevice:
 
     def __enter__(self) -> "HidrawDevice":
         try:
-            self._fd = os.open(self.path, os.O_RDWR)
+            # O_NONBLOCK so a FIFO at the path cannot hang the open before the
+            # type check runs; cleared again once it is known to be a device.
+            fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
         except PermissionError as exc:
             raise HidrawError(
                 f"No write access to {self.path}. Run "
@@ -301,6 +319,13 @@ class HidrawDevice:
             ) from exc
         except FileNotFoundError as exc:
             raise HidrawError(f"{self.path} disappeared -- is the mouse plugged in?") from exc
+        try:
+            _require_char_device(fd, self.path)
+            os.set_blocking(fd, True)
+        except BaseException:
+            os.close(fd)
+            raise
+        self._fd = fd
         return self
 
     def __exit__(self, *exc) -> None:

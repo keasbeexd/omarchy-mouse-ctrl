@@ -295,6 +295,13 @@ def parse_template(template: str, length: int) -> bytearray:
     return buf
 
 
+def _bounded_length(transport: dict, key: str, default: int) -> int:
+    length = transport.get(key, default)
+    if isinstance(length, bool) or not isinstance(length, int) or not 2 <= length <= 4096:
+        raise ProtocolError(f"profile {key} {length!r} is outside 2..4096")
+    return length
+
+
 @dataclass
 class Profile:
     data: dict
@@ -315,6 +322,22 @@ class Profile:
     @property
     def transport(self) -> dict:
         return self.data.get("transport", {})
+
+    @property
+    def packet_length(self) -> int:
+        """The transport's packet size, refused outside a sane range.
+
+        A profile can come from ~/.config, and this number sizes a buffer
+        and an ioctl -- so it is checked like any other input, not trusted.
+        """
+        return _bounded_length(self.transport, "packetLength", 65)
+
+    @property
+    def read_length(self) -> int:
+        """Bytes to read back per exchange; packetLength unless set apart."""
+        if self.transport.get("readLength"):
+            return _bounded_length(self.transport, "readLength", 65)
+        return self.packet_length
 
     @property
     def match(self) -> dict:
@@ -398,7 +421,7 @@ class Profile:
         wireless: bool = False,
     ) -> bytes:
         cmd = self.command(command_name)
-        length = self.transport.get("packetLength", 65)
+        length = self.packet_length
         template = cmd.get("set" if write else "get") or cmd.get("request")
         if not template:
             raise NotDiscovered(f"command:{command_name}:{'set' if write else 'get'}")
@@ -460,7 +483,7 @@ class Profile:
 
     def build(self, command_name: str, values: dict | None = None) -> bytes:
         cmd = self.command(command_name)
-        length = self.transport.get("packetLength", 65)
+        length = self.packet_length
         buf = parse_template(cmd["request"], length)
         for key, value in (values or {}).items():
             spec = cmd.get("params", {}).get(key)

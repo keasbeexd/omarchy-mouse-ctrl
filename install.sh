@@ -20,6 +20,15 @@
 
 set -euo pipefail
 
+# Every other tool this script runs -- cat, sed, stat, mkdir, readlink, awk --
+# is resolved through a fixed PATH, not the caller's. `udev_rule_text` builds
+# the text that `sudo install` writes into /etc, so a `cat` or `sed` shadowed
+# earlier on PATH would otherwise get to choose what root installs. The
+# caller's PATH is kept only to say whether hskctl will be found on it.
+USER_PATH="${PATH:-}"
+PATH=/usr/bin:/bin
+export PATH
+
 # Absolute paths for anything that might be shadowed on PATH. This script
 # invokes sudo (for the udev rule) and writes a symlink from ~/.local/bin, so
 # a shadow tool would either be given the escalation or would end up on the
@@ -176,7 +185,10 @@ link_cli() {
     die "$BIN_DIR/hskctl exists and is not a symlink; move it aside first"
   fi
   "$LN" -sfn "$REPO_DIR/bin/hskctl" "$BIN_DIR/hskctl"
-  command -v hskctl >/dev/null 2>&1 || warn "$BIN_DIR is not on your PATH"
+  case ":$USER_PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) warn "$BIN_DIR is not on your PATH" ;;
+  esac
 }
 
 copy_plugin() {
