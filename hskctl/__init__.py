@@ -1,7 +1,8 @@
 """hskctl -- Linux configuration for supported G-Wolves and Pulsar mice."""
 
-import json
 import os
+
+from .safeio import read_bounded_json
 
 # One version number, and it lives in manifest.json because that is the one the
 # Omarchy marketplace displays. A second copy here would drift from it -- it
@@ -11,17 +12,25 @@ import os
 # The CLI ships inside the plugin, so the manifest is always beside it. The
 # fallback covers hskctl being copied out on its own.
 _FALLBACK_VERSION = "0.0.0-unpackaged"
+# The manifest is about 1.5 KiB.
+_MAX_MANIFEST_BYTES = 65536
 
 
 def _read_version() -> str:
     manifest = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manifest.json"
     )
+    # Through one validated O_NOFOLLOW descriptor and capped, like every other
+    # file hskctl reads: this runs on every invocation, the widget's included.
     try:
-        with open(manifest, "r", encoding="utf-8") as fh:
-            return json.load(fh).get("version") or _FALLBACK_VERSION
-    except (OSError, ValueError, AttributeError):
+        version = read_bounded_json(
+            manifest, _MAX_MANIFEST_BYTES, allowed_owners=(os.geteuid(), 0)
+        ).get("version")
+    except (OSError, ValueError):
         return _FALLBACK_VERSION
+    if not isinstance(version, str) or not version:
+        return _FALLBACK_VERSION
+    return version[:32]
 
 
 __version__ = _read_version()

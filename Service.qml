@@ -289,7 +289,8 @@ Item {
     _setStdout = ""; _setStdoutBytes = 0
     _setStderr = ""; _setStderrBytes = 0
     _setOverflow = false
-    setProcess.command = [hskctl, "--json", "set", String(job.field), String(job.value)]
+    // `--` so a value can never be read as an option by argparse.
+    setProcess.command = [hskctl, "--json", "set", "--", String(job.field), String(job.value)]
     setProcess.running = true
   }
 
@@ -545,8 +546,10 @@ Item {
       root.writable = []
       root.pending = ({})
       var err = root._statusStderr.trim()
+      // Sanitised and capped here, at ingestion, not only where it is drawn:
+      // lastError also feeds isPermissionError and anything else that reads it.
       root.lastError = err !== ""
-        ? err.split("\n")[0]
+        ? Model.plain(err.split("\n")[0], 400)
         : "Could not run " + root.hskctl + " (exit " + exitCode + ")"
       root.changed()
       root._afterStatus()
@@ -672,29 +675,60 @@ Item {
     command: []
     clearEnvironment: true
     environment: root.childEnvironment
+    // Raw chunks, not a newline SplitParser: that one has to buffer until a
+    // newline arrives before onRead can see the line, so it is no byte
+    // ceiling at all. Lines are assembled here against a hard cap instead,
+    // and a line longer than any event hskctl writes stops the watcher.
     stdout: SplitParser {
-      splitMarker: "\n"
-      onRead: function(line) {
-        if (!Model.parseLinkEvent(line)) return
-        // "initial" (cold start) and "changed" (a real plug/unplug) both
-        // mean the same thing here: go find out what the connection and
-        // settings actually are now. This also covers the one race the old
-        // fast-retry timer existed for -- a dongle still enumerating at
-        // login is exactly a hidraw node appearing a moment later, which is
-        // what this watcher is watching for.
-        root.refresh()
+      splitMarker: ""
+      onRead: function(chunk) {
+        var buf = root._linkBuffer + String(chunk || "")
+        var nl
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          var line = buf.substring(0, nl)
+          buf = buf.substring(nl + 1)
+          // "initial" (cold start) and "changed" (a real plug/unplug) both
+          // mean the same thing here: go find out what the connection and
+          // settings actually are now. This also covers the one race the old
+          // fast-retry timer existed for -- a dongle still enumerating at
+          // login is exactly a hidraw node appearing a moment later, which is
+          // what this watcher is watching for.
+          if (line.length <= root._maxLinkLineBytes && Model.parseLinkEvent(line))
+            root.refresh()
+        }
+        if (buf.length > root._maxLinkLineBytes) {
+          root._linkBuffer = ""
+          linkWatchProcess.signal(15)
+          linkKillTimer.restart()
+          return
+        }
+        root._linkBuffer = buf
       }
     }
     onExited: function(exitCode, exitStatus) {
+      linkKillTimer.stop()
+      root._linkBuffer = ""
       if (root._destroyed) return
       root._scheduleLinkRestart()
     }
+  }
+
+  // One watch-link event is a few dozen bytes; anything near this is not one.
+  readonly property int _maxLinkLineBytes: 1024
+  property string _linkBuffer: ""
+
+  Timer {
+    id: linkKillTimer
+    interval: 1500
+    repeat: false
+    onTriggered: if (linkWatchProcess.running) linkWatchProcess.signal(9)
   }
 
   property bool _destroyed: false
 
   function _startLinkWatch() {
     if (root._destroyed) return
+    root._linkBuffer = ""
     linkWatchProcess.command = [hskctl, "--json", "watch-link"]
     root._linkStartedAt = Date.now()
     linkWatchProcess.running = true

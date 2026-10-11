@@ -269,6 +269,9 @@ That takes the plugin out of the shell. What survives, and how to remove it:
   it if you kept one. It only ever holds the writable settings the mouse
   itself reports (DPI, polling rate, sensor toggles and the like), never
   anything private.
+- Any profile you added yourself under `~/.config/hskctl/profiles/` stays
+  too. hskctl only ever reads that directory; delete it along with
+  `~/.config/hskctl/` if you no longer want either.
 
 Nothing else persists: the plugin writes no cache, no log, no state file on
 its own. While it runs, hskctl holds an empty lock file,

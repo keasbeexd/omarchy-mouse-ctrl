@@ -331,7 +331,7 @@ class Session:
 
     def _exchange(self, packet: bytes, command: str | None = None) -> bytes:
         t = self.profile.transport
-        read_len = t.get("readLength") or t.get("packetLength")
+        read_len = self.profile.read_length
         report_id = t.get("reportId") or 0
         settle = self._settle(command)
         # Tracing lives here rather than in the callers so that *every* wire
