@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Setup for the Mouse Control plugin.
+# Setup for the Mouse CTRL plugin.
 #
 #   --udev       grant your user access to the mouse            (REQUIRED)
 #   --link       put `hskctl` on your PATH for use in a terminal
@@ -73,14 +73,16 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # shell would never look in -- the same shape of break that got the first
 # submission rejected.
 #
-# `-I` is Python's isolated mode -- no PYTHONPATH, no user site-packages -- so
-# a same-user process cannot shadow the json module by dropping a file in the
-# user's site-packages dir. sed is the fallback for a system without python
-# so `install.sh --help` still works.
+# `-I -S` is Python's isolated mode with no site-packages -- no PYTHONPATH, no
+# user site dir -- so a same-user process cannot shadow the json module by
+# dropping a file in it. The manifest is read through the same bundled
+# no-symlink, size-capped reader hskctl uses for every file it did not create.
+# sed (on at most 64 KiB) is the fallback for a system without python so
+# `install.sh --help` still works.
 PLUGIN_ID="$(
-  "$PYTHON" -I -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" \
-    "$REPO_DIR/manifest.json" 2>/dev/null \
-  || sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_DIR/manifest.json" | head -1
+  "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.safeio import read_bounded_json; print(read_bounded_json(sys.argv[2], 65536).get("id", ""))' \
+    "$REPO_DIR" "$REPO_DIR/manifest.json" 2>/dev/null \
+  || head -c 65536 -- "$REPO_DIR/manifest.json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 )"
 [[ -n "$PLUGIN_ID" ]] || die "could not read the plugin id out of manifest.json"
 # Character class for a plugin id: dotted lowercase segments. Reject anything
@@ -106,7 +108,7 @@ public_dir() {
 
 udev_rule_text() {
   cat <<HEADER
-# Mouse Control plugin -- hidraw access for every supported mouse vendor.
+# Mouse CTRL plugin -- hidraw access for every supported mouse vendor.
 #
 # Configuring the mouse means sending HID *feature* reports, and the hidraw
 # ioctls for those (HIDIOCSFEATURE / HIDIOCGFEATURE) require the device node to

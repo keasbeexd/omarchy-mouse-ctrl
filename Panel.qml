@@ -16,12 +16,29 @@ Panel {
   property int cursorIndex: 0
   property bool cursorActive: false
 
+  // Every colour in this panel is one of these, and every one of these comes
+  // from the active Omarchy theme -- nothing below names a colour of its own.
+  // The only literal colours in the tree are the DPI LED presets in Model.js,
+  // which are values written to the mouse's LED, not panel styling.
+  //
+  // Secondary text is the foreground at reduced alpha rather than
+  // Qt.darker(foreground): on a light theme the foreground is already dark,
+  // and darkening it makes "dim" text *more* prominent, not less.
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color accent: Color.accent
+  readonly property color dim: root.withAlpha(foreground, 0.6)
+  readonly property color faint: root.withAlpha(foreground, 0.18)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
-  readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
+  readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, accent) : "transparent"
+  readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, accent) : "transparent"
+
+  // Qt.lighter(c, 1.0) is an identity that also turns a colour *string* into
+  // a color value, so this works whichever form the host hands over.
+  function withAlpha(c, a) {
+    var q = Qt.lighter(c, 1.0)
+    return Qt.rgba(q.r, q.g, q.b, a)
+  }
 
   readonly property var rows: hsk.rows
   // Only stage 1 is ever mapped (see Model.dpiStage1Info) -- both profiles
@@ -44,7 +61,7 @@ Panel {
   // the bar's own foreground.
   readonly property color barIconColor: hsk.lowBattery
     ? root.urgent
-    : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55))
+    : (hsk.ready ? barForeground : root.withAlpha(barForeground, 0.6))
 
   // When the mouse is plugged in, the percentage recolours to the theme's
   // accent so "charging" is visible at a glance -- the accent tracks whatever
@@ -52,8 +69,8 @@ Panel {
   readonly property color barLabelColor: hsk.lowBattery
     ? root.urgent
     : (hsk.ready && hsk.value("charging") === true
-       ? Color.accent
-       : (hsk.ready ? barForeground : Qt.darker(barForeground, 1.55)))
+       ? root.accent
+       : (hsk.ready ? barForeground : root.withAlpha(barForeground, 0.6)))
 
   // The battery percentage drawn beside the glyph -- see the BarIconButton
   // below for why the label has to live inside the icon. Blank in a vertical
@@ -332,7 +349,19 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        // The stock Controls style paints its own grey; draw the handle in
+        // the theme's colours instead.
+        ScrollBar.vertical: ScrollBar {
+          id: panelScroll
+          policy: ScrollBar.AsNeeded
+          contentItem: Rectangle {
+            implicitWidth: Style.space(4)
+            implicitHeight: Style.space(24)
+            radius: Style.cornerRadius > 0 ? width / 2 : 0
+            color: panelScroll.pressed ? root.accent : root.dim
+            opacity: panelScroll.active ? 1.0 : 0.5
+          }
+        }
 
         Column {
           id: column
@@ -476,7 +505,7 @@ Panel {
                   : "hskctl probe"
                 wrapMode: Text.WrapAnywhere
                 color: root.foreground
-                font.family: "monospace"
+                font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
             }
@@ -543,7 +572,7 @@ Panel {
                 options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
                 value: String(hsk.value("pollingRate"))
                 foreground: root.foreground
-                accent: Color.accent
+                accent: root.accent
                 fontFamily: root.fontFamily
                 cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
                 onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
@@ -570,7 +599,7 @@ Panel {
                 options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
                 value: String(hsk.value("liftOffDistance"))
                 foreground: root.foreground
-                accent: Color.accent
+                accent: root.accent
                 fontFamily: root.fontFamily
                 onChanged: function(v) { hsk.set("liftOffDistance", v) }
                 onHovered: function(index, on) {
@@ -620,7 +649,7 @@ Panel {
                   description: Model.toggleDescription(modelData)
                   checked: hsk.value(modelData) === true
                   foreground: root.foreground
-                  accent: Color.accent
+                  accent: root.accent
                   fontFamily: root.fontFamily
                   hasCursor: {
                     var row = root.currentRow()
@@ -689,7 +718,7 @@ Panel {
                 // path) the same way as the bar tooltip. The literal prefix
                 // and the version stay as-is.
                 text: {
-                  var parts = ["Mouse Control v" + Model.plain(hsk.pluginVersion, 32)]
+                  var parts = ["Mouse CTRL v" + Model.plain(hsk.pluginVersion, 32)]
                   if (hsk.has("firmwareVersion"))
                     parts.push("firmware " + Model.plain(hsk.value("firmwareVersion"), 40))
                   if (hsk.devicePath !== "") parts.push(Model.plain(hsk.devicePath, 60))
@@ -765,10 +794,21 @@ Panel {
           selectByMouse: true
           horizontalAlignment: Text.AlignRight
           color: root.foreground
+          selectionColor: root.withAlpha(root.accent, 0.4)
+          selectedTextColor: root.foreground
+          placeholderTextColor: root.dim
+          opacity: enabled ? 1.0 : 0.5
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
           maximumLength: 5
+          background: Rectangle {
+            implicitHeight: Style.space(28)
+            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+            color: "transparent"
+            border.width: 1
+            border.color: dpiField.activeFocus ? root.accent : root.dim
+          }
           validator: IntValidator { bottom: Model.DPI_MIN; top: Model.DPI_MAX }
 
           // Only follow the device (and the slider) while not focused, or a
@@ -798,6 +838,38 @@ Panel {
         stepSize: Model.DPI_STEP
         snapMode: Slider.SnapAlways
         enabled: stageRow.dpiWritable
+        opacity: enabled ? 1.0 : 0.5
+
+        // Track and handle drawn from the theme rather than left to the
+        // Controls style, whose palette knows nothing about Omarchy themes.
+        background: Rectangle {
+          x: dpiSlider.leftPadding
+          y: dpiSlider.topPadding + dpiSlider.availableHeight / 2 - height / 2
+          implicitWidth: Style.space(200)
+          implicitHeight: Style.space(4)
+          width: dpiSlider.availableWidth
+          height: implicitHeight
+          radius: Style.cornerRadius > 0 ? height / 2 : 0
+          color: root.faint
+
+          Rectangle {
+            width: dpiSlider.visualPosition * parent.width
+            height: parent.height
+            radius: parent.radius
+            color: root.accent
+          }
+        }
+
+        handle: Rectangle {
+          x: dpiSlider.leftPadding + dpiSlider.visualPosition * (dpiSlider.availableWidth - width)
+          y: dpiSlider.topPadding + dpiSlider.availableHeight / 2 - height / 2
+          implicitWidth: Style.space(14)
+          implicitHeight: Style.space(14)
+          radius: Style.cornerRadius > 0 ? width / 2 : 0
+          color: dpiSlider.pressed || dpiSlider.hovered ? root.accent : root.foreground
+          border.width: 1
+          border.color: root.accent
+        }
 
         // Track the device only while not being dragged -- otherwise a
         // refresh mid-drag yanks the handle back under the pointer and
@@ -858,7 +930,9 @@ Panel {
           Layout.preferredHeight: Style.space(14)
           Layout.alignment: Qt.AlignVCenter
           radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-          color: stageRow.swatch
+          // Only a validated #rrggbb reaches a colour property; anything else
+          // the device reports shows as an empty outline.
+          color: Model.isValidHexColor(stageRow.swatch) ? stageRow.swatch : "transparent"
           border.width: 1
           border.color: swatchMouse.containsMouse ? root.foreground : root.dim
 
@@ -886,9 +960,20 @@ Panel {
           enabled: stageRow.colorWritable
           selectByMouse: true
           color: root.foreground
-          font.family: "monospace"
+          selectionColor: root.withAlpha(root.accent, 0.4)
+          selectedTextColor: root.foreground
+          placeholderTextColor: root.dim
+          opacity: enabled ? 1.0 : 0.5
+          font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           maximumLength: 7
+          background: Rectangle {
+            implicitHeight: Style.space(28)
+            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+            color: "transparent"
+            border.width: 1
+            border.color: hexField.activeFocus ? root.accent : root.dim
+          }
           validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
 
           // Only follow the device while the field is not focused, or a
