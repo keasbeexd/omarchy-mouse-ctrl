@@ -3,7 +3,7 @@
   "id": "keasbeexd.mousectrl",
   "name": "Mouse Control",
   "version": "2.0.0",
-  "author": "Marc (@keasbee)",
+  "author": "@keasbeexd",
   "license": "MIT",
   "description": "Battery, DPI, polling rate and sensor settings for supported G-Wolves and Pulsar mice, in the Omarchy bar.",
   "kinds": [
