@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -20 300 360" width="300" height="360">
+  <title>Mouse CTRL</title>
+  <defs>
+    <clipPath id="body">
+      <path d="M150 52 C206 52 216 104 216 162 C216 226 191 262 150 262 C109 262 84 226 84 162 C84 104 94 52 150 52 Z"/>
+    </clipPath>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fbf1c7" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#d8a657" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- 2.4 GHz signal, fading out like the beam of a lamp -->
+  <g fill="none" stroke="#d8a657" stroke-width="7" stroke-linecap="round">
+    <path d="M134.6 31.6 A24 24 0 0 1 165.4 31.6" stroke-opacity="0.95"/>
+    <path d="M123 17.8 A42 42 0 0 1 177 17.8" stroke-opacity="0.6"/>
+    <path d="M111.4 4 A60 60 0 0 1 188.6 4" stroke-opacity="0.3"/>
+  </g>
+
+  <!-- mouse pad -->
+  <path d="M74 256 Q74 248 84 248 L216 248 Q226 248 226 256 L234 274 L66 274 Z" fill="#a89984"/>
+
+  <!-- body -->
+  <path d="M150 52 C206 52 216 104 216 162 C216 226 191 262 150 262 C109 262 84 226 84 162 C84 104 94 52 150 52 Z" fill="#d4be98"/>
+  <g clip-path="url(#body)">
+    <rect x="80" y="158" width="140" height="24" fill="#ea6962"/>
+    <rect x="80" y="204" width="140" height="24" fill="#ea6962"/>
+    <!-- button seams -->
+    <path d="M84 126 Q150 138 216 126" fill="none" stroke="#a89984" stroke-width="4"/>
+    <path d="M150 52 L150 128" stroke="#a89984" stroke-width="4"/>
+  </g>
+
+  <!-- scroll wheel, lit -->
+  <circle cx="150" cy="92" r="30" fill="url(#glow)"/>
+  <rect x="139" y="70" width="22" height="44" rx="11" fill="#3c3836"/>
+  <rect x="143" y="76" width="14" height="32" rx="7" fill="#d8a657"/>
+  <rect x="146" y="82" width="8" height="12" rx="4" fill="#fbf1c7"/>
+
+  <!-- glide trail -->
+  <path d="M32 298 q20 -14 40 0 t40 0 t40 0 t40 0 t40 0 t40 0" fill="none" stroke="#7daea3" stroke-width="7" stroke-linecap="round"/>
+  <path d="M60 322 q20 -12 40 0 t40 0 t40 0 t40 0 t40 0" fill="none" stroke="#5a7d76" stroke-width="6" stroke-linecap="round"/>
+</svg>

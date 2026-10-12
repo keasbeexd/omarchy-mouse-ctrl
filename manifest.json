@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "keasbeexd.mousectrl",
-  "name": "Mouse Control",
-  "version": "2.0.0",
+  "name": "Mouse CTRL",
+  "version": "2.1.0",
   "author": "Marc @keasbeexd",
   "license": "MIT",
   "description": "Battery, DPI, polling rate and sensor settings for supported G-Wolves and Pulsar mice, in the Omarchy bar.",
@@ -13,7 +13,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Mouse Control",
+    "displayName": "Mouse CTRL",
     "description": "Show mouse battery and switch DPI, polling rate, and sensor settings.",
     "category": "Hardware",
     "allowMultiple": false,

@@ -1,19 +1,17 @@
-# Mouse Control — an Omarchy plugin
+# Mouse CTRL — an Omarchy plugin
 
 Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
-**Pulsar** mice, in the Omarchy bar.
+**Pulsar** mice, in the Omarchy bar. The widget and panel take every colour
+from your active Omarchy theme.
 
-![The Mouse Control bar widget and panel](preview.png)
+![The Mouse CTRL bar widget and panel](preview.png)
 
-> **Renamed and moved from HSK Mouse.** This plugin used to be G-Wolves-only,
-> called `keasbeexd.hskmouse` / "HSK Mouse", and lived in the
-> [`omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) repo. Now that it
-> also speaks Pulsar's protocol, it's `keasbeexd.mousectrl` / "Mouse Control"
-> instead, developed here in this repo (`omarchy-mouse-ctrl`) going forward.
-> `omarchy-hsk` still exists with the G-Wolves-only version, unchanged, for
-> anyone not ready to move. If you have the old version installed, see
-> [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse) below — it is neither
-> an automatic update nor an in-place one.
+> **Formerly HSK Mouse.** Versions before 2.0 were G-Wolves-only, called
+> `keasbeexd.hskmouse`, and lived in
+> [`omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk), which still
+> installs that old version unchanged. Moving to this plugin is a remove and
+> add, not an automatic update — see
+> [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse).
 
 Most of these mice have no libratbag support, and several vendors' own Linux
 story is "there isn't one" — DPI and polling rate configuration ships as a
@@ -47,7 +45,7 @@ omarchy plugin enable keasbeexd.mousectrl
 ```
 
 Then **unplug and replug** the mouse or its dongle, and add the **Mouse
-Control** widget to your bar.
+CTRL** widget to your bar.
 
 Why the second step matters: configuring the mouse means sending HID *feature*
 reports, and the hidraw ioctls that carry those need the device node opened
@@ -62,8 +60,9 @@ If something looks wrong, `hskctl doctor` says in the first few lines whether
 permissions are the problem.
 
 Requires Python 3.9+ at `/usr/bin/python3` — the distro one, always; the
-widget never looks for Python anywhere else. Nothing else — no pip packages, no daemon, no background
-service, no libratbag. The CLI the widget drives ships inside the plugin.
+widget never looks for Python anywhere else. Nothing else: no pip packages,
+no daemon, no background service, no libratbag. The CLI the widget drives
+ships inside the plugin.
 
 ## What it does
 
@@ -152,6 +151,13 @@ hover it for the firmware version and which hidraw node is in use. `hskctl
 The panel only renders controls for settings that can actually be written, so it
 never offers an action that comes back as an error.
 
+**Theming:** every colour in the bar widget and the panel comes from the
+active Omarchy theme — its foreground for text and outlines, its accent for
+the selected option, the slider and the charging percentage, and its urgent
+colour for low battery and errors. Nothing in the panel is a fixed colour of
+its own. The only literal colours are the three DPI LED presets, because
+those are the colours written to the mouse's LED, not panel styling.
+
 ## From the command line, and from scripts
 
 The plugin is a front end for `hskctl`, which is useful on its own:
@@ -193,7 +199,7 @@ to script a change.
 | Setting | Key | Default | |
 |---|---|---|---|
 | Battery poll | `batteryPollSec` | 300 | how often the bar re-reads the battery percentage, in seconds (30–3600) |
-| Low battery warning | `lowBatteryPercent` | 15 | when the icon turns urgent |
+| Low battery warning | `lowBatteryPercent` | 15 | the percentage at which the icon switches to the theme's urgent colour |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
 
 The battery percentage is the only reading that changes on its own, so it is
@@ -475,12 +481,12 @@ install.sh                                        udev rule, self-contained
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
 profiles/        one JSON file per supported mouse -- data, not code
-docs/            how the G-Wolves protocol was decoded, for anyone profiling a variant
+docs/            how the G-Wolves protocol was decoded, and the logo
 ```
 
 ## Contributing
 
-Bug reports and profiles for other mouse models are both welcome -- G-Wolves
+Bug reports and profiles for other mouse models are both welcome — G-Wolves
 variants and other Pulsar models alike. Open an issue at
 [keasbeexd/omarchy-mouse-ctrl](https://github.com/keasbeexd/omarchy-mouse-ctrl); for Pulsar
 mice, a `hskctl probe --json` and `hskctl doctor` capture from real hardware
