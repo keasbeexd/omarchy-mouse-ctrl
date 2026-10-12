@@ -9,7 +9,7 @@ Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
 > called `keasbeexd.hskmouse` / "HSK Mouse", and lived in the
 > [`omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) repo. Now that it
 > also speaks Pulsar's protocol, it's `keasbeexd.mousectrl` / "Mouse Control"
-> instead, developed here in this repo (`mouse-ctrl`) going forward.
+> instead, developed here in this repo (`omarchy-mouse-ctrl`) going forward.
 > `omarchy-hsk` still exists with the G-Wolves-only version, unchanged, for
 > anyone not ready to move. If you have the old version installed, see
 > [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse) below — it is neither
@@ -38,7 +38,7 @@ Adding another mouse is a new file under `profiles/`, not a code change; see
 Two steps. **Both are required** — the second is not optional polish.
 
 ```bash
-omarchy plugin add https://github.com/keasbeexd/mouse-ctrl.git
+omarchy plugin add https://github.com/keasbeexd/omarchy-mouse-ctrl.git
 omarchy plugin enable keasbeexd.mousectrl
 ```
 
@@ -288,14 +288,14 @@ Versions before 2.0 were `keasbeexd.hskmouse` / "HSK Mouse", G-Wolves only,
 and lived in a **different repository**,
 [`keasbeexd/omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) — this
 plugin is not a new version published from that repo, it is a new repo
-(`keasbeexd/mouse-ctrl`) that continues the same project under a new name.
+(`keasbeexd/omarchy-mouse-ctrl`) that continues the same project under a new name.
 `omarchy-hsk` has not been touched and still installs the old, G-Wolves-only
 plugin if you never move. Since both the plugin id and the source repo
 changed, this is neither an automatic update nor an in-place one:
 
 ```bash
 omarchy plugin remove keasbeexd.hskmouse
-omarchy plugin add https://github.com/keasbeexd/mouse-ctrl.git
+omarchy plugin add https://github.com/keasbeexd/omarchy-mouse-ctrl.git
 omarchy plugin enable keasbeexd.mousectrl
 ~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev
 ```
@@ -453,8 +453,8 @@ Settings live on the mouse itself and follow it between machines.
 ## Local development
 
 ```bash
-git clone https://github.com/keasbeexd/mouse-ctrl.git
-cd mouse-ctrl
+git clone https://github.com/keasbeexd/omarchy-mouse-ctrl.git
+cd omarchy-mouse-ctrl
 ./install.sh --udev      # permissions; replug afterwards
 ./install.sh --dev       # symlink into ~/.config/omarchy/plugins
 omarchy-shell shell rescanPlugins
@@ -482,7 +482,7 @@ docs/            how the G-Wolves protocol was decoded, for anyone profiling a v
 
 Bug reports and profiles for other mouse models are both welcome -- G-Wolves
 variants and other Pulsar models alike. Open an issue at
-[keasbeexd/mouse-ctrl](https://github.com/keasbeexd/mouse-ctrl); for Pulsar
+[keasbeexd/omarchy-mouse-ctrl](https://github.com/keasbeexd/omarchy-mouse-ctrl); for Pulsar
 mice, a `hskctl probe --json` and `hskctl doctor` capture from real hardware
 is the single most useful thing you can attach to it.
 
