@@ -349,23 +349,30 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
-        // The stock Controls style paints its own grey; draw the handle in
-        // the theme's colours instead.
+        // A thin, square-ended rule in the theme's foreground, sitting in a
+        // fixed gutter to the right of the content (see `column` below) so it
+        // never draws over a control. The stock Controls style would paint
+        // its own grey on top of the rows instead.
         ScrollBar.vertical: ScrollBar {
           id: panelScroll
           policy: ScrollBar.AsNeeded
+          padding: 0
           contentItem: Rectangle {
-            implicitWidth: Style.space(4)
+            implicitWidth: Style.space(3)
             implicitHeight: Style.space(24)
-            radius: Style.cornerRadius > 0 ? width / 2 : 0
-            color: panelScroll.pressed ? root.accent : root.dim
-            opacity: panelScroll.active ? 1.0 : 0.5
+            visible: panelScroll.size < 1.0
+            color: panelScroll.pressed || panelScroll.hovered
+              ? root.dim
+              : root.withAlpha(root.foreground, 0.3)
           }
         }
 
         Column {
           id: column
-          width: panelFlick.width
+          // The gutter is always reserved, scrollable or not: making it
+          // conditional would change the width, re-wrap the text, change the
+          // height, and so change whether it scrolls.
+          width: panelFlick.width - Style.space(22)
           spacing: Style.space(12)
 
           PanelHero {
