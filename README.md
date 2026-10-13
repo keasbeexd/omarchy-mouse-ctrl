@@ -1,4 +1,4 @@
-# Mouse CTRL — an Omarchy plugin
+# Mouse CTRL - Utility for HSK and Pulsar Mice
 
 Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
 **Pulsar** mice, in the Omarchy bar. The widget and panel take every colour
