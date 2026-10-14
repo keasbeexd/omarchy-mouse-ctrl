@@ -574,14 +574,11 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
-              // ButtonGroup is a Row -- it sizes to its chips, so no explicit
-              // width here or the group stretches past its content.
-              ButtonGroup {
+              // ChoiceRow is a Row -- it sizes to its chips, so no explicit
+              // width here or the row stretches past its content.
+              ChoiceRow {
                 options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
                 value: String(hsk.value("pollingRate"))
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall
                 cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
                 onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
                 onHovered: function(index, on) {
@@ -603,12 +600,9 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
-              ButtonGroup {
+              ChoiceRow {
                 options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
                 value: String(hsk.value("liftOffDistance"))
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall
                 onChanged: function(v) { hsk.set("liftOffDistance", v) }
                 onHovered: function(index, on) {
                   if (on) root.setCursor(root.rowIndexOf("liftOffDistance", null))
@@ -742,6 +736,38 @@ Panel {
   }
 
   // --- components ---------------------------------------------------------
+
+  // A pick-one row of Omarchy's own bordered buttons, drawn like Vigil's
+  // tabs. Not the shell's ButtonGroup: that fills every unselected chip with
+  // the theme background, which in some themes is a block of solid colour
+  // against the panel. A plain Button stays transparent until it is selected.
+  component ChoiceRow: Row {
+    id: choiceRow
+    property var options: []
+    property string value: ""
+    property int cursorIndex: -1
+    signal changed(string value)
+    signal hovered(int index, bool on)
+    spacing: Style.spacing.md
+
+    Repeater {
+      model: choiceRow.options
+      Button {
+        required property var modelData
+        required property int index
+        text: modelData.label
+        selected: String(modelData.value) === choiceRow.value
+        hasCursor: choiceRow.cursorIndex === index
+        bordered: true
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        fontSize: Style.font.bodySmall
+        horizontalPadding: Style.space(8)
+        onClicked: choiceRow.changed(String(modelData.value))
+        onHovered: function(on) { choiceRow.hovered(index, on) }
+      }
+    }
+  }
 
   // The mouse's one DPI stage: a draggable slider plus a colour swatch and a
   // hex field. There is deliberately no stage picker here -- see the
