@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -16,24 +17,24 @@ Panel {
   property int cursorIndex: 0
   property bool cursorActive: false
 
-  // Every colour in this panel is one of these, and every one of these comes
-  // from the active Omarchy theme -- nothing below names a colour of its own.
-  // The only literal colours in the tree are the DPI LED presets in Model.js,
+  // Every color in this panel is one of these, and every one of these comes
+  // from the active Omarchy theme -- nothing below names a color of its own.
+  // The only literal colors in the tree are the DPI LED presets in Model.js,
   // which are values written to the mouse's LED, not panel styling.
   //
   // Secondary text is the foreground at reduced alpha rather than
   // Qt.darker(foreground): on a light theme the foreground is already dark,
   // and darkening it makes "dim" text *more* prominent, not less.
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color accent: Color.accent
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  readonly property color accent: Commons.Color.accent
   readonly property color dim: root.withAlpha(foreground, 0.6)
   readonly property color faint: root.withAlpha(foreground, 0.18)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, accent) : "transparent"
 
-  // Qt.lighter(c, 1.0) is an identity that also turns a colour *string* into
+  // Qt.lighter(c, 1.0) is an identity that also turns a color *string* into
   // a color value, so this works whichever form the host hands over.
   function withAlpha(c, a) {
     var q = Qt.lighter(c, 1.0)
@@ -63,7 +64,7 @@ Panel {
     ? root.urgent
     : (hsk.ready ? barForeground : root.withAlpha(barForeground, 0.6))
 
-  // When the mouse is plugged in, the percentage recolours to the theme's
+  // When the mouse is plugged in, the percentage recolors to the theme's
   // accent so "charging" is visible at a glance -- the accent tracks whatever
   // omarchy theme is active, so it always sits with the rest of the bar.
   readonly property color barLabelColor: hsk.lowBattery
@@ -286,7 +287,7 @@ Panel {
             textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
             // Always the filled mouse glyph -- charging state and battery level
-            // are carried by the percentage's colour beside it, not by swapping
+            // are carried by the percentage's color beside it, not by swapping
             // the icon out from under the reader.
             text: "󰍽"
             color: root.barIconColor
@@ -573,14 +574,11 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
-              // ButtonGroup is a Row -- it sizes to its chips, so no explicit
-              // width here or the group stretches past its content.
-              ButtonGroup {
+              // ChoiceRow is a Row -- it sizes to its chips, so no explicit
+              // width here or the row stretches past its content.
+              ChoiceRow {
                 options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
                 value: String(hsk.value("pollingRate"))
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
                 cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
                 onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
                 onHovered: function(index, on) {
@@ -602,12 +600,9 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
-              ButtonGroup {
+              ChoiceRow {
                 options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
                 value: String(hsk.value("liftOffDistance"))
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
                 onChanged: function(v) { hsk.set("liftOffDistance", v) }
                 onHovered: function(index, on) {
                   if (on) root.setCursor(root.rowIndexOf("liftOffDistance", null))
@@ -742,7 +737,39 @@ Panel {
 
   // --- components ---------------------------------------------------------
 
-  // The mouse's one DPI stage: a draggable slider plus a colour swatch and a
+  // A pick-one row of Omarchy's own bordered buttons, drawn like Vigil's
+  // tabs. Not the shell's ButtonGroup: that fills every unselected chip with
+  // the theme background, which in some themes is a block of solid color
+  // against the panel. A plain Button stays transparent until it is selected.
+  component ChoiceRow: Row {
+    id: choiceRow
+    property var options: []
+    property string value: ""
+    property int cursorIndex: -1
+    signal changed(string value)
+    signal hovered(int index, bool on)
+    spacing: Style.spacing.md
+
+    Repeater {
+      model: choiceRow.options
+      Button {
+        required property var modelData
+        required property int index
+        text: modelData.label
+        selected: String(modelData.value) === choiceRow.value
+        hasCursor: choiceRow.cursorIndex === index
+        bordered: true
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        fontSize: Style.font.bodySmall
+        horizontalPadding: Style.space(8)
+        onClicked: choiceRow.changed(String(modelData.value))
+        onHovered: function(on) { choiceRow.hovered(index, on) }
+      }
+    }
+  }
+
+  // The mouse's one DPI stage: a draggable slider plus a color swatch and a
   // hex field. There is deliberately no stage picker here -- see the
   // profiles' own notes on why switching which stage is live does not work.
   component DpiStageRow: CursorSurface {
@@ -897,9 +924,9 @@ Panel {
         spacing: Style.space(8)
         visible: stageRow.swatch !== ""
 
-        // Three one-click presets, then the current colour (click cycles the
+        // Three one-click presets, then the current color (click cycles the
         // firmware's full palette for anything not one of the three), then
-        // the hex field for typing an exact colour.
+        // the hex field for typing an exact color.
         Repeater {
           model: Model.DPI_PRESET_COLORS
 
@@ -928,8 +955,8 @@ Panel {
           }
         }
 
-        // Current colour. Clicking cycles the firmware's full palette, for
-        // reaching a colour that isn't one of the three presets above.
+        // Current color. Clicking cycles the firmware's full palette, for
+        // reaching a color that isn't one of the three presets above.
         Rectangle {
           id: swatchBox
           visible: stageRow.colorWritable
@@ -937,7 +964,7 @@ Panel {
           Layout.preferredHeight: Style.space(14)
           Layout.alignment: Qt.AlignVCenter
           radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-          // Only a validated #rrggbb reaches a colour property; anything else
+          // Only a validated #rrggbb reaches a color property; anything else
           // the device reports shows as an empty outline.
           color: Model.isValidHexColor(stageRow.swatch) ? stageRow.swatch : "transparent"
           border.width: 1
@@ -956,7 +983,7 @@ Panel {
 
           PanelToolTip {
             visible: swatchMouse.containsMouse
-            text: "Current colour -- click to cycle"
+            text: "Current color -- click to cycle"
             fontFamily: root.fontFamily
           }
         }

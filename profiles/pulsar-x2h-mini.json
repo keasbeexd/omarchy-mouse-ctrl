@@ -7,23 +7,23 @@
     "dongle. Battery, firmware version, polling rate (up to 4000 Hz,",
     "confirming the dongle really is the 4K variant), motion sync, angle",
     "snap, ripple control, turbo mode, lift-off distance, debounce, sleep",
-    "timer, and DPI stage 1's value and LED colour have all round-tripped",
+    "timer, and DPI stage 1's value and LED color have all round-tripped",
     "real writes on that exact hardware, not just plausible-looking reads --",
-    "the LED colour write the owner visually confirmed actually changed the",
+    "the LED color write the owner visually confirmed actually changed the",
     "mouse's light. Cable and the 2.4GHz dongle both present the identical",
     "3554:f507 identity on the identical hidraw node -- there is no separate",
     "wired/wireless split for this model.",
     "",
     "ONLY DPI STAGE 1 IS MAPPED, DELIBERATELY. This plugin's own design",
     "choice, not a hardware limitation of the other stages' storage --",
-    "dpiStage2/3/4 and their colours DO read and write correctly (confirmed",
+    "dpiStage2/3/4 and their colors DO read and write correctly (confirmed",
     "before this decision), but nothing was ever found that makes the mouse",
     "actually USE a stage other than whichever is 'active': activeDpiStage",
     "writes round-trip correctly (the byte stores and reads back) but never",
     "changed the mouse's live output, and the mouse's own physical DPI",
     "button doesn't switch stages either. Rather than ship a 4-stage",
     "selector where only one stage visibly does anything, this profile only",
-    "reads/writes stage 1, and the panel shows a single DPI slider + colour",
+    "reads/writes stage 1, and the panel shows a single DPI slider + color",
     "field instead of a stage list. The other stages' addresses are still",
     "documented in the _dpiComment below for whoever eventually finds the",
     "real switch mechanism (see _followUp).",
@@ -179,7 +179,7 @@
       "responseOffset": 6,
       "_note": "address 0xb7, described as 'units of 10s'; encoded below with scale:10 so the field itself still speaks seconds."
     },
-    "_dpiComment": "DPI stages are 4-byte records (ADDR_DPI_BASE=0x0C, DPI_STAGE_SIZE=4 per drivers/nordic.py): 3 data bytes (nordicDpi3 encoding) + 1 valueChecksum byte, same mechanism as every scalar field above just with a 3-byte value instead of 1. LED colour is the same shape at ADDR_LED_COLOR_BASE=0x2C (rgb encoding, still 3 bytes + checksum). Byte 5 (length) is 3 for reads (only the 3 data bytes are decoded) and 4 for writes (3 value bytes + the checksum byte the device actually stores). Only stage 1's address is mapped here -- this plugin deliberately only ever reads/writes DPI stage 1, see the note on the `dpiStage1` field below for why.",
+    "_dpiComment": "DPI stages are 4-byte records (ADDR_DPI_BASE=0x0C, DPI_STAGE_SIZE=4 per drivers/nordic.py): 3 data bytes (nordicDpi3 encoding) + 1 valueChecksum byte, same mechanism as every scalar field above just with a 3-byte value instead of 1. LED color is the same shape at ADDR_LED_COLOR_BASE=0x2C (rgb encoding, still 3 bytes + checksum). Byte 5 (length) is 3 for reads (only the 3 data bytes are decoded) and 4 for writes (3 value bytes + the checksum byte the device actually stores). Only stage 1's address is mapped here -- this plugin deliberately only ever reads/writes DPI stage 1, see the note on the `dpiStage1` field below for why.",
     "dpiStage1": {
       "get": "08 08 00 00 0c 03",
       "set": "08 07 00 00 0c 04",
@@ -241,7 +241,7 @@
       "min": 1,
       "max": 8,
       "readOnly": true,
-      "_note": "Briefly unlocked to test whether dpiStageCount=1 explained activeDpiStage writes having no live effect (a reasonable theory: the real driver's own logic gates how many stages the firmware considers live on this count). Setting it to 4 -- Cfg.ini's real factory default, not a guess -- had a real, confirmed side effect (it reset the DPI table to factory defaults, overwriting a custom stage 1 value/colour that had been set moments earlier) but did NOT fix stage switching: activeDpiStage still had no live effect afterward, and the physical DPI button does nothing either. Reverted to 1 (the owner's actual working setup) and locked read-only again -- not because writing it is inherently unsafe, but because it has a real destructive side effect and no longer serves a purpose now that this plugin only ever uses stage 1."
+      "_note": "Briefly unlocked to test whether dpiStageCount=1 explained activeDpiStage writes having no live effect (a reasonable theory: the real driver's own logic gates how many stages the firmware considers live on this count). Setting it to 4 -- Cfg.ini's real factory default, not a guess -- had a real, confirmed side effect (it reset the DPI table to factory defaults, overwriting a custom stage 1 value/color that had been set moments earlier) but did NOT fix stage switching: activeDpiStage still had no live effect afterward, and the physical DPI button does nothing either. Reverted to 1 (the owner's actual working setup) and locked read-only again -- not because writing it is inherently unsafe, but because it has a real destructive side effect and no longer serves a purpose now that this plugin only ever uses stage 1."
     },
     "activeDpiStage": {
       "command": "activeDpiStage",
@@ -310,7 +310,7 @@
     "dpiStage1Color": {
       "command": "dpiColor1",
       "encoding": "rgb",
-      "_note": "Confirmed on real hardware: the LED visibly changed to the set colour. Only stage 1's colour is mapped, same reasoning as dpiStage1."
+      "_note": "Confirmed on real hardware: the LED visibly changed to the set color. Only stage 1's color is mapped, same reasoning as dpiStage1."
     }
   },
   "ui": {
@@ -354,7 +354,7 @@
   },
   "_followUp": [
     "KNOWN LIMITATION, not a bug to chase further without a real capture: switching which DPI stage is live doesn't work by any mechanism found. activeDpiStage writes round-trip (byte stores and reads back correctly) but never change the mouse's actual output, and the physical DPI button does nothing either. dpiStageCount was briefly tried as the explanation (the real driver's own logic gates on it) -- setting it to 4 reset the whole DPI table to factory defaults but did not fix switching, so it was reverted to 1 and locked read-only again. The real mechanism is most likely a dedicated command distinct from the plain memory writes nordic.py assumes for a different model (compare CMD_ACTIVE_PROFILE_SET, a separate opcode for switching *profiles*, not stages) -- finding it needs a live USB capture (Wireshark/usbmon) of Pulsar Fusion actually switching stages, per docs/PROTOCOL-DISCOVERY.md's method.",
-    "Given that, this plugin deliberately only reads/writes DPI stage 1 (see the note on the model's own _source block above) rather than exposing a 4-stage selector where only one stage visibly works. dpiStage2/3/4 and their colours were confirmed to read/write correctly before this decision -- their addresses are ADDR_DPI_BASE + 4*n and ADDR_LED_COLOR_BASE + 4*n (see _dpiComment) if a future capture finds the real switch mechanism and this profile should re-expose them.",
+    "Given that, this plugin deliberately only reads/writes DPI stage 1 (see the note on the model's own _source block above) rather than exposing a 4-stage selector where only one stage visibly works. dpiStage2/3/4 and their colors were confirmed to read/write correctly before this decision -- their addresses are ADDR_DPI_BASE + 4*n and ADDR_LED_COLOR_BASE + 4*n (see _dpiComment) if a future capture finds the real switch mechanism and this profile should re-expose them.",
     "1K dongle variant unconfirmed -- if you have one, check whether it matches this profile's USB ids at all (`hskctl probe`), and whether pollingRate above 1000 Hz actually works (`hskctl set pollingRate 2000`) or the firmware rejects/clamps it. Adjust `values`/`uiOptions` accordingly; it may need a separate profile if the ids differ.",
     "The RF receiver's separate USB identity (3554:f509) has never actually been seen carrying the config protocol -- every confirmed read/write went through 3554:f507, dongle or cable alike. Plausibly unused for config and droppable from match.productIds, but no positive evidence either way, so it stays for now.",
     "pollingRate's `values` map includes 8000 Hz (from the real source, confirmed on a different Nordic-family model) but `uiOptions` stops at 4000 since this is specifically the 4K dongle -- do not widen it without an 8K dongle to test against.",

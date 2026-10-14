@@ -126,7 +126,7 @@
       "valueOffset": 5,
       "responseOffset": 5
     },
-    "_dpiComment": "ONE write, not two. hts_set_get_dpis_colors (7 bytes per stage: X u16be, Y u16be, R G B) and hts_set_get_dpis_colors_O (5 bytes per stage, no separate Y) are selected by globe_FW_Old_New_Flag -- new firmware uses the first, old firmware the second. They are alternatives, never a sequence. Firmware 1.0.7 reports separate X and Y, so it is the new path. Sending the legacy packet to new firmware misaligns every stage from byte 9 on and writes colour bytes into the Y axis.",
+    "_dpiComment": "ONE write, not two. hts_set_get_dpis_colors (7 bytes per stage: X u16be, Y u16be, R G B) and hts_set_get_dpis_colors_O (5 bytes per stage, no separate Y) are selected by globe_FW_Old_New_Flag -- new firmware uses the first, old firmware the second. They are alternatives, never a sequence. Firmware 1.0.7 reports separate X and Y, so it is the new path. Sending the legacy packet to new firmware misaligns every stage from byte 9 on and writes color bytes into the Y axis.",
     "dpi": {
       "get": "00 00 39 83",
       "responseOffset": 5,
@@ -150,7 +150,7 @@
           "why": "stage count of 0 makes the firmware write no stages at all"
         }
       ],
-      "_repairComment": "rx[6] is the DPI stage count, and the firmware writes that many stages out of the packet. Read-modify-write copies it back verbatim, so a mouse reporting 0 -- as this one did, almost certainly zeroed by the legacy-packet incident -- discards every DPI value and every stage colour, restores the 0, and does it again next time. The active-stage byte beside it keeps working because it sits outside the array, which is exactly how the bug hid. Confirmed on hardware 2026-08-18: setting the count to 7 made both value and colour writes land immediately."
+      "_repairComment": "rx[6] is the DPI stage count, and the firmware writes that many stages out of the packet. Read-modify-write copies it back verbatim, so a mouse reporting 0 -- as this one did, almost certainly zeroed by the legacy-packet incident -- discards every DPI value and every stage color, restores the 0, and does it again next time. The active-stage byte beside it keeps working because it sits outside the array, which is exactly how the bug hid. Confirmed on hardware 2026-08-18: setting the count to 7 made both value and color writes land immediately."
     },
     "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
     "sleep": {
@@ -292,7 +292,7 @@
       "command": "dpi",
       "offset": 11,
       "encoding": "rgb",
-      "_note": "LED colour for stage 1"
+      "_note": "LED color for stage 1"
     }
   },
   "ui": {

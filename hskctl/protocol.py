@@ -200,11 +200,11 @@ def _encode_scalar(buf: bytearray, spec: dict, value: Any) -> None:
     elif spec.get("encoding") == "rgb":
         text = str(value).lstrip("#")
         if len(text) != 6:
-            raise ProtocolError(f"{value!r} is not a #rrggbb colour")
+            raise ProtocolError(f"{value!r} is not a #rrggbb color")
         try:
             raw = bytes.fromhex(text)
         except ValueError as exc:
-            raise ProtocolError(f"{value!r} is not a #rrggbb colour") from exc
+            raise ProtocolError(f"{value!r} is not a #rrggbb color") from exc
     elif spec.get("dividerBase"):
         base = spec["dividerBase"]
         wanted = int(value)
