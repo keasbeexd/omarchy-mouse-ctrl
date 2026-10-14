@@ -580,6 +580,7 @@ Panel {
                 value: String(hsk.value("pollingRate"))
                 foreground: root.foreground
                 fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
                 cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
                 onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
                 onHovered: function(index, on) {
@@ -606,6 +607,7 @@ Panel {
                 value: String(hsk.value("liftOffDistance"))
                 foreground: root.foreground
                 fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
                 onChanged: function(v) { hsk.set("liftOffDistance", v) }
                 onHovered: function(index, on) {
                   if (on) root.setCursor(root.rowIndexOf("liftOffDistance", null))
