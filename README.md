@@ -4,7 +4,13 @@ Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
 **Pulsar** mice, in the Omarchy bar. The widget and panel take every color
 from your active Omarchy theme.
 
-![The Mouse CTRL bar widget and panel](preview.png)
+<img src="docs/logo.svg" width="96" alt="Mouse CTRL's wireless mouse, in 16 EGA colors">
+
+![Mouse CTRL in a Turbo Pascal-style screen: the panel beside its program listing](preview.png)
+
+The panel above is running under a DOS-blue Omarchy theme. It is theme
+dependent: every color it draws comes from whichever Omarchy theme is active,
+so under yours it takes on your theme's colors.
 
 > **Formerly HSK Mouse.** Versions before 2.0 were G-Wolves-only, called
 > `keasbeexd.hskmouse`, and lived in
