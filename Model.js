@@ -314,7 +314,7 @@ function clampDpi(value) {
   return Math.max(DPI_MIN, Math.min(DPI_MAX, v))
 }
 
-// Stage colours the firmware ships with, offered as a cycle so a colour can be
+// Stage colors the firmware ships with, offered as a cycle so a color can be
 // changed from the panel without a full picker.
 var STAGE_COLORS = [
   "#aa0000", "#ffa500", "#ffff00", "#00ff00",
@@ -326,10 +326,10 @@ function nextStageColor(current) {
   return STAGE_COLORS[(i + 1) % STAGE_COLORS.length]
 }
 
-// One-click presets shown beside the current-colour swatch. Three, not the
+// One-click presets shown beside the current-color swatch. Three, not the
 // full STAGE_COLORS cycle -- the panel already has a "click to cycle" swatch
 // for reaching the rest of the palette; these are just the fastest path to
-// the colours people actually reach for.
+// the colors people actually reach for.
 var DPI_PRESET_COLORS = ["#ff0000", "#00ff00", "#0000ff"]
 
 function isValidHexColor(text) {

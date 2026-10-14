@@ -1,7 +1,7 @@
 # Mouse CTRL - Utility for HSK and Pulsar Mice
 
 Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
-**Pulsar** mice, in the Omarchy bar. The widget and panel take every colour
+**Pulsar** mice, in the Omarchy bar. The widget and panel take every color
 from your active Omarchy theme.
 
 ![The Mouse CTRL bar widget and panel](preview.png)
@@ -23,8 +23,8 @@ or from existing open-source Linux tooling (for Pulsar).
 
 | Vendor | Model | Status |
 |---|---|---|
-| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate, sensor settings, sleep timer. See [G-Wolves HSK Pro 4K](#g-wolves-hsk-pro-4k) below |
-| Pulsar | X2H mini (4K dongle) | Confirmed on hardware — battery, DPI (stage 1 + colour), polling rate up to 4K, sensor settings, sleep timer. 1K dongle variant unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + color), polling rate, sensor settings, sleep timer. See [G-Wolves HSK Pro 4K](#g-wolves-hsk-pro-4k) below |
+| Pulsar | X2H mini (4K dongle) | Confirmed on hardware — battery, DPI (stage 1 + color), polling rate up to 4K, sensor settings, sleep timer. 1K dongle variant unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -73,7 +73,7 @@ reply.
 | | G-Wolves HSK Pro 4K | Pulsar X2H mini (4K dongle) |
 |---|---|---|
 | **Battery** | percentage in the bar, low-battery warning, charging state | same |
-| **DPI** | stage 1's value and LED colour | same |
+| **DPI** | stage 1's value and LED color | same |
 | **Polling rate** | 250, 500, 1000, 2000, 4000 Hz | 125, 250, 500, 1000, 2000, 4000 Hz |
 | **Lift-off distance** | 1 or 2 mm | 1 or 2 mm |
 | **Sensor** | motion sync, angle snapping | motion sync, angle snapping, ripple control, turbo mode |
@@ -123,8 +123,8 @@ device actually connected, the same way it decides whether it is safe to
 
 **In the panel**, DPI is one row: a number field you can type an exact value
 into, a draggable slider (50 DPI steps) below it, then three one-click
-preset colours, a swatch showing the current colour (click it to cycle the
-firmware's full palette), and a hex field for typing an exact colour.
+preset colors, a swatch showing the current color (click it to cycle the
+firmware's full palette), and a hex field for typing an exact color.
 
 **Why only DPI stage 1.** There is deliberately no stage picker, on either
 mouse. On the Pulsar, switching stages does not work: writes to
@@ -151,12 +151,12 @@ hover it for the firmware version and which hidraw node is in use. `hskctl
 The panel only renders controls for settings that can actually be written, so it
 never offers an action that comes back as an error.
 
-**Theming:** every colour in the bar widget and the panel comes from the
+**Theming:** every color in the bar widget and the panel comes from the
 active Omarchy theme — its foreground for text and outlines, its accent for
 the selected option, the slider and the charging percentage, and its urgent
-colour for low battery and errors. Nothing in the panel is a fixed colour of
-its own. The only literal colours are the three DPI LED presets, because
-those are the colours written to the mouse's LED, not panel styling.
+color for low battery and errors. Nothing in the panel is a fixed color of
+its own. The only literal colors are the three DPI LED presets, because
+those are the colors written to the mouse's LED, not panel styling.
 
 ## From the command line, and from scripts
 
@@ -199,7 +199,7 @@ to script a change.
 | Setting | Key | Default | |
 |---|---|---|---|
 | Battery poll | `batteryPollSec` | 300 | how often the bar re-reads the battery percentage, in seconds (30–3600) |
-| Low battery warning | `lowBatteryPercent` | 15 | the percentage at which the icon switches to the theme's urgent colour |
+| Low battery warning | `lowBatteryPercent` | 15 | the percentage at which the icon switches to the theme's urgent color |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
 
 The battery percentage is the only reading that changes on its own, so it is
@@ -401,7 +401,7 @@ one that answers with real data.
 **The DPI block has a header that changes how it is parsed.** `rx[5]` is the
 active stage and `rx[6]` is how many stages the firmware will take out of a
 write. A mouse reporting 0 there silently discards every DPI value and every
-colour, and a naive read-modify-write copies that 0 straight back, so it never
+color, and a naive read-modify-write copies that 0 straight back, so it never
 recovers. This plugin repairs it.
 
 Polling rates were **measured**, by timing the mouse's own input reports, not

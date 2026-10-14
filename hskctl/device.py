@@ -690,7 +690,7 @@ class Session:
         That is not hypothetical. This mouse reported a DPI stage count of 0.
         The firmware writes that many stages out of the packet, so it wrote
         none -- while the active-stage byte beside it, outside the array, kept
-        working. Every DPI value and every stage colour was silently discarded,
+        working. Every DPI value and every stage color was silently discarded,
         and each write faithfully restored the 0 that caused it. Setting the
         count to 7 fixed both in one go, confirmed on hardware.
 
@@ -726,7 +726,7 @@ class Session:
 
         if spec.get("readModifyWrite"):
             # Commands that carry a whole block -- DPI carries seven stages and
-            # their colours in one packet -- must not be synthesised from
+            # their colors in one packet -- must not be synthesised from
             # nothing, or every field we have not decoded gets zeroed. Read the
             # mouse's own block, change one field in it, send it back.
             current = self._read(command)
