@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -24,9 +25,9 @@ Panel {
   // Secondary text is the foreground at reduced alpha rather than
   // Qt.darker(foreground): on a light theme the foreground is already dark,
   // and darkening it makes "dim" text *more* prominent, not less.
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color accent: Color.accent
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  readonly property color accent: Commons.Color.accent
   readonly property color dim: root.withAlpha(foreground, 0.6)
   readonly property color faint: root.withAlpha(foreground, 0.18)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
