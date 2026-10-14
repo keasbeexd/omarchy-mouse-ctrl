@@ -579,7 +579,6 @@ Panel {
                 options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
                 value: String(hsk.value("pollingRate"))
                 foreground: root.foreground
-                accent: root.accent
                 fontFamily: root.fontFamily
                 cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
                 onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
@@ -606,7 +605,6 @@ Panel {
                 options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
                 value: String(hsk.value("liftOffDistance"))
                 foreground: root.foreground
-                accent: root.accent
                 fontFamily: root.fontFamily
                 onChanged: function(v) { hsk.set("liftOffDistance", v) }
                 onHovered: function(index, on) {
