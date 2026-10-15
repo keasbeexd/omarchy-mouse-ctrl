@@ -1,5 +1,3 @@
-.pragma library
-
 // Pure functions shared by Service.qml and Panel.qml. Keeping the parsing and
 // formatting out of QML makes the failure modes testable and keeps the panel
 // free of string surgery.
