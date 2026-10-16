@@ -136,7 +136,7 @@ migrate_old_udev_rules() {
     [[ -e "$old" ]] || continue
     warn "Found $old from an older install of this plugin (it used to be"
     warn "named differently). Every vendor id it granted is also in the rule"
-    warn "below, so it is now redundant."
+    warn "just installed, so it is now redundant."
     read -r -p "Remove $old (needs sudo)? [y/N] " reply
     if [[ "$reply" =~ ^[Yy] ]]; then
       "$SUDO" "$RM" -f "$old"
@@ -149,7 +149,6 @@ migrate_old_udev_rules() {
 }
 
 install_udev() {
-  migrate_old_udev_rules
   info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
   echo
   udev_rule_text | sed 's/^/    /'
@@ -172,6 +171,10 @@ install_udev() {
   # this plugin's business.
   "$SUDO" "$UDEVADM" trigger --subsystem-match=hidraw --action=change
   info "Installed $UDEV_RULE"
+  # Only now that the replacement rule is on disk is it safe to offer removing
+  # the old ones: a user who declines the new rule must not be left with
+  # neither, which is what removing first would do.
+  migrate_old_udev_rules
   info "Now unplug and replug the mouse or its dongle -- the rule applies when"
   info "the device next appears, not to one that is already plugged in."
 }

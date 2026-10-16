@@ -71,6 +71,26 @@ def _fail(message: str, as_json: bool, **extra) -> int:
     return 1
 
 
+def _plain(text: Any, limit: int = 120) -> str:
+    """Strip control characters from a string that came off the device.
+
+    A hidraw node's product string is written by the mouse's own firmware, and
+    this CLI prints it to a terminal -- where an embedded ESC can drive the
+    terminal (window title, clipboard, spoofed prompts). The panel already
+    strips these for the same reason (see Model.plain); this is the terminal's
+    version. JSON output is left as-is: it is data, not a terminal.
+    """
+    out = []
+    for ch in str(text):
+        code = ord(ch)
+        if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
+            continue
+        out.append(ch)
+        if len(out) >= limit:
+            break
+    return "".join(out)
+
+
 # --- probe ------------------------------------------------------------------
 
 
@@ -99,7 +119,7 @@ def cmd_probe(args) -> int:
         print("Ranked candidates for the config endpoint:\n")
         for c in p["candidates"]:
             print(f"  {c['path']}  [{c['vidpid']}]  score {c['score']}")
-            print(f"    name       : {c['name']}")
+            print(f"    name       : {_plain(c['name'])}")
             print(f"    interface  : {c['interface']}")
             page = c["usagePage"]
             print(f"    usage page : {f'0x{page:04x}' if page is not None else '-'}")

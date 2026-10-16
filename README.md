@@ -129,8 +129,8 @@ device actually connected, the same way it decides whether it is safe to
 
 **In the panel**, DPI is one row: a number field you can type an exact value
 into, a draggable slider (50 DPI steps) below it, then three one-click
-preset colors, a swatch showing the current color (click it to cycle the
-firmware's full palette), and a hex field for typing an exact color.
+preset colors, a swatch showing the current color (click it to cycle through
+eight preset colors), and a hex field for an exact color.
 
 **Why only DPI stage 1.** There is deliberately no stage picker, on either
 mouse. On the Pulsar, switching stages does not work: writes to
@@ -181,7 +181,9 @@ this model is a percentage. The Windows app rounds it down to a multiple of 5
 before displaying it, so hskctl can read 97 where the app shows 95 — the same
 value, shown with one fewer step of rounding. `watch-battery` prints both.
 
-`--json` on any command gives parseable output, including on failure.
+`--json` on any command that runs gives parseable output, including on
+failure. An unrecognised option or a missing argument is refused by the option
+parser before that, in the usual plain-text way, exit code 2.
 
 Anything that talks to the mouse takes a lock in `$XDG_RUNTIME_DIR`, so it
 needs a normal login session. From cron or a bare `su` shell with no runtime
@@ -192,7 +194,7 @@ Omarchy IPC works too, for everything that does not change the mouse:
 ```bash
 omarchy-shell keasbeexd.mousectrl refresh
 omarchy-shell keasbeexd.mousectrl status      # the panel's one-line summary
-omarchy-shell keasbeexd.mousectrl toggle      # also open, close
+omarchy-shell keasbeexd.mousectrl toggle      # also open, close, show, hide
 ```
 
 There is deliberately no IPC method that writes a setting. Anything running
@@ -205,7 +207,7 @@ to script a change.
 | Setting | Key | Default | |
 |---|---|---|---|
 | Battery poll | `batteryPollSec` | 300 | how often the bar re-reads the battery percentage, in seconds (30–3600) |
-| Low battery warning | `lowBatteryPercent` | 15 | the percentage at which the icon switches to the theme's urgent color |
+| Low battery warning | `lowBatteryPercent` | 15 | the percentage at which the icon and the `94%` text switch to the theme's urgent color |
 | Show battery percentage | `showBatteryLabel` | on | the `94%` text beside the icon |
 
 The battery percentage is the only reading that changes on its own, so it is
@@ -320,10 +322,11 @@ is gone: 2.0 no longer re-reads the whole mouse on a timer (see
 [Settings](#settings)), so drop it if you had set it. `hskctlPath` is gone
 too: the widget only ever runs the copy of hskctl that ships beside it.
 
-`install.sh --udev` notices the old `/etc/udev/rules.d/60-gwolves-hsk.rules`
-from a previous install and offers to remove it once the new rule is in place
-(it is otherwise harmless left behind — the new rule covers the same vendor
-id). Your G-Wolves mouse's own settings are unaffected either way: they live
+`install.sh --udev` notices an old udev rule from a previous install — the
+G-Wolves-only `/etc/udev/rules.d/60-gwolves-hsk.rules`, or the short-lived
+`60-mousectl.rules` — and, **once the new rule is in place**, offers to remove
+it (it is otherwise harmless left behind — the new rule covers the same vendor
+ids). Your G-Wolves mouse's own settings are unaffected either way: they live
 on the mouse, not in the plugin.
 
 For anything about G-Wolves, Pulsar, or multi-mouse support going forward,
@@ -459,8 +462,11 @@ work that made the rest possible.
 Factory reset (opcode `09`) is deliberately not bound to any field — nothing
 in the panel should be one keystroke from wiping your mouse's configuration.
 
-Writes go read-modify-write, so changing one DPI stage cannot zero the others.
-Settings live on the mouse itself and follow it between machines.
+Writes go read-modify-write where the field is one block of packed stages — the
+DPI block is read back, one stage changed, and the whole block written — so
+changing stage 1's DPI cannot zero the others. Every other field is a single
+value read back and checked after the write. Settings live on the mouse itself
+and follow it between machines.
 
 ## Local development
 

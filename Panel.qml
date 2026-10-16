@@ -43,8 +43,11 @@ Panel {
 
   readonly property var rows: hsk.rows
   // Only stage 1 is ever mapped (see Model.dpiStage1Info) -- both profiles
-  // this plugin ships deliberately expose no stage picker.
-  readonly property bool hasDpi: hsk.has("dpiStage1")
+  // this plugin ships deliberately expose no stage picker. The row appears
+  // only when that one stage can actually be written, the same rule every
+  // other control follows, so the panel never shows a control the mouse would
+  // refuse (a reported-but-read-only stage stays in the summary line above).
+  readonly property bool hasDpi: hsk.canWrite("dpiStage1")
   readonly property bool needsSetup: hsk.state === "undiscovered"
   readonly property bool hasError: hsk.state === "error"
 
@@ -667,11 +670,12 @@ Panel {
           }
 
           // --- footer -----------------------------------------------------
-          // Which build is actually running. Read from manifest.json rather
-          // than hardcoded, so it is by construction the version that was
-          // published -- a hardcoded one drifts, and a version label you
-          // cannot trust is worse than none. Hovering shows the firmware and
-          // the CLI in use, which is the rest of "what am I running".
+          // Which build is actually running. hskctl reads it from
+          // manifest.json and reports it in its JSON, so it is by construction
+          // the version that was published -- a hardcoded one drifts, and a
+          // version label you cannot trust is worse than none. Hovering shows
+          // the firmware and the device in use, which is the rest of "what am
+          // I running".
 
           Item {
             visible: hsk.pluginVersion !== ""
@@ -794,6 +798,10 @@ Panel {
     readonly property bool dpiWritable: hsk.canWrite("dpiStage1")
     readonly property bool colorWritable: hsk.canWrite("dpiStage1Color")
 
+    // The slider bounds this mouse's own profile reports (its `min`/`max`),
+    // not a range baked in for one model -- see Model.dpiBounds.
+    readonly property var bounds: Model.dpiBounds(hsk.allowed)
+
     readonly property bool rowHasCursor: {
       var row = root.currentRow()
       return root.cursorActive && row && row.kind === "dpiStage"
@@ -843,7 +851,7 @@ Panel {
             border.width: 1
             border.color: dpiField.activeFocus ? root.accent : root.dim
           }
-          validator: IntValidator { bottom: Model.DPI_MIN; top: Model.DPI_MAX }
+          validator: IntValidator { bottom: stageRow.bounds.min; top: stageRow.bounds.max }
 
           // Only follow the device (and the slider) while not focused, or a
           // refresh mid-edit would overwrite what is being typed.
@@ -856,7 +864,7 @@ Panel {
 
           onEditingFinished: {
             var n = parseInt(text, 10)
-            if (!isNaN(n)) hsk.set("dpiStage1", Model.clampDpi(n))
+            if (!isNaN(n)) hsk.set("dpiStage1", Model.clampDpi(n, stageRow.bounds.min, stageRow.bounds.max, stageRow.bounds.step))
             focus = false
           }
         }
@@ -867,9 +875,9 @@ Panel {
       Slider {
         id: dpiSlider
         width: parent.width
-        from: Model.DPI_MIN
-        to: Model.DPI_MAX
-        stepSize: Model.DPI_STEP
+        from: stageRow.bounds.min
+        to: stageRow.bounds.max
+        stepSize: stageRow.bounds.step
         snapMode: Slider.SnapAlways
         enabled: stageRow.dpiWritable
         opacity: enabled ? 1.0 : 0.5
@@ -915,7 +923,7 @@ Panel {
           when: !dpiSlider.pressed
         }
 
-        onMoved: hsk.setSoon("dpiStage1", Model.clampDpi(value))
+        onMoved: hsk.setSoon("dpiStage1", Model.clampDpi(value, stageRow.bounds.min, stageRow.bounds.max, stageRow.bounds.step))
         onPressedChanged: root.setCursor(root.rowIndexOf("dpiStage"))
       }
 
@@ -925,8 +933,8 @@ Panel {
         visible: stageRow.swatch !== ""
 
         // Three one-click presets, then the current color (click cycles the
-        // firmware's full palette for anything not one of the three), then
-        // the hex field for typing an exact color.
+        // eight preset colors, for reaching one that isn't among the three),
+        // then the hex field for an exact color.
         Repeater {
           model: Model.DPI_PRESET_COLORS
 
@@ -955,8 +963,8 @@ Panel {
           }
         }
 
-        // Current color. Clicking cycles the firmware's full palette, for
-        // reaching a color that isn't one of the three presets above.
+        // Current color. Clicking cycles the eight preset colors above, for
+        // reaching a color that isn't one of the three shown.
         Rectangle {
           id: swatchBox
           visible: stageRow.colorWritable

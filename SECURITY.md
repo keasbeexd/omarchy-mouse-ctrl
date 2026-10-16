@@ -28,7 +28,8 @@ we want to hear about:
 - a udev rule that opens a device (or more devices) to more than the
   logged-in user;
 - data from the mouse, a profile file or another program that reaches a
-  shell, a command's arguments or the panel as anything but plain text;
+  shell, a command's arguments, the panel or a terminal as anything but plain
+  text;
 - a way to send a mouse a command that could brick it or change its
   firmware, rather than the settings the panel offers.
 
