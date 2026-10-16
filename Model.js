@@ -302,18 +302,40 @@ function dpiStage1Info(settings) {
   }
 }
 
-// The sensor steps in 50 DPI increments.
+// The DPI range and step this mouse actually offers, from the `allowed` map
+// hskctl derives from the profile's own `min`/`max`, so a mouse with a
+// different sensor range gets its own slider bounds instead of this plugin's.
+// Falls back to the range both shipped profiles use (50-26000, 50-unit steps)
+// when a profile carries no bounds of its own.
 var DPI_MIN = 50
 var DPI_MAX = 26000
 var DPI_STEP = 50
 
-function clampDpi(value) {
-  var v = Math.round(value / DPI_STEP) * DPI_STEP
-  return Math.max(DPI_MIN, Math.min(DPI_MAX, v))
+function dpiBounds(allowed) {
+  var pair = allowed ? allowed.dpiStage1 : undefined
+  if (Array.isArray(pair) && pair.length === 2) {
+    var lo = pair[0], hi = pair[1]
+    if (typeof lo === "number" && typeof hi === "number"
+        && isFinite(lo) && isFinite(hi)
+        && lo > 0 && hi > lo && hi - lo <= 100000) {
+      return { min: lo, max: hi, step: DPI_STEP }
+    }
+  }
+  return { min: DPI_MIN, max: DPI_MAX, step: DPI_STEP }
 }
 
-// Stage colors the firmware ships with, offered as a cycle so a color can be
-// changed from the panel without a full picker.
+function clampDpi(value, min, max, step) {
+  var lo = typeof min === "number" ? min : DPI_MIN
+  var hi = typeof max === "number" ? max : DPI_MAX
+  var st = (typeof step === "number" && step > 0) ? step : DPI_STEP
+  var v = Math.round(value / st) * st
+  return Math.max(lo, Math.min(hi, v))
+}
+
+// Eight preset colors the panel cycles through with one click, so a color can
+// be changed without opening a full picker. This is the plugin's own set, not
+// a palette read back from the firmware; the hex field below accepts any
+// #rrggbb color the LED supports.
 var STAGE_COLORS = [
   "#aa0000", "#ffa500", "#ffff00", "#00ff00",
   "#00ffff", "#0000ff", "#800080", "#ffffff"
@@ -408,21 +430,4 @@ function isPermissionError(message) {
       || text.indexOf("eacces") >= 0
       || text.indexOf("not permitted") >= 0
       || (text.indexOf("udev") >= 0 && text.indexOf("hidraw") >= 0)
-}
-
-// Pull the version out of a plugin manifest. Returns "" for anything
-// unreadable, because a label that cannot be trusted is worse than no label.
-//
-// Kept for the manifest path, but the version the panel actually shows now
-// comes through parseStatus: hskctl reads the same manifest and reports it in
-// its JSON, which is a channel we know works in the shell.
-function manifestVersion(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return ""
-  try {
-    var version = JSON.parse(text).version
-    return typeof version === "string" ? version : ""
-  } catch (e) {
-    return ""
-  }
 }

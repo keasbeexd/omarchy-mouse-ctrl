@@ -228,13 +228,27 @@ Item {
 
   // Writes are serialised: the mouse is a single shared resource and two
   // overlapping feature reports can interleave badly on the wire.
+  //
+  // Bounded, like every other collection here: a caller that issues writes
+  // faster than one USB round trip can drain them would otherwise grow this
+  // without limit. The newest value for a field wins (that is all the mouse
+  // needs to end up in the right state), and the queue itself is capped.
   property var _queue: []
+  readonly property int _maxQueuedWrites: 8
 
   function set(field, value) {
+    // Field names come from the panel, but hskctl's argument parser is the
+    // other side of this boundary, so drop anything that is not a field name
+    // before it reaches a command's arguments.
+    if (!Model.isFieldName(field)) return
     var job = { field: field, value: value }
     // Queue behind an in-flight write *or* an in-flight read, so a click during
     // a refresh is not thrown away.
     if (setProcess.running || statusProcess.running) {
+      for (var i = 0; i < _queue.length; i++) {
+        if (_queue[i].field === field) { _queue.splice(i, 1); break }
+      }
+      if (_queue.length >= _maxQueuedWrites) _queue.shift()
       _queue.push(job)
       if (!drainTimer.running) drainTimer.start()
       return
@@ -255,6 +269,7 @@ Item {
   readonly property bool working: busy || writeQueued
 
   function setSoon(field, value) {
+    if (!Model.isFieldName(field)) return
     var overlay = {}
     for (var key in pending) overlay[key] = pending[key]
     overlay[field] = value
