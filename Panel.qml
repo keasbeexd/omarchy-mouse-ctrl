@@ -19,7 +19,7 @@ Panel {
 
   // Every color in this panel is one of these, and every one of these comes
   // from the active Omarchy theme -- nothing below names a color of its own.
-  // The only literal colors in the tree are the DPI LED presets in Model.js,
+  // The only literal colors in the tree are the LED presets in Model.js,
   // which are values written to the mouse's LED, not panel styling.
   //
   // Secondary text is the foreground at reduced alpha rather than
@@ -42,12 +42,6 @@ Panel {
   }
 
   readonly property var rows: hsk.rows
-  // Only stage 1 is ever mapped (see Model.dpiStage1Info) -- both profiles
-  // this plugin ships deliberately expose no stage picker. The row appears
-  // only when that one stage can actually be written, the same rule every
-  // other control follows, so the panel never shows a control the mouse would
-  // refuse (a reported-but-read-only stage stays in the summary line above).
-  readonly property bool hasDpi: hsk.canWrite("dpiStage1")
   readonly property bool needsSetup: hsk.state === "undiscovered"
   readonly property bool hasError: hsk.state === "error"
 
@@ -115,6 +109,16 @@ Panel {
   }
 
   // --- cursor -------------------------------------------------------------
+  //
+  // The cursor is an index into `rows` -- the flat, data-built list of
+  // writable rows the connected mouse's profile lays out. Nothing here knows
+  // a field name either: rows carry {field, widget}, and adjustment below is
+  // per-widget behavior, not per-field names.
+
+  // Reference to each row's rendered item, by field, for scroll-into-view.
+  // Loaders register on load and clear on destruction; a section change can
+  // leave a stale entry briefly, so scroll never trusts `visible`.
+  property var rowItems: ({})
 
   function clampCursor() {
     if (rows.length === 0) {
@@ -129,6 +133,11 @@ Panel {
     return rows[cursorIndex]
   }
 
+  function isRowCursor(field) {
+    var row = currentRow()
+    return root.cursorActive && row && row.field === field
+  }
+
   function moveCursor(dx, dy) {
     cursorActive = true
     if (dy !== 0) {
@@ -140,44 +149,59 @@ Panel {
     if (dx !== 0) adjustCurrent(dx > 0 ? 1 : -1)
   }
 
-  // Left/right nudges the value of whatever row the cursor is on, so a polling
-  // rate or lift-off distance can be changed without reaching for the mouse
-  // that is currently being reconfigured.
+  // Left/right nudges the value of whatever row the cursor is on, so any
+  // setting can be changed without reaching for the mouse that is being
+  // reconfigured. How a row nudges is decided by its widget, not its name.
   function adjustCurrent(direction) {
     var row = currentRow()
     if (!row) return
-    if (row.kind === "dpiStage") {
-      // One step per press, matching the sensor's 50 DPI granularity; hold
-      // shift-free repeat and it walks smoothly.
-      var wanted = Model.clampDpi(row.dpi + direction * Model.DPI_STEP)
-      // Coalesced, like the slider -- holding an arrow key is one write.
-      if (wanted !== row.dpi) hsk.setSoon("dpiStage1", wanted)
-    } else if (row.kind === "pollingRate") {
-      var options = Model.allowedRatesFor(hsk.allowed)
-      var current = hsk.value("pollingRate")
-      var index = options.indexOf(current)
+    var field = row.field
+    if (row.widget === "toggle") {
+      hsk.toggle(field)
+    } else if (row.widget === "chips") {
+      var options = Model.chipsOptions(field, hsk.allowed, hsk.unitFor(field))
+      if (options.length === 0) return
+      var current = String(hsk.value(field))
+      var index = -1
+      for (var i = 0; i < options.length; i++) {
+        if (options[i].value === current) { index = i; break }
+      }
       if (index < 0) index = 0
       var next = Math.max(0, Math.min(options.length - 1, index + direction))
-      if (options[next] !== current) hsk.set("pollingRate", options[next])
-    } else if (row.kind === "liftOffDistance") {
-      hsk.set("liftOffDistance", hsk.value("liftOffDistance") === "1mm" ? "2mm" : "1mm")
-    } else if (row.kind === "toggle") {
-      hsk.toggle(row.field)
+      var nextValue = options[next].value
+      if (nextValue === current) return
+      // The CLI coerces on its side too; numbers travel as numbers so a
+      // polling register is never asked for the string "4000".
+      var numeric = parseInt(nextValue, 10)
+      hsk.set(field, (!isNaN(numeric) && String(numeric) === nextValue) ? numeric : nextValue)
+    } else if (row.widget === "slider") {
+      var bounds = Model.sliderBounds(field, hsk.allowed, hsk.metaFor(field))
+      if (!bounds) return
+      var at = hsk.value(field)
+      if (typeof at !== "number" || !isFinite(at)) return
+      // One step per press, hold-to-repeat walks smoothly. Coalesced, like a
+      // drag -- holding an arrow key is one write, not one per frame.
+      var wanted = Model.clampStep(at + direction * bounds.step, bounds)
+      if (wanted !== at) hsk.setSoon(field, wanted)
+    } else if (row.widget === "color") {
+      // The current swatch cycles the LED palette -- reaching the next color
+      // is one keystroke, like one click on it is.
+      var swatch = hsk.value(field) === undefined || hsk.value(field) === null ? "" : String(hsk.value(field))
+      if (Model.isValidHexColor(swatch) && swatch !== "") hsk.set(field, Model.nextStageColor(swatch))
+      else hsk.set(field, Model.STAGE_COLORS[0])
     }
   }
 
   function activateCursor() {
+    // Enter on a non-toggle nudges the value one step in the natural
+    // direction; on a toggle it flips it. Same primitive as the arrow keys,
+    // by design -- the cursor is never idle.
     var row = currentRow()
-    if (!row) return
-    if (row.kind === "toggle") {
-      hsk.toggle(row.field)
-    } else {
-      adjustCurrent(1)
-    }
+    if (row) adjustCurrent(1)
   }
 
   function scrollItemIntoView(item) {
-    if (!panelFlick || !item) return
+    if (!panelFlick || !item || !item.visible) return
     Qt.callLater(function() {
       if (!item) return
       var margin = Style.space(6)
@@ -194,8 +218,8 @@ Panel {
 
   function scrollCursorIntoView() {
     var row = currentRow()
-    if (!row || row.kind !== "dpiStage" || !dpiRow) return
-    scrollItemIntoView(dpiRow)
+    if (!row) return
+    scrollItemIntoView(root.rowItems[row.field])
   }
 
   function setCursor(index) {
@@ -204,11 +228,9 @@ Panel {
     clampCursor()
   }
 
-  function rowIndexOf(kind, key) {
+  function rowIndexOf(field) {
     for (var i = 0; i < rows.length; i++) {
-      if (rows[i].kind !== kind) continue
-      if (kind === "toggle" && rows[i].field !== key) continue
-      return i
+      if (rows[i].field === field) return i
     }
     return -1
   }
@@ -224,8 +246,8 @@ Panel {
   }
 
   Connections {
-    // `hsk`, not `mouse` -- this one survived the rename and has been pointing
-    // at nothing ever since, so the cursor was never re-clamped on a refresh.
+    // The cursor must be re-clamped whenever the rows list changes -- a
+    // mouse unplugging, a profile swap, a different field set all move it.
     target: hsk
     function onChanged() { root.clampCursor() }
   }
@@ -319,6 +341,12 @@ Panel {
   }
 
   // --- panel --------------------------------------------------------------
+  //
+  // The content below the hero is rendered entirely from the connected
+  // mouse's profile: its sections in order, their writable fields in order,
+  // each field drawn by the widget its metadata asks for. There is no
+  // per-field QML left -- a mouse this plugin has never heard of renders
+  // itself, and one that has nothing writable renders nothing.
 
   KeyboardPanel {
     id: panel
@@ -522,147 +550,89 @@ Panel {
             }
           }
 
-          // --- DPI --------------------------------------------------------
+          // --- the profile's own layout -----------------------------------
+          Repeater {
+            model: hsk.sections
 
-          PanelSeparator {
-            visible: root.hasDpi
-            foreground: root.foreground
-          }
+            delegate: Column {
+              id: sectionColumn
 
-          Column {
-            visible: root.hasDpi
-            width: parent.width
-            spacing: Style.space(10)
+              required property var modelData
 
-            PanelSectionHeader {
-              text: "DPI"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            DpiStageRow {
-              id: dpiRow
-              width: parent.width
-            }
-          }
-
-          // --- performance ------------------------------------------------
-
-          PanelSeparator {
-            visible: hsk.canWrite("pollingRate") || hsk.canWrite("liftOffDistance")
-            foreground: root.foreground
-          }
-
-          Column {
-            visible: hsk.canWrite("pollingRate") || hsk.canWrite("liftOffDistance")
-            width: parent.width
-            spacing: Style.space(10)
-
-            PanelSectionHeader {
-              text: "PERFORMANCE"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              visible: hsk.canWrite("pollingRate")
-              width: parent.width
-              spacing: Style.space(6)
-
-              Text {
-                textFormat: Text.PlainText
-                text: "Polling rate"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              // ChoiceRow is a Row -- it sizes to its chips, so no explicit
-              // width here or the row stretches past its content.
-              ChoiceRow {
-                options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
-                value: String(hsk.value("pollingRate"))
-                cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
-                onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
-                onHovered: function(index, on) {
-                  if (on) root.setCursor(root.rowIndexOf("pollingRate", null))
+              // A section exists only if it has something writable: a section
+              // of read-only diagnostics would render headers above nothing.
+              readonly property bool hasAny: {
+                if (!modelData || !Array.isArray(modelData.fields)) return false
+                for (var i = 0; i < modelData.fields.length; i++) {
+                  if (hsk.canWrite(modelData.fields[i])) return true
                 }
+                return false
               }
-            }
 
-            Column {
-              visible: hsk.canWrite("liftOffDistance")
+              visible: hasAny
               width: parent.width
-              spacing: Style.space(6)
+              spacing: Style.space(10)
 
-              Text {
-                textFormat: Text.PlainText
-                text: "Lift-off distance"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
+              PanelSeparator {
+                width: parent.width
+                foreground: root.foreground
               }
 
-              ChoiceRow {
-                options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
-                value: String(hsk.value("liftOffDistance"))
-                onChanged: function(v) { hsk.set("liftOffDistance", v) }
-                onHovered: function(index, on) {
-                  if (on) root.setCursor(root.rowIndexOf("liftOffDistance", null))
-                }
+              PanelSectionHeader {
+                // Section titles come from the profile, and everything user
+                // visible goes through `plain()` for the same reason every
+                // device string does -- but only where it may render through
+                // a shared host Text. PanelSectionHeader, like the hero,
+                // cannot be pinned to PlainText from a plugin.
+                text: Model.plain(sectionColumn.modelData.title, 24)
+                foreground: root.foreground
+                fontFamily: root.fontFamily
               }
-            }
-          }
 
-          // --- sensor -----------------------------------------------------
+              Column {
+                width: parent.width
+                spacing: Style.space(6)
 
-          PanelSeparator {
-            visible: toggleColumn.hasAny
-            foreground: root.foreground
-          }
+                Repeater {
+                  model: sectionColumn.modelData.fields
 
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: toggleColumn.hasAny
+                  delegate: Loader {
+                    id: fieldLoader
 
-            PanelSectionHeader {
-              text: "SENSOR"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
+                    required property string modelData
 
-            Column {
-              id: toggleColumn
-              width: parent.width
-              spacing: Style.space(6)
-              readonly property bool hasAny: hsk.canWrite("motionSync")
-                || hsk.canWrite("angleSnap")
-                || hsk.canWrite("rippleControl")
-                || hsk.canWrite("turboMode")
+                    // A field renders only if it is writable AND its widget is
+                    // one of the four the panel can draw. The same gate
+                    // Model.buildRows applies to cursor stops, so a drawn row
+                    // and a cursor stop never disagree.
+                    readonly property bool activeField: hsk.canWrite(modelData)
+                      && !!hsk.metaFor(modelData)
+                    property string fieldName: modelData
 
-              Repeater {
-                // Same fields, same order, as the toggle rows Model.buildRows
-                // makes cursor stops for -- a field missing here is a cursor
-                // stop with nothing drawn under it.
-                model: ["motionSync", "angleSnap", "rippleControl", "turboMode"]
-                Toggle {
-                  required property var modelData
-                  visible: hsk.canWrite(modelData)
-                  width: toggleColumn.width
-                  label: Model.toggleLabel(modelData)
-                  description: Model.toggleDescription(modelData)
-                  checked: hsk.value(modelData) === true
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  hasCursor: {
-                    var row = root.currentRow()
-                    return root.cursorActive && row && row.kind === "toggle" && row.field === modelData
-                  }
-                  onClicked: hsk.toggle(modelData)
-                  onHovered: function(on) {
-                    if (on) root.setCursor(root.rowIndexOf("toggle", modelData))
+                    active: activeField
+                    width: parent.width
+                    // One Loader per field, whose source component is the
+                    // widget the profile's metadata asks for: this is the
+                    // whole renderer. The rowToggle fallback is unreachable
+                    // (the active gate above already required a known
+                    // writable widget) but keeps `sourceComponent` total.
+                    sourceComponent: {
+                      var m = hsk.metaFor(modelData)
+                      if (m && m.widget === "chips") return rowChips
+                      if (m && m.widget === "slider") return rowSlider
+                      if (m && m.widget === "color") return rowColor
+                      return rowToggle
+                    }
+
+                    onLoaded: {
+                      if (item) {
+                        item.field = fieldName
+                        root.rowItems[fieldName] = item
+                      }
+                    }
+                    Component.onDestruction: {
+                      if (root.rowItems[modelData] === item) delete root.rowItems[modelData]
+                    }
                   }
                 }
               }
@@ -739,7 +709,13 @@ Panel {
     }
   }
 
-  // --- components ---------------------------------------------------------
+  // --- row widgets ----------------------------------------------------------
+  //
+  // Four widgets cover every control a profile can ask for, and every one of
+  // them is generic over `field`: it reads its value and metadata through the
+  // service (which itself reads it from the mouse), never a hardcoded field
+  // name. A row that says "only writable fields become controls" stays true
+  // because the Loader gate above already applied it.
 
   // A pick-one row of Omarchy's own bordered buttons, drawn like Vigil's
   // tabs. Not the shell's ButtonGroup: that fills every unselected chip with
@@ -773,265 +749,358 @@ Panel {
     }
   }
 
-  // The mouse's one DPI stage: a draggable slider plus a color swatch and a
-  // hex field. There is deliberately no stage picker here -- see the
-  // profiles' own notes on why switching which stage is live does not work.
-  component DpiStageRow: CursorSurface {
-    id: stageRow
-
-    // Read straight from the service rather than being handed a snapshot, so
-    // the row survives a refresh instead of being torn down and rebuilt.
-    //
-    // No separate Y axis here. G-Wolves' own write path mirrors X into Y in
-    // the same packet (see the profile's `linkedField`), so every write this
-    // plugin makes keeps them equal -- a mismatch can only be a leftover from
-    // before this mouse was ever set through here, and the next write clears
-    // it. Not worth a UI for.
-    readonly property int dpi: {
-      var v = hsk.value("dpiStage1")
-      return v === undefined || v === null ? Model.DPI_MIN : v
+  Component {
+    id: rowToggle
+    Toggle {
+      property string field: ""
+      visible: hsk.canWrite(field) && !!hsk.metaFor(field)
+      width: parent ? parent.width : 0
+      label: hsk.labelFor(field)
+      description: hsk.metaFor(field) ? hsk.metaFor(field).description : ""
+      checked: hsk.value(field) === true
+      foreground: root.foreground
+      accent: root.accent
+      fontFamily: root.fontFamily
+      hasCursor: root.isRowCursor(field)
+      onClicked: hsk.toggle(field)
+      onHovered: function(on) { if (on) root.setCursor(root.rowIndexOf(field)) }
     }
-    readonly property string swatch: {
-      var v = hsk.value("dpiStage1Color")
-      return v === undefined || v === null ? "" : String(v)
-    }
-    readonly property bool dpiWritable: hsk.canWrite("dpiStage1")
-    readonly property bool colorWritable: hsk.canWrite("dpiStage1Color")
+  }
 
-    // The slider bounds this mouse's own profile reports (its `min`/`max`),
-    // not a range baked in for one model -- see Model.dpiBounds.
-    readonly property var bounds: Model.dpiBounds(hsk.allowed)
-
-    readonly property bool rowHasCursor: {
-      var row = root.currentRow()
-      return root.cursorActive && row && row.kind === "dpiStage"
-    }
-
-    hasCursor: rowHasCursor
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: stageInner.implicitHeight + Style.spacing.lg
-
+  Component {
+    id: rowChips
     Column {
-      id: stageInner
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
+      property string field: ""
+      width: parent ? parent.width : 0
       spacing: Style.space(6)
 
-      RowLayout {
-        width: parent.width
-        spacing: Style.space(8)
+      Text {
+        textFormat: Text.PlainText
+        text: hsk.labelFor(field)
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
 
-        // Typing a value commits like the slider does -- on
-        // editingFinished, not per keystroke, so a half-typed number is
-        // never sent to the mouse.
-        TextField {
-          id: dpiField
-          Layout.preferredWidth: Style.space(70)
-          enabled: stageRow.dpiWritable
-          selectByMouse: true
-          horizontalAlignment: Text.AlignRight
-          color: root.foreground
-          selectionColor: root.withAlpha(root.accent, 0.4)
-          selectedTextColor: root.foreground
-          placeholderTextColor: root.dim
-          opacity: enabled ? 1.0 : 0.5
+      // ChoiceRow is a Row -- it sizes to its chips, so no explicit
+      // width here or the row stretches past its content.
+      ChoiceRow {
+        options: Model.chipsOptions(field, hsk.allowed, hsk.unitFor(field))
+        value: String(hsk.value(field))
+        cursorIndex: root.isRowCursor(field) ? 0 : -1
+        onChanged: function(v) {
+          var numeric = parseInt(v, 10)
+          hsk.set(field, (!isNaN(numeric) && String(numeric) === v) ? numeric : v)
+        }
+        onHovered: function(index, on) { if (on) root.setCursor(root.rowIndexOf(field)) }
+      }
+    }
+  }
+
+  Component {
+    id: rowSlider
+    CursorSurface {
+      id: sliderRow
+
+      property string field: ""
+      width: parent.width
+
+      // Read straight from the service rather than being handed a snapshot,
+      // so the row survives a refresh instead of being torn down and rebuilt.
+      readonly property var bounds: Model.sliderBounds(field, hsk.allowed, hsk.metaFor(field))
+      readonly property real value: {
+        var v = hsk.value(field)
+        var n = typeof v === "number" ? v : NaN
+        return isFinite(n) ? n : (bounds ? bounds.min : 0)
+      }
+
+      hasCursor: root.isRowCursor(field)
+      foreground: root.foreground
+      fill: root.hoverFill
+      currentFill: root.selectedFill
+      implicitHeight: sliderInner.implicitHeight + Style.spacing.lg
+
+      Column {
+        id: sliderInner
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: Style.space(6)
+        anchors.rightMargin: Style.space(6)
+        spacing: Style.space(6)
+
+        Text {
+          textFormat: Text.PlainText
+          text: hsk.labelFor(field)
+          color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          font.bold: true
-          maximumLength: 5
+        }
+
+        RowLayout {
+          width: parent.width
+          spacing: Style.space(8)
+
+          // Typing a value commits like the slider does -- on
+          // editingFinished, not per keystroke, so a half-typed number is
+          // never sent to the mouse.
+          TextField {
+            id: valueField
+            property var row: sliderRow
+            Layout.preferredWidth: Style.space(70)
+            enabled: row.bounds !== null
+            selectByMouse: true
+            horizontalAlignment: Text.AlignRight
+            color: root.foreground
+            selectionColor: root.withAlpha(root.accent, 0.4)
+            selectedTextColor: root.foreground
+            placeholderTextColor: root.dim
+            opacity: enabled ? 1.0 : 0.5
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            maximumLength: 7
+            background: Rectangle {
+              implicitHeight: Style.space(28)
+              radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+              color: "transparent"
+              border.width: 1
+              border.color: valueField.activeFocus ? root.accent : root.dim
+            }
+            validator: IntValidator {
+              bottom: row.bounds ? row.bounds.min : 0
+              top: row.bounds ? row.bounds.max : 999999
+            }
+
+            // Only follow the device (and the slider) while not focused, or a
+            // refresh mid-edit would overwrite what is being typed.
+            Binding {
+              target: valueField
+              property: "text"
+              value: String(Math.round(sliderRow.value))
+              when: !valueField.activeFocus
+            }
+
+            onEditingFinished: {
+              var n = parseInt(text, 10)
+              if (!isNaN(n) && row.bounds) hsk.set(field, Model.clampStep(n, row.bounds))
+              focus = false
+            }
+          }
+
+          Text {
+            // The unit ("Hz", "DPI", "s") sits beside the number -- both come
+            // from the profile, so an unknown field still labels its value.
+            textFormat: Text.PlainText
+            visible: hsk.unitFor(field) !== ""
+            text: hsk.unitFor(field)
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Item { Layout.fillWidth: true }
+        }
+
+        Slider {
+          id: slider
+          property var row: sliderRow
+          width: parent.width
+          from: row.bounds ? row.bounds.min : 0
+          to: row.bounds ? row.bounds.max : 1
+          stepSize: row.bounds ? row.bounds.step : 1
+          snapMode: Slider.SnapAlways
+          enabled: row.bounds !== null
+          opacity: enabled ? 1.0 : 0.5
+
+          // Track and handle drawn from the theme rather than left to the
+          // Controls style, whose palette knows nothing about Omarchy themes.
           background: Rectangle {
-            implicitHeight: Style.space(28)
-            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-            color: "transparent"
+            x: slider.leftPadding
+            y: slider.topPadding + slider.availableHeight / 2 - height / 2
+            implicitWidth: Style.space(200)
+            implicitHeight: Style.space(4)
+            width: slider.availableWidth
+            height: implicitHeight
+            radius: Style.cornerRadius > 0 ? height / 2 : 0
+            color: root.faint
+
+            Rectangle {
+              width: slider.visualPosition * parent.width
+              height: parent.height
+              radius: parent.radius
+              color: root.accent
+            }
+          }
+
+          handle: Rectangle {
+            x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
+            y: slider.topPadding + slider.availableHeight / 2 - height / 2
+            implicitWidth: Style.space(14)
+            implicitHeight: Style.space(14)
+            radius: Style.cornerRadius > 0 ? width / 2 : 0
+            color: slider.pressed || slider.hovered ? root.accent : root.foreground
             border.width: 1
-            border.color: dpiField.activeFocus ? root.accent : root.dim
+            border.color: root.accent
           }
-          validator: IntValidator { bottom: stageRow.bounds.min; top: stageRow.bounds.max }
 
-          // Only follow the device (and the slider) while not focused, or a
-          // refresh mid-edit would overwrite what is being typed.
+          // Track the device only while not being dragged -- otherwise a
+          // refresh mid-drag yanks the handle back under the pointer and
+          // `released` never arrives where the user let go.
           Binding {
-            target: dpiField
-            property: "text"
-            value: String(stageRow.dpi)
-            when: !dpiField.activeFocus
+            target: slider
+            property: "value"
+            value: sliderRow.value
+            when: !slider.pressed
           }
 
-          onEditingFinished: {
-            var n = parseInt(text, 10)
-            if (!isNaN(n)) hsk.set("dpiStage1", Model.clampDpi(n, stageRow.bounds.min, stageRow.bounds.max, stageRow.bounds.step))
-            focus = false
+          onMoved: {
+            if (row.bounds) hsk.setSoon(row.field, Model.clampStep(value, row.bounds))
           }
+          onPressedChanged: root.setCursor(root.rowIndexOf(row.field))
         }
+      }
+    }
+  }
 
-        Item { Layout.fillWidth: true }
+  Component {
+    id: rowColor
+    CursorSurface {
+      id: colorRow
+
+      property string field: ""
+      width: parent.width
+
+      readonly property string swatch: {
+        var v = hsk.value(field)
+        return v === undefined || v === null ? "" : String(v)
       }
 
-      Slider {
-        id: dpiSlider
-        width: parent.width
-        from: stageRow.bounds.min
-        to: stageRow.bounds.max
-        stepSize: stageRow.bounds.step
-        snapMode: Slider.SnapAlways
-        enabled: stageRow.dpiWritable
-        opacity: enabled ? 1.0 : 0.5
+      hasCursor: root.isRowCursor(field)
+      foreground: root.foreground
+      fill: root.hoverFill
+      currentFill: root.selectedFill
+      implicitHeight: colorInner.implicitHeight + Style.spacing.lg
 
-        // Track and handle drawn from the theme rather than left to the
-        // Controls style, whose palette knows nothing about Omarchy themes.
-        background: Rectangle {
-          x: dpiSlider.leftPadding
-          y: dpiSlider.topPadding + dpiSlider.availableHeight / 2 - height / 2
-          implicitWidth: Style.space(200)
-          implicitHeight: Style.space(4)
-          width: dpiSlider.availableWidth
-          height: implicitHeight
-          radius: Style.cornerRadius > 0 ? height / 2 : 0
-          color: root.faint
+      Column {
+        id: colorInner
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: Style.space(6)
+        anchors.rightMargin: Style.space(6)
+        spacing: Style.space(6)
 
-          Rectangle {
-            width: dpiSlider.visualPosition * parent.width
-            height: parent.height
-            radius: parent.radius
-            color: root.accent
+        Text {
+          textFormat: Text.PlainText
+          text: hsk.labelFor(field)
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        RowLayout {
+          width: parent.width
+          spacing: Style.space(8)
+
+          // Three one-click presets, then the current color (click cycles the
+          // eight preset colors, for reaching one that isn't among the three),
+          // then the hex field for an exact color.
+          Repeater {
+            model: Model.DPI_PRESET_COLORS
+
+            Rectangle {
+              id: presetBox
+              required property string modelData
+              Layout.preferredWidth: Style.space(14)
+              Layout.preferredHeight: Style.space(14)
+              Layout.alignment: Qt.AlignVCenter
+              radius: Style.cornerRadius > 0 ? Style.space(3) : 0
+              color: presetBox.modelData
+              border.width: 1
+              border.color: presetMouse.containsMouse ? root.foreground : root.dim
+
+              MouseArea {
+                id: presetMouse
+                anchors.fill: parent
+                anchors.margins: -Style.space(3)
+                hoverEnabled: true
+                enabled: !hsk.busy
+                cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
+                onEntered: root.setCursor(root.rowIndexOf(colorRow.field))
+                onClicked: hsk.set(colorRow.field, presetBox.modelData)
+              }
+            }
           }
-        }
 
-        handle: Rectangle {
-          x: dpiSlider.leftPadding + dpiSlider.visualPosition * (dpiSlider.availableWidth - width)
-          y: dpiSlider.topPadding + dpiSlider.availableHeight / 2 - height / 2
-          implicitWidth: Style.space(14)
-          implicitHeight: Style.space(14)
-          radius: Style.cornerRadius > 0 ? width / 2 : 0
-          color: dpiSlider.pressed || dpiSlider.hovered ? root.accent : root.foreground
-          border.width: 1
-          border.color: root.accent
-        }
-
-        // Track the device only while not being dragged -- otherwise a
-        // refresh mid-drag yanks the handle back under the pointer and
-        // `released` never arrives where the user let go.
-        Binding {
-          target: dpiSlider
-          property: "value"
-          value: stageRow.dpi
-          when: !dpiSlider.pressed
-        }
-
-        onMoved: hsk.setSoon("dpiStage1", Model.clampDpi(value, stageRow.bounds.min, stageRow.bounds.max, stageRow.bounds.step))
-        onPressedChanged: root.setCursor(root.rowIndexOf("dpiStage"))
-      }
-
-      RowLayout {
-        width: parent.width
-        spacing: Style.space(8)
-        visible: stageRow.swatch !== ""
-
-        // Three one-click presets, then the current color (click cycles the
-        // eight preset colors, for reaching one that isn't among the three),
-        // then the hex field for an exact color.
-        Repeater {
-          model: Model.DPI_PRESET_COLORS
-
+          // Current color. Clicking cycles the eight preset colors above, for
+          // reaching a color that isn't one of the three shown.
           Rectangle {
-            id: presetBox
-            required property string modelData
-            visible: stageRow.colorWritable
+            id: swatchBox
             Layout.preferredWidth: Style.space(14)
             Layout.preferredHeight: Style.space(14)
             Layout.alignment: Qt.AlignVCenter
             radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-            color: presetBox.modelData
+            // Only a validated #rrggbb reaches a color property; anything else
+            // the device reports shows as an empty outline.
+            color: Model.isValidHexColor(colorRow.swatch) ? colorRow.swatch : "transparent"
             border.width: 1
-            border.color: presetMouse.containsMouse ? root.foreground : root.dim
+            border.color: swatchMouse.containsMouse ? root.foreground : root.dim
 
             MouseArea {
-              id: presetMouse
+              id: swatchMouse
               anchors.fill: parent
               anchors.margins: -Style.space(3)
               hoverEnabled: true
               enabled: !hsk.busy
               cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
-              onEntered: root.setCursor(root.rowIndexOf("dpiStage"))
-              onClicked: hsk.set("dpiStage1Color", presetBox.modelData)
+              onEntered: root.setCursor(root.rowIndexOf(colorRow.field))
+              onClicked: hsk.set(colorRow.field, Model.nextStageColor(colorRow.swatch))
+            }
+
+            PanelToolTip {
+              visible: swatchMouse.containsMouse
+              text: "Current color -- click to cycle"
+              fontFamily: root.fontFamily
             }
           }
-        }
 
-        // Current color. Clicking cycles the eight preset colors above, for
-        // reaching a color that isn't one of the three shown.
-        Rectangle {
-          id: swatchBox
-          visible: stageRow.colorWritable
-          Layout.preferredWidth: Style.space(14)
-          Layout.preferredHeight: Style.space(14)
-          Layout.alignment: Qt.AlignVCenter
-          radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-          // Only a validated #rrggbb reaches a color property; anything else
-          // the device reports shows as an empty outline.
-          color: Model.isValidHexColor(stageRow.swatch) ? stageRow.swatch : "transparent"
-          border.width: 1
-          border.color: swatchMouse.containsMouse ? root.foreground : root.dim
+          TextField {
+            id: hexField
+            property var row: colorRow
+            Layout.fillWidth: true
+            selectByMouse: true
+            color: root.foreground
+            selectionColor: root.withAlpha(root.accent, 0.4)
+            selectedTextColor: root.foreground
+            placeholderTextColor: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            maximumLength: 7
+            background: Rectangle {
+              implicitHeight: Style.space(28)
+              radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+              color: "transparent"
+              border.width: 1
+              border.color: hexField.activeFocus ? root.accent : root.dim
+            }
+            validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
 
-          MouseArea {
-            id: swatchMouse
-            anchors.fill: parent
-            anchors.margins: -Style.space(3)
-            hoverEnabled: true
-            enabled: !hsk.busy
-            cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
-            onEntered: root.setCursor(root.rowIndexOf("dpiStage"))
-            onClicked: hsk.set("dpiStage1Color", Model.nextStageColor(stageRow.swatch))
-          }
+            // Only follow the device while the field is not focused, or a
+            // refresh mid-edit would overwrite what is being typed.
+            Binding {
+              target: hexField
+              property: "text"
+              value: colorRow.swatch
+              when: !hexField.activeFocus
+            }
 
-          PanelToolTip {
-            visible: swatchMouse.containsMouse
-            text: "Current color -- click to cycle"
-            fontFamily: root.fontFamily
-          }
-        }
-
-        TextField {
-          id: hexField
-          Layout.fillWidth: true
-          enabled: stageRow.colorWritable
-          selectByMouse: true
-          color: root.foreground
-          selectionColor: root.withAlpha(root.accent, 0.4)
-          selectedTextColor: root.foreground
-          placeholderTextColor: root.dim
-          opacity: enabled ? 1.0 : 0.5
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          maximumLength: 7
-          background: Rectangle {
-            implicitHeight: Style.space(28)
-            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-            color: "transparent"
-            border.width: 1
-            border.color: hexField.activeFocus ? root.accent : root.dim
-          }
-          validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
-
-          // Only follow the device while the field is not focused, or a
-          // refresh mid-edit would overwrite what is being typed.
-          Binding {
-            target: hexField
-            property: "text"
-            value: stageRow.swatch
-            when: !hexField.activeFocus
-          }
-
-          onEditingFinished: {
-            var v = text.trim()
-            if (v !== "" && v[0] !== "#") v = "#" + v
-            if (Model.isValidHexColor(v)) hsk.set("dpiStage1Color", v.toLowerCase())
-            focus = false
+            onEditingFinished: {
+              var v = text.trim()
+              if (v !== "" && v[0] !== "#") v = "#" + v
+              if (Model.isValidHexColor(v)) hsk.set(row.field, v.toLowerCase())
+              focus = false
+            }
           }
         }
       }

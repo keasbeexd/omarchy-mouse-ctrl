@@ -37,6 +37,13 @@ Item {
   // its selectors from whatever mouse is actually plugged in instead of a
   // list baked in for one model.
   property var allowed: ({})
+  // Rendering metadata per field (label, description, unit, widget), from
+  // the same profile. The panel is a template over this: no field name or
+  // label lives in the QML.
+  property var meta: ({})
+  // The profile's own section layout -- the panel's order comes from here,
+  // and a profile for a mouse we never heard of lays itself out.
+  property var sections: []
 
   // Optimistic overlay: a click should move the UI immediately rather than
   // waiting a full command round trip. Cleared once the re-read lands.
@@ -132,7 +139,10 @@ Item {
 
   readonly property string summary: Model.summaryLine(state, effectiveValues)
   readonly property string barText: Model.barLabel(effectiveValues, showBatteryLabel)
-  readonly property var rows: Model.buildRows(state, effectiveValues, writable)
+  // Cursor stops: the profile's own layout, writable fields only. Anything
+  // the profile cannot write never becomes a stop, so the cursor can never
+  // park on a control that would error.
+  readonly property var rows: Model.buildRows(state, writable, sections, meta)
 
   signal changed()
 
@@ -153,6 +163,23 @@ Item {
 
   function value(field) {
     return effectiveValues[field]
+  }
+
+  // Rendering metadata helpers. The panel renders rows it receives from the
+  // rows list, but labels and units are read field-by-field while building
+  // the tree, so these are the one place that looks them up.
+  function metaFor(field) {
+    return meta[field] || null
+  }
+
+  function labelFor(field) {
+    var m = meta[field]
+    return m && m.label ? m.label : field
+  }
+
+  function unitFor(field) {
+    var m = meta[field]
+    return m && m.unit ? m.unit : ""
   }
 
   // Anything asking for a refresh on purpose -- the user, IPC, a plug/unplug
@@ -205,6 +232,11 @@ Item {
     values = parsed.settings || {}
     writable = parsed.writable || []
     allowed = parsed.allowed || {}
+    meta = parsed.meta || {}
+    // A profile that carries no sections yet (or an hskctl from before they
+    // existed) still gets a usable panel -- one flat SETTINGS section of
+    // whatever is writable -- rather than an empty one.
+    sections = Model.sectionsOrFallback(parsed.state, parsed.writable || [], meta, parsed.sections || [])
     if (parsed.version !== "") pluginVersion = parsed.version
     pending = ({})
     lastError = parsed.ok ? "" : parsed.error
