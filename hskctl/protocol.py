@@ -312,6 +312,16 @@ class Profile:
         return self.data.get("model", "unknown device")
 
     @property
+    def name(self) -> str:
+        """The profile's own name -- the file stem, e.g. `gwolves-hsk-pro-4k`.
+
+        Same name `list_profiles` reports and the one a user profile is picked
+        by, so a cache key derived from it identifies exactly which profile
+        vetted a given verdict.
+        """
+        return os.path.splitext(os.path.basename(self.path))[0]
+
+    @property
     def status(self) -> str:
         return self.data.get("status", "undiscovered")
 
@@ -641,6 +651,48 @@ class Profile:
             if clean:
                 out.append({"title": title, "fields": clean})
         return out
+
+    def stage_switch_field(self) -> str | None:
+        """The field that selects which DPI stage is live, if switching is on.
+
+        Declared as `ui.stageSwitch` in a profile and checked hard, because
+        this one field gets *written* by a verification probe at panel-open:
+        `field_writable` must agree, the widget must be the chip row (a stage
+        picked by dragging a thumb is the wrong tool), and an unverified
+        mapping refuses as usual. `None` means the mouse gets no switcher --
+        which is the correct answer until someone proves the mechanism.
+
+        The Pulsar profile refuses precisely here: its `activeDpiStage`
+        writes round-trip but change nothing live (see its `_followUp`), so
+        the flag has no value. The G-Wolves profile declares it; the probe
+        (see `Session.probe_stage_switch`) is the runtime half of the gate.
+        """
+        ui = self.data.get("ui")
+        if not isinstance(ui, dict):
+            return None
+        switch = ui.get("stageSwitch")
+        if not isinstance(switch, dict):
+            return None
+        field = switch.get("field")
+        if not isinstance(field, str) or not field or field.startswith("_"):
+            return None
+        try:
+            if not self.has_field(field) or not self.field_writable(field):
+                return None
+        except ProtocolError:
+            return None
+        meta = self.field_ui(field)
+        if not meta or meta["widget"] != "chips":
+            return None
+        return field
+
+    def stage_range(self, field: str) -> tuple[int, int] | None:
+        """The integer range a stage field's chip row covers, if it has one."""
+        spec = self.data.get("fields", {}).get(field) or {}
+        lo, hi = spec.get("min"), spec.get("max")
+        if isinstance(lo, int) and isinstance(hi, int) and 0 < lo < hi <= 16:
+            return lo, hi
+        return None
 
 
 def _clean_text(value: Any, limit: int) -> str | None:

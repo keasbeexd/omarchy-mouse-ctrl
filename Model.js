@@ -215,9 +215,37 @@ function parseStatus(raw) {
     allowed: cleanAllowed(parsed.allowed),
     meta: cleanMeta(parsed.ui),
     sections: cleanSections(parsed.sections),
+    // The one field that carries an extra runtime gate (a live probe the
+    // service runs once per firmware). A field name or nothing -- validated
+    // like every name that reaches QML.
+    stageSwitchField: isFieldName(parsed.stageSwitchField) ? parsed.stageSwitchField : "",
     version: typeof parsed.version === "string" ? plain(parsed.version, 32) : "",
     error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
   }
+}
+
+// The verdict of the stage-switch probe: capable true/false, or null when
+// inconclusive. `reason` is device-adjacent text and gets the same
+// sanitisation as any error string. The name of the field probed comes
+// straight back so the capability is stored under the name it was asked for.
+function parseStageProbe(raw) {
+  var text = String(raw || "").trim()
+  if (text === "") return { ok: false, capable: null, field: "", cached: false, reason: "" }
+  var parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch (e) {
+    return { ok: false, capable: null, field: "", cached: false, reason: plain(text.split("\n")[0], 200) }
+  }
+  if (!isPlainObject(parsed)) return { ok: false, capable: null, field: "", cached: false, reason: "" }
+  var out = {
+    ok: parsed.ok === true,
+    field: isFieldName(parsed.field) ? parsed.field : "",
+    capable: typeof parsed.capable === "boolean" ? parsed.capable : null,
+    cached: parsed.cached === true,
+    reason: typeof parsed.reason === "string" ? plain(parsed.reason, 200) : ""
+  }
+  return out
 }
 
 // Same shape of parsing as parseStatus, for `hskctl battery`'s much smaller
@@ -371,8 +399,7 @@ function sectionsOrFallback(state, writable, meta, sections) {
   for (var i = 0; i < writable.length; i++) {
     var field = writable[i]
     var m = meta[field]
-    if (m && (m.widget !== "toggle" && m.widget !== "chips" && m.widget !== "slider" && m.widget !== "color")) continue
-    if (m) fields.push(field)
+    if (m && isRowWidget(m.widget)) fields.push(field)
   }
   if (fields.length > 0) out.push({ title: "SETTINGS", fields: fields })
   return out
@@ -381,6 +408,24 @@ function sectionsOrFallback(state, writable, meta, sections) {
 function canWrite(writable, field) {
   if (!writable) return false
   return writable.indexOf(field) !== -1
+}
+
+// The one predicate every render decision shares: does this field become a
+// control? buildRows uses it for cursor stops, the panel's section delegates
+// use it for visibility, so a drawn row and a cursor stop cannot disagree.
+function isRowWidget(widget) {
+  return widget === "toggle" || widget === "chips" || widget === "slider" || widget === "color"
+}
+
+// A field renders only if it is writable, has renderable metadata, and is not
+// hidden by a capability gate (true = shown). `gate` maps names as the engine
+// reported them; nothing about the gate is hardwired to any field here.
+function fieldRowVisible(field, writable, meta, gate) {
+  if (gate && Object.prototype.hasOwnProperty.call(gate, field) && gate[field] !== true) return false
+  if (!canWrite(writable, field)) return false
+  var m = meta[field]
+  if (!m) return false
+  return isRowWidget(m.widget)
 }
 
 // The flat list of keyboard-navigable rows, straight from the profile:
@@ -393,7 +438,13 @@ function canWrite(writable, field) {
 // fields), but a profile that lists one field in several sections would
 // still have produced one cursor stop per mention, so a field renders at
 // most once panel-wide.
-function buildRows(state, writable, sections, meta) {
+//
+// `gate` hides fields whose capability is not yet proven (`true` = shown);
+// the service fills it for the one feature with an extra runtime check --
+// stage switching, whose probe reports back after the panel's first status.
+// It is keyed by field name exactly as the engine reported it, so no QML
+// side knowledge is involved in what it hides.
+function buildRows(state, writable, sections, meta, gate) {
   var rows = []
   if (state !== "ready") return rows
   var seen = []
@@ -402,14 +453,9 @@ function buildRows(state, writable, sections, meta) {
     for (var i = 0; i < fields.length; i++) {
       var field = fields[i]
       if (seen.indexOf(field) !== -1) continue
-      if (!canWrite(writable, field)) continue
-      var m = meta[field]
-      if (!m) continue
-      // Only controls the panel can render become rows; info widgets are
-      // the read-only diagnostics the panel never shows as controls.
-      if (m.widget !== "toggle" && m.widget !== "chips" && m.widget !== "slider" && m.widget !== "color") continue
+      if (!fieldRowVisible(field, writable, meta, gate)) continue
       seen.push(field)
-      rows.push({ field: field, widget: m.widget })
+      rows.push({ field: field, widget: meta[field].widget })
     }
   }
   return rows

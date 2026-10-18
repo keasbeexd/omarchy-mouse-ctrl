@@ -44,6 +44,28 @@ Item {
   // The profile's own section layout -- the panel's order comes from here,
   // and a profile for a mouse we never heard of lays itself out.
   property var sections: []
+  // Stage switching, if this profile declares it: the field name to gate on,
+  // and one verdict per name. The engine reports the field; the live probe
+  // (its own process, run once per firmware, verdict cached there under
+  // ~/.cache) reports the verdict. Until that verdict is literally `true`,
+  // the row stays hidden; `false` is cached engine-side, `null` is treated
+  // as "not proven" for the rest of the session.
+  property string stageSwitchField: ""
+  property var stageCapable: ({})
+
+  // The capability gate as a map, in the shape buildRows/fieldRowVisible take.
+  // A field with no verdict is hidden, never half-shown: the switcher
+  // appearing after the probe is better than appearing before it.
+  function _stageGate() {
+    if (stageSwitchField === "" || stageCapable[stageSwitchField] === true) return null
+    var gate = {}
+    gate[stageSwitchField] = false
+    return gate
+  }
+
+  function rowVisible(field) {
+    return Model.fieldRowVisible(field, writable, meta, _stageGate())
+  }
 
   // Optimistic overlay: a click should move the UI immediately rather than
   // waiting a full command round trip. Cleared once the re-read lands.
@@ -142,7 +164,7 @@ Item {
   // Cursor stops: the profile's own layout, writable fields only. Anything
   // the profile cannot write never becomes a stop, so the cursor can never
   // park on a control that would error.
-  readonly property var rows: Model.buildRows(state, writable, sections, meta)
+  readonly property var rows: Model.buildRows(state, writable, sections, meta, _stageGate())
 
   signal changed()
 
@@ -223,6 +245,48 @@ Item {
     batteryProcess.running = true
   }
 
+  // The stage-switch probe: a separate hskctl call, deliberately not gated on
+  // battery poll or user activity -- it runs once per mouse+firmware, the
+  // engine caches the verdict under ~/.cache, and until the answer exists
+  // the panel simply shows one fewer row. Budgeted per session (two
+  // attempts), because an inconclusive probe otherwise re-stages a write
+  // every refresh for a mouse whose stage register is wedged.
+  readonly property int _maxStageProbeAttempts: 2
+  property int _stageProbeAttempts: 0
+  property string _stageStdout: ""
+  property int _stageStdoutBytes: 0
+  property bool _stageOverflow: false
+
+  function _armStageProbe() {
+    if (_destroyed || suspended) return
+    if (stageSwitchField === "") return
+    if (stageCapable[stageSwitchField] === true || stageCapable[stageSwitchField] === false) return
+    if (_stageProbeAttempts >= _maxStageProbeAttempts) return
+    // Never overlaps anything else; skipping is fine because the next status
+    // (refresh, plug event, battery-timer gate) re-arms it.
+    if (statusProcess.running || setProcess.running || stageProbeProcess.running
+        || _queue.length > 0 || Object.keys(_soon).length > 0) return
+    _stageProbeAttempts += 1
+    _stageStdout = ""; _stageStdoutBytes = 0
+    _stageOverflow = false
+    stageProbeProcess.command = [hskctl, "--json", "probe-stages"]
+    stageProbeProcess.running = true
+  }
+
+  function applyStageProbe(raw) {
+    var parsed = Model.parseStageProbe(raw)
+    // ok:false or a null verdict is "not proven" -- nothing is stored, and
+    // the session's attempt budget already limits how often it retries.
+    if (!parsed.ok || (parsed.capable !== true && parsed.capable !== false)) return
+    var key = parsed.field !== "" ? parsed.field : stageSwitchField
+    if (key === "") return
+    var map = {}
+    for (var existing in stageCapable) map[existing] = stageCapable[existing]
+    map[key] = parsed.capable
+    stageCapable = map
+    changed()
+  }
+
   function applyStatus(raw) {
     var parsed = Model.parseStatus(raw)
     state = parsed.state
@@ -237,10 +301,15 @@ Item {
     // existed) still gets a usable panel -- one flat SETTINGS section of
     // whatever is writable -- rather than an empty one.
     sections = Model.sectionsOrFallback(parsed.state, parsed.writable || [], meta, parsed.sections || [])
+    stageSwitchField = parsed.state === "ready" ? parsed.stageSwitchField : ""
     if (parsed.version !== "") pluginVersion = parsed.version
     pending = ({})
     lastError = parsed.ok ? "" : parsed.error
     changed()
+    // The probe only ever runs on a ready status: there is no field to gate
+    // otherwise. Cheap no-op when the capability is already known for the
+    // session, or this profile has no switcher at all.
+    if (state === "ready") _armStageProbe()
   }
 
   // Merges rather than replaces `values` -- a failed or stale poll must not
@@ -503,6 +572,63 @@ Item {
     onTriggered: {
       batteryProcess.signal(15)
       batteryKillTimer.restart()
+    }
+  }
+
+  // The probe is also silent on failure -- a verdict of "not proven" hides
+  // one row, it does not raise the panel's error banner over background
+  // upkeep. Its budget is longer than the others': a cold probe opens the
+  // device, reads firmware, switches a stage and switches back, and that is
+  // a couple of seconds of USB settle time folded in.
+  readonly property int _maxStageProbeMs: 30000
+
+  Timer {
+    id: stageProbeWatchdog
+    interval: root._maxStageProbeMs
+    repeat: false
+    running: stageProbeProcess.running
+    onTriggered: {
+      stageProbeProcess.signal(15)
+      stageProbeKillTimer.restart()
+    }
+  }
+
+  Timer {
+    id: stageProbeKillTimer
+    interval: 1500
+    repeat: false
+    onTriggered: if (stageProbeProcess.running) stageProbeProcess.signal(9)
+  }
+
+  Process {
+    id: stageProbeProcess
+    running: false
+    command: []
+    clearEnvironment: true
+    environment: root.childEnvironment
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        if (root._stageOverflow) return
+        var s = String(chunk || "")
+        root._stageStdoutBytes += s.length
+        root._stageStdout = root._appendChunk(root._stageStdout, s, 4096)
+        if (root._stageStdoutBytes > 4096) {
+          // A probe reply is one small JSON object; anything approaching
+          // the cap is not that, and unbounded buffer growth is the thing
+          // this consumer-side cap exists to prevent.
+          root._stageOverflow = true
+          stageProbeProcess.signal(15)
+          stageProbeKillTimer.restart()
+        }
+      }
+    }
+    // No stderr capture: same silence-first policy as the battery poll.
+
+    onExited: function(exitCode, exitStatus) {
+      stageProbeKillTimer.stop()
+      if (root._stageOverflow) return
+      if (root._stageStdout.trim() !== "") root.applyStageProbe(root._stageStdout)
     }
   }
 

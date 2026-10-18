@@ -768,6 +768,115 @@ class Session:
                 self.profile.build_request("commit", write=True, wireless=self.wireless)
             )
 
+    def probe_stage_switch(self, field: str) -> dict:
+        """Prove the stage-switch mechanism live, as far as reads can prove it.
+
+        The profile declaring the stage field writable is the author's claim;
+        this probe is the runtime half of the gate (the profile is the other
+        half -- a profile may refuse, and the Pulsar one does): switch to a
+        different stage, verify the readback moved, verify nothing else in the
+        block changed, then switch back. It runs once per mouse+firmware and
+        the CLI cached its verdict under ~/.cache (both verdicts, positive and
+        negative), so the mouse's LED-staged write only ever happens on first
+        contact.
+
+        Known limit, and the reason the probe alone is not trusted: a readback
+        check cannot see the cursor. A firmware that stores the byte and
+        ignores it reads back identically to one that applies it. What the
+        probe catches is the cruder failure modes -- firmware that refuses the
+        write outright, or that damages the stage table on the way past -- and
+        its `reason` says exactly what was checked.
+
+        The revert runs in a `finally`: whatever the probe concludes about the
+        mechanism, the mouse is left on the stage its user chose, or the
+        result says it could not be.
+        """
+        bounds = self.profile.stage_range(field)
+        if bounds is None:
+            return {
+                "capable": False,
+                "reason": "the profile declares no usable stage range",
+                "reverted": True,
+                "stages": 0,
+            }
+        lo, hi = bounds
+        current = self.get(field)
+        if not isinstance(current, int) or not lo <= current <= hi:
+            return {
+                "capable": None,
+                "reason": f"active stage reads {current!r}, "
+                          f"outside the profile's {lo}..{hi} range",
+                "reverted": True,
+                "stages": hi - lo + 1,
+            }
+
+        command = self.profile.field_command(field)
+        spec = self.profile.field(field)
+        stage_offset = self.profile.response_offset(command, spec)
+        # The switch invariant is "the block did not change beyond the stage
+        # byte". Stating it against one baseline read is too strict, though:
+        # this firmware carries live telemetry inside the block's tail
+        # (observed on hardware: byte 56 flips 00/ff with no exchange in
+        # between, twice in a row). So read the block twice *before* touching
+        # anything, and any byte that already disagrees with itself is
+        # telemetry by observation -- excluded from the invariant rather than
+        # compared against a value it can never satisfy.
+        before = self._read(command)
+        baseline = self._read(command)
+        unstable = {
+            i
+            for i in range(min(len(before), len(baseline)))
+            if before[i] != baseline[i]
+        } | {stage_offset}
+
+        target = current + 1 if current < hi else lo
+        result = {"capable": True, "reason": "", "reverted": False, "stages": hi - lo + 1}
+        try:
+            try:
+                self.set(field, target)
+            except (OSError, ProtocolError) as exc:
+                # An exchange that failed outright is *transient* evidence --
+                # a sleeping mouse or a mid-probe cable pull. Verdict null:
+                # nothing is cached, the next open asks again.
+                result["capable"] = None
+                result["reason"] = f"the stage write did not land: {exc}"
+                return result
+            stage_after = self.get(field)
+            if stage_after != target:
+                result["capable"] = False
+                result["reason"] = (
+                    f"write of stage {target} read back as {stage_after!r}; "
+                    "the firmware does not keep the stage it was given"
+                )
+                return result
+            after = self._read(command)
+            mutated = [
+                i
+                for i in range(min(len(before), len(after)))
+                if i not in unstable and before[i] != after[i]
+            ]
+            if mutated:
+                # A stage switch that rewrites neighbours may even put them
+                # back -- but a mechanism that mutates the table it lives in
+                # is not proven trustworthy, so the switcher stays hidden.
+                result["capable"] = False
+                result["reason"] = (
+                    "switching stages also changed block bytes "
+                    + ", ".join(str(i) for i in mutated)
+                    + "; refusing a switcher built on that"
+                )
+                return result
+        finally:
+            try:
+                self.set(field, current)
+                back = self.get(field)
+                result["reverted"] = back == current
+            except (OSError, ProtocolError) as exc:
+                result["revertError"] = str(exc)
+        if not result["reverted"]:
+            result["reason"] = result["reason"] or "the original stage could not be restored"
+        return result
+
 
 def _new_session(profile: Profile, info: HidrawInfo, identified: bool = True) -> Session:
     return Session(

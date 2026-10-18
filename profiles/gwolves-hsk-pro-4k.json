@@ -339,6 +339,9 @@
     "dpiStages": [
       "dpiStage1"
     ],
+    "stageSwitch": {
+      "field": "activeDpiStage"
+    },
     "sections": [
       {
         "title": "DPI",

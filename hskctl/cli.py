@@ -13,6 +13,7 @@ import json
 import os
 import secrets
 import sys
+import time
 from typing import Any
 
 from . import __version__
@@ -217,6 +218,13 @@ def cmd_status(args) -> int:
         # field -- only its label degrades to the CLI's fallback table.
         "ui": {f: profile.field_ui(f) for f in settings},
         "sections": profile.ui_sections(),
+        # The one field whose panel row has an extra runtime gate (see
+        # `probe-stages`): the profile's claim, as a name, so the panel can
+        # hide that row until a probe run answers `capable: true` -- without
+        # the QML ever hardcoding the field name itself. Absent when the
+        # profile refuses switching (Pulsar) or nothing about the field
+        # supports it.
+        "stageSwitchField": profile.stage_switch_field(),
     }
 
     def human(p):
@@ -241,6 +249,166 @@ def cmd_status(args) -> int:
             print(f"  {label:<20} {value}")
 
     return _emit(payload, args.json, human)
+
+
+# -- stage-switch verification -------------------------------------------------
+#
+# This is the plugin's first persistent state. Everything else hskctl touches
+# is the mouse's own memory; the verdict of a live probe is the plugin's own
+# knowledge, "this firmware switches stages when told", and re-proving it on
+# every panel open would mean a brief staged write every single time. So the
+# verdict is cached per mouse identity+firmware+profile, positive *and*
+# negative, and a firmware update (or a different mouse on the same dongle)
+# changes the key and forces a fresh probe. ~/.cache, never ~/.config: it is
+# reproducible knowledge, not a setting.
+
+_STAGE_CACHE_MAX_BYTES = 65536
+_STAGE_CACHE_MAX_ENTRIES = 64
+
+
+def _stage_cache_path() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "hskctl", "stage-probe.json")
+
+
+def _stage_cache_load(path: str) -> dict:
+    try:
+        doc = read_bounded_json(path, _STAGE_CACHE_MAX_BYTES)
+    except (OSError, ValueError):
+        return {}
+    entries = doc.get("stageProbes")
+    return entries if isinstance(entries, dict) else {}
+
+
+def _stage_cache_store(path: str, entries: dict) -> None:
+    entries = dict(entries)
+    while len(entries) > _STAGE_CACHE_MAX_ENTRIES:
+        # Drop the oldest verdict, not an arbitrary one: eviction needs to be
+        # deterministic, and pinned-by-recency is the next best thing to
+        # pinning by usefulness.
+        oldest = min(
+            entries,
+            key=lambda k: entries[k].get("checkedAt", 0) if isinstance(entries[k], dict) else 0,
+        )
+        del entries[oldest]
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    body = json.dumps(
+        {"stageProbes": entries}, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    tmp = os.path.join(directory, f".stage-probe.{os.getpid()}.tmp")
+    with open(tmp, "wb") as handle:
+        handle.write(body)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def cmd_probe_stages(args) -> int:
+    """Answer, once per mouse+firmware: does switching DPI stages actually work?
+
+    Two gates, on purpose. The profile gates (see `stage_switch_field`):
+    a read-only or unmapped stage field never gets probed, which is how the
+    Pulsar profile keeps the switcher off despite writes that round-trip.
+    The live probe gates: a staged write happens, the readback moves, nothing
+    else in the block may change, and the original stage must come back.
+
+    A verdict of `true` or `false` is cached under ~/.cache/hskctl keyed by
+    VID:PID, firmware and profile, so the mouse sees the probe's few staged
+    writes exactly once per firmware. `null` means inconclusive (transient
+    failure, or the profile offers no switcher) -- never cached, retried on
+    the next call.
+    """
+    try:
+        profile = detect_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    field = None
+    try:
+        field = profile.stage_switch_field()
+        if not profile.discovered or field is None:
+            payload = {
+                "ok": True,
+                "field": field,
+                "capable": None,
+                "cached": False,
+                "reason": (
+                    "the profile offers no stage switcher"
+                    if profile.discovered
+                    else "the protocol is not mapped for this device"
+                ),
+            }
+            return _emit(payload, args.json, lambda p: print(p["reason"]))
+
+        session = open_session(profile)
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json)
+
+    vidpid = session.info.vidpid
+    firmware = ""
+    if profile.has_field("firmwareVersion"):
+        try:
+            firmware = str(session.get("firmwareVersion"))
+        except (DeviceBusy, ProtocolError, OSError):
+            firmware = ""
+    key = f"{vidpid}|{firmware}|{profile.name}"
+    path = _stage_cache_path()
+    entries = _stage_cache_load(path)
+    cached = entries.get(key)
+    if isinstance(cached, dict) and cached.get("capable") in (True, False):
+        payload = {
+            "ok": True,
+            "field": field,
+            "capable": cached["capable"],
+            "cached": True,
+            "reason": cached.get("reason", ""),
+        }
+        return _emit(payload, args.json, lambda p: _print_probe(p))
+
+    try:
+        result = session.probe_stage_switch(field)
+    except (DeviceBusy, ProtocolError, OSError) as exc:
+        return _fail(f"stage probe failed: {exc}", args.json)
+
+    if result.get("capable") in (True, False) and result.get("reverted"):
+        entries[key] = {
+            "capable": result["capable"],
+            "reason": result.get("reason", ""),
+            "checkedAt": int(time.time()),
+        }
+        try:
+            _stage_cache_store(path, entries)
+        except OSError as exc:
+            # A cache write failure degrades to re-probing next time; the
+            # probe itself already happened and the verdict is real.
+            if not args.json:
+                print(f"(cache write failed: {exc})", file=sys.stderr)
+
+    payload = {
+        "ok": True,
+        "field": field,
+        "capable": result.get("capable"),
+        "cached": False,
+        "reason": result.get("reason", ""),
+        "reverted": result.get("reverted", True),
+        "stages": result.get("stages"),
+    }
+    return _emit(payload, args.json, lambda p: _print_probe(p))
+
+
+def _print_probe(p: dict) -> None:
+    verdict = p.get("capable")
+    cache_note = " (cached)" if p.get("cached") else ""
+    if verdict is True:
+        stages = p.get("stages")
+        stage_note = f", {stages} stage(s)" if isinstance(stages, int) and stages else ""
+        print(f"Stage switching works{stage_note}{cache_note}.")
+    elif verdict is False:
+        print(f"Stage switching does NOT work{cache_note}: {p.get('reason') or 'unproven'}")
+    else:
+        print(p.get("reason") or "inconclusive; will re-probe next time")
 
 
 def cmd_battery(args) -> int:
@@ -1393,6 +1561,10 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_probe
     )
     sub.add_parser("status", help="read every mapped setting").set_defaults(func=cmd_status)
+    sub.add_parser(
+        "probe-stages",
+        help="verify that switching DPI stages works (one staged write, cached)",
+    ).set_defaults(func=cmd_probe_stages)
     sub.add_parser(
         "battery", help="read only battery percent and charging (one exchange)"
     ).set_defaults(func=cmd_battery)
