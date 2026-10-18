@@ -133,7 +133,7 @@ def cmd_probe(args) -> int:
         print(f"  vendorIds  : [\"{top['vidpid'].split(':')[0]}\"]")
         print(f"  productIds : [\"{top['vidpid'].split(':')[1]}\"]")
         print(f"  interface  : {top['interface']}")
-        print("\nSee docs/PROTOCOL-DISCOVERY.md for the capture procedure.")
+        print("\nSee docs/contributor/PROTOCOL-DISCOVERY.md for the capture procedure.")
 
     return _emit(payload, args.json, human)
 
@@ -166,7 +166,7 @@ def cmd_status(args) -> int:
                 f"{p['model']}: "
                 + (
                     "detected, but the config protocol is not mapped yet.\n"
-                    "Run `hskctl probe` and follow docs/PROTOCOL-DISCOVERY.md."
+                    "Run `hskctl probe` and follow docs/contributor/PROTOCOL-DISCOVERY.md."
                     if p["detected"]
                     else "not detected."
                 )

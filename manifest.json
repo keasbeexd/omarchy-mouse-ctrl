@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "keasbeexd.mousectrl",
   "name": "Mouse CTRL",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "author": "Marc Ferro @keasbeexd",
   "license": "MIT",
-  "description": "Battery, DPI, polling rate and sensor settings for supported G-Wolves and Pulsar mice, in the Omarchy bar.",
+  "description": "Battery, DPI (with stage switching where verified), polling rate and sensor settings for supported G-Wolves and Pulsar mice, in the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],

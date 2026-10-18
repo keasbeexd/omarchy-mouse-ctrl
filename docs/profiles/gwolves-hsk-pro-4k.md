@@ -2,7 +2,8 @@
 
 Notes for contributors on `profiles/gwolves-hsk-pro-4k.json`. The profile
 carries the bytes and their one-line caveats; the reasoning lives here.
-For how the protocol itself was decoded, see PROTOCOL-DISCOVERY's
+For how the protocol itself was decoded, see
+docs/contributor/PROTOCOL-DISCOVERY.md (contributor material; repo history).
 G-Wolves material (repo history / contributor docs).
 
 ## Source

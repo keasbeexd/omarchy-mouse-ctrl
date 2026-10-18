@@ -69,23 +69,26 @@ Both mice are confirmed on real hardware: every setting below was written
 and read back on the actual mouse, not just decoded from a plausible-looking
 reply.
 
+The panel renders whatever the connected mouse's profile actually reports and
+can write — see [How multiple mice work](#how-multiple-mice-work).
+
 | | G-Wolves HSK Pro 4K | Pulsar X2H mini (4K dongle) |
 |---|---|---|
 | **Battery** | percentage in the bar, low-battery warning, charging state | same |
-| **DPI** | stage 1's value and LED color | same |
+| **DPI** | **stage switching** (verified live on this hardware), stage 1's value and LED color | stage 1's value and LED color |
 | **Polling rate** | 250, 500, 1000, 2000, 4000 Hz | 125, 250, 500, 1000, 2000, 4000 Hz |
 | **Lift-off distance** | 1 or 2 mm | 1 or 2 mm |
 | **Sensor** | motion sync, angle snapping | motion sync, angle snapping, ripple control, turbo mode |
+| **Sleep timer** | 0–3600 s, in the panel (`hskctl set` works too) | 0–2550 s, same |
+| **Debounce** | not writable here (read returns an index; writing needs the real table) | writable, panel + CLI |
 | **Firmware** | version, and link (dongle or cable) | version |
-| **`hskctl` only** | sleep timer | sleep timer, debounce |
 
-The last row is writable from the command line (`hskctl set`) but has no
-control in the panel. Only DPI stage 1 is exposed on either mouse; see
-[Using it](#using-it) for why.
-
-A different mouse shows only the rows above that its own profile actually
-maps and can write — see [How multiple mice work](#how-multiple-mice-work).
-Nothing here is a guess carried from one mouse's profile into another's.
+Stage switching is not unconditional like the rows above it: the profile
+declares it and a one-time live probe verifies the mechanism (see
+[Using it](#using-it)); if the probe cannot prove it, the row stays hidden. A
+different mouse shows only the rows above that its own profile actually maps
+and can write. Nothing here is a guess carried from one mouse's profile into
+another's.
 
 ## How multiple mice work
 
@@ -120,20 +123,42 @@ device actually connected, the same way it decides whether it is safe to
 
 **Bar widget:** left click opens the panel, middle click refreshes.
 
-**In the panel**, DPI is one row: a number field you can type an exact value
-into, a draggable slider (50 DPI steps) below it, then three one-click
-preset colors, a swatch showing the current color (click it to cycle through
-eight preset colors), and a hex field for an exact color.
+**In the panel**, every row is rendered from the connected mouse's profile —
+its sections in order, their fields in order, each drawn by the control its
+metadata asks for: a toggle, a row of chips, a slider (with an exact-value
+field beside it) or a color picker. Nothing is hardcoded per field, so a
+mouse this plugin has never heard of lays itself out; two shipped profiles
+also live in `profiles/`, and their layout is the data you are reading here.
 
-**Why only DPI stage 1.** There is deliberately no stage picker, on either
-mouse. On the Pulsar, switching stages does not work: writes to
-`activeDpiStage` round-trip (the byte you write reads back) but change
-neither the cursor speed nor the LED, and the mouse's own DPI button does
-nothing either. A switcher that looks like it works but doesn't is worse
-than none. On the G-Wolves, stage switching does work, but one DPI is all
-this plugin's author uses, and one control that behaves the same on every
-supported mouse beats a picker that works on some of them. The other stages
-are left exactly as the mouse has them.
+DPI, where the profile supports it, is a slider (50-unit steps), a number
+field for an exact value, then three one-click preset colors, a swatch showing
+the current color (click it to cycle through eight preset colors), and a hex
+field for an exact color.
+
+**DPI stage switching, on the G-Wolves.** The profile reclaims what the
+Windows app does: a `DPI stage` chip row (1–7). Its write path is the same
+read-modify-write every DPI edit uses, so no stage's value or color can be
+zeroed by another stage's write. What is *not* taken on the profile's say-so
+alone is whether the firmware honours the switch at all: on first contact
+with a given mouse + firmware, one live probe writes a different stage,
+checks the readback moved and that the rest of the block did not change,
+then switches back, and caches the verdict — positive or negative — in
+`~/.cache/hskctl/stage-probe.json`. The mouse therefore sees the probe's few
+staged writes exactly once per firmware, not once per panel open. If the
+probe cannot prove the mechanism, the row stays hidden; if the profile
+refuses (Pulsar), the probe never runs at all.
+
+The probe checks what a read can check. A firmware that stores the byte and
+ignores it (as the Pulsar's does) cannot be caught by a readback — that is
+why the profile's refusal is the other half of the gate, not a formality.
+
+**Why the Pulsar has no stage picker.** Writes to `activeDpiStage` round-trip
+(the byte you write reads back) but change neither the cursor speed nor the
+LED, and the mouse's own DPI button does nothing either. Its profile maps the
+fields as read-only diagnostics, and stage switching stays off until the real
+mechanism is recovered (a USB capture of Pulsar Fusion actually switching
+stages is the thing that would settle it). The other stages are left exactly
+as the mouse has them.
 
 Rapid input is coalesced — drag the slider from 400 to 3200 and the mouse
 gets one write, when you release — and the panel says *Writing to the
@@ -144,8 +169,8 @@ The version of the plugin you are running is in the bottom-right of the panel;
 hover it for the firmware version and which hidraw node is in use. `hskctl
 --version` reports the same number.
 
-**Keyboard:** `↑`/`↓` between rows, `←`/`→` to adjust the row under the cursor
-(DPI in 50-unit steps), `r` to refresh.
+**Keyboard:** `↑`/`↓` between rows, `←`/`→` to adjust the row under the
+cursor (by its own step — 50 DPI, one chip, one toggle), `r` to refresh.
 
 The panel only renders controls for settings that can actually be written, so it
 never offers an action that comes back as an error.
@@ -164,7 +189,8 @@ The plugin is a front end for `hskctl`, which is useful on its own:
 ```bash
 hskctl status                    # everything the mouse reports
 hskctl set pollingRate 4000
-hskctl set dpiStage1 1600
+hskctl set activeDpiStage 3      # switch DPI stage (G-Wolves; the panel does the same)
+hskctl probe-stages              # verify stage switching works; verdict is cached
 hskctl doctor                    # raw bytes of every read; writes nothing
 hskctl watch-battery             # sample the battery over time; writes nothing
 ```
@@ -279,22 +305,29 @@ That takes the plugin out of the shell. What survives, and how to remove it:
 - Any profile you added yourself under `~/.config/hskctl/profiles/` stays
   too. hskctl only ever reads that directory; delete it along with
   `~/.config/hskctl/` if you no longer want either.
+- The **stage-switch probe cache** at `~/.cache/hskctl/stage-probe.json` —
+  delete it if you want the next panel open to re-probe (and re-stage) from
+  scratch. It holds only per-mouse verdicts, keyed by USB ids, firmware
+  version and profile name: nothing about you, nothing about anything but
+  the mice it has touched.
 
-Nothing else persists: the plugin writes no cache, no log, no state file on
-its own. While it runs, hskctl holds an empty lock file,
-`$XDG_RUNTIME_DIR/hskctl.lock`, which goes away with the runtime directory
-at logout. The only thing it runs alongside the shell is `hskctl watch-link`,
-which watches for the mouse or dongle being plugged in or out, for as long
-as the widget is loaded, and never talks to the mouse itself. Mouse
-configuration lives on the mouse itself and follows the mouse, not this
-plugin.
+Beyond that, the plugin writes no log and no state of its own. While it runs,
+hskctl holds an empty lock file, `$XDG_RUNTIME_DIR/hskctl.lock`, which goes
+away with the runtime directory at logout. The only other cache is Python's
+own bytecode in `hskctl/__pycache__` (delete with the plugin). The only thing
+it runs alongside the shell is `hskctl watch-link`, which watches for the
+mouse or dongle being plugged in or out, for as long as the widget is loaded,
+and never talks to the mouse itself. Mouse configuration lives on the mouse
+itself and follows the mouse, not this plugin — with all three exceptions
+above listed where they are.
 
 ## Model notes
 
 ### G-Wolves HSK Pro 4K
 
 - The firmware has seven DPI stages and its own stage button works; the
-  panel edits stage 1 only (see [Using it](#using-it)).
+  panel can switch stages directly, after a one-time live probe (see
+  [Using it](#using-it)) — confirmed on hardware with firmware 1.0.7.
 - Cable and dongle are separate endpoints, and the panel shows which one is
   in use. With both plugged in, hskctl picks the endpoint that answers with
   real data (see [How the protocol was recovered](#g-wolves)).
@@ -314,7 +347,10 @@ plugin.
   (`3554:f509`) has never been seen carrying the config protocol at all.
 - `dpiStageCount` and `activeDpiStage` stay mapped in the profile as
   read-only diagnostics for anyone chasing the real stage-switch mechanism
-  later; the UI never surfaces them.
+  later. Read-only is more than a display choice here: it is the profile's
+  half of the stage-switcher gate, so the switcher is never offered and the
+  probe (whose job is to stage a write) never runs — see
+  [Using it](#using-it).
 - The `_followUp` list at the bottom of `profiles/pulsar-x2h-mini.json`
   tracks the remaining narrower gaps (the 1K dongle, a couple of low-risk
   protocol-engine edge cases, multiple onboard profiles on chipsets that
@@ -324,15 +360,25 @@ plugin.
 ## Other models
 
 The protocol for each vendor lives in `profiles/*.json` as data, interpreted
-by a generic engine — there is no per-mouse code. G-Wolves' vendor app
-matches 14 product IDs across the HSK range, so variants other than the Pro
-4K very likely speak the same protocol already described in
-`profiles/gwolves-hsk-pro-4k.json`. If you have one, `hskctl probe` and
-`hskctl doctor` will tell you whether it's recognized, and adding a new
-product id (or a whole new profile, for a different protocol) is a data
+by a generic engine — there is no per-mouse code. A profile decides what the
+mouse *does*; presentation is part of the same data: each field carries its
+own label, and the panel's `ui.sections` block says which fields render under
+which heading, in what order (`hskctl fields` shows what a profile
+declares). G-Wolves' vendor app matches 14 product IDs across the HSK range,
+so variants other than the Pro 4K very likely speak the same protocol already
+described in `profiles/gwolves-hsk-pro-4k.json`. If you have one, `hskctl
+probe` and `hskctl doctor` will tell you whether it's recognized, and adding
+a new product id (or a whole new profile, for a different protocol) is a data
 change, not a code change. Issues and PRs welcome — for other Pulsar models
 and mice especially, since only the X2H mini's 4K dongle variant is confirmed
 so far; see [Pulsar X2H mini](#pulsar-x2h-mini) above.
+
+Writing a profile for your own mouse is the same exercise as reading one of
+the shipped ones — `match`, `transport`, `commands`, `fields` and (for the
+panel layout) `ui`. The provenance notes now live beside them in
+`docs/profiles/<name>.md`, and the shipped profiles are deliberately compact:
+byte-level facts and machine-readable flags stay in the JSON, the essays live
+in `docs/profiles/` and in history.
 
 ## How the protocol was recovered
 
@@ -375,7 +421,7 @@ read off a plausible-looking table — and the answer is not a formula: raw 1–
 divide a 1000 Hz base, while 32 and 64 are separate high-rate codes for 2000 and
 4000 Hz.
 
-Full detail in [docs/PROTOCOL-DISCOVERY.md](docs/PROTOCOL-DISCOVERY.md).
+Full detail in [docs/contributor/PROTOCOL-DISCOVERY.md](docs/contributor/PROTOCOL-DISCOVERY.md).
 
 ### Pulsar
 
@@ -448,7 +494,9 @@ install.sh                                        udev rule, self-contained
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
 profiles/        one JSON file per supported mouse -- data, not code
-docs/            how the G-Wolves protocol was decoded, and the logo
+docs/            logo.svg
+docs/profiles/   per-profile provenance notes
+docs/contributor/  PROTOCOL-DISCOVERY: how the byte tables were recovered
 ```
 
 ## Contributing

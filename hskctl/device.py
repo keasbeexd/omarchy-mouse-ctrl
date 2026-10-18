@@ -915,7 +915,7 @@ def open_session(profile: Profile, path: str | None = None) -> Session:
             f"Best candidate is {best.info.path} ({best.info.vidpid}, {best.info.name!r}), "
             f"but the profile for {profile.model} has no protocol mapped yet, so "
             f"hskctl will not talk to it. Run `hskctl probe --json` and follow "
-            f"docs/PROTOCOL-DISCOVERY.md."
+            f"docs/contributor/PROTOCOL-DISCOVERY.md."
         )
 
     # Only nodes that match what the profile declares are eligible for
