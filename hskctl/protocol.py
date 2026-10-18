@@ -535,9 +535,159 @@ class Profile:
         base = spec.get("dividerBase")
         if base:
             return sorted({base // d for d in range(1, 9)}, reverse=True)
-        if spec.get("min") is not None and spec.get("max") is not None:
-            return [spec["min"], spec["max"]]
+        lo, hi = spec.get("min"), spec.get("max")
+        if lo is not None and hi is not None:
+            if isinstance(lo, int) and isinstance(hi, int) and 0 <= hi - lo <= 16:
+                # A small integer range enumerates one value per step: these
+                # become chips in the panel (see `_derive_widget`), and chips
+                # need every value, not the two endpoints a range would
+                # otherwise pass. The cap matches the derivation rule exactly
+                # -- the same condition sends the same field the same way.
+                return list(range(lo, hi + 1))
+            return [lo, hi]
         return None
+
+    # -- presentation metadata ------------------------------------------------
+    #
+    # The panel used to hardcode which fields exist and what they look like:
+    # one QML file knew about motionSync and angleSnap by name, and a profile
+    # for a mouse with a different sensor vocabulary could not add a row
+    # without a code change. The protocol engine is data-driven, and now the
+    # UI on top of it is too.
+    #
+    # Metadata is authored inseparably from the bytes it describes -- a label
+    # that survives an offset edit belongs to a different setting -- so it
+    # rides in the same field spec, under `ui`, and never in a side file.
+
+    _UI_WIDGETS = ("toggle", "chips", "slider", "color", "info")
+
+    def field_ui(self, name: str) -> dict | None:
+        """Validated presentation metadata for one field, or None.
+
+        The `ui` block inside the field spec is the author's say, and every
+        piece of it is checked here rather than trusted: strings are
+        non-empty and capped, the widget override must name a control the
+        panel actually has, and an invalid piece is dropped rather than
+        warped into shape -- an unknown widget value falls back to the
+        derived control, which cannot be wrong.
+        """
+        if not self.has_field(name):
+            return None
+        spec = self.data["fields"][name]
+        raw = spec.get("ui")
+        if not isinstance(raw, dict):
+            raw = {}
+        meta: dict[str, Any] = {}
+        label = _clean_text(raw.get("label"), 40)
+        if label:
+            meta["label"] = label
+        description = _clean_text(raw.get("description"), 120)
+        if description:
+            meta["description"] = description
+        unit = _clean_text(raw.get("unit"), 8)
+        if unit:
+            meta["unit"] = unit
+        widget = raw.get("widget")
+        meta["widget"] = widget if widget in self._UI_WIDGETS else _derive_widget(spec)
+        step = spec.get("step")
+        if isinstance(step, bool) or not isinstance(step, int) or not 0 < step <= 10000:
+            step = None
+        if step is not None:
+            meta["step"] = step
+        return meta
+
+    def ui_sections(self) -> list[dict]:
+        """The profile's own panel layout: ordered sections of field names.
+
+        A section renders only what is mapped: names pointing at fields this
+        profile does not actually implement (a `_comment` typo, an
+        aspiration, a paste from another vendor's file) are dropped here, so
+        the layout can never volunteer a control the CLI would refuse.
+        Everything is capped the way `allowed` is capped -- a profile decides
+        which bytes are written to the mouse, so it is validated like any
+        other untrusted file, and this list sizes an entire QML tree.
+        """
+        ui = self.data.get("ui")
+        if not isinstance(ui, dict):
+            return []
+        raw = ui.get("sections")
+        if not isinstance(raw, list):
+            return []
+        fields = self.data.get("fields", {})
+        out = []
+        for section in raw:
+            if len(out) >= 10:
+                break
+            if not isinstance(section, dict):
+                continue
+            title = _clean_text(section.get("title"), 24)
+            if not title:
+                continue
+            names = section.get("fields")
+            if not isinstance(names, list):
+                continue
+            clean: list[str] = []
+            for name in names:
+                if (
+                    isinstance(name, str)
+                    and not name.startswith("_")
+                    and isinstance(fields.get(name), dict)
+                    and self.has_field(name)
+                    and name not in clean
+                ):
+                    clean.append(name)
+                if len(clean) >= 16:
+                    break
+            if clean:
+                out.append({"title": title, "fields": clean})
+        return out
+
+
+def _clean_text(value: Any, limit: int) -> str | None:
+    """Non-empty string within a cap, or nothing -- the engine's whole rule.
+
+    One of these runs on every string a panel will render straight from the
+    profile, and a profile can come from ~/.config. Length-capping here means
+    the QML needs no trust and can carry no truncation bugs.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text[:limit] if text else None
+
+
+def _derive_widget(spec: dict) -> str:
+    """The natural control for a field, from the encoding it already has.
+
+    A bool is a toggle, an enum is a pick-one row, a bounded scalar is a
+    slider, a color is a color. The field's byte-level shape already decides
+    what can be written, so it decides what is drawn -- `ui.widget` exists
+    only to override this when the natural control is wrong.
+
+    Read-only and unverified mappings derive `info` on purpose: `_needsVerification`
+    closes the write path (see `field_writable`), and the panel renders only
+    what can be written, so the honest widget for a setting the panel cannot
+    offer is a readout -- and if the panel ever surfaces read-only
+    diagnostics, `info` is the row that carries them.
+    """
+    if spec.get("readOnly") or spec.get("_needsVerification"):
+        return "info"
+    if spec.get("encoding") == "rgb":
+        return "color"
+    if spec.get("type") == "bool":
+        return "toggle"
+    if spec.get("values") or spec.get("uiOptions"):
+        return "chips"
+    lo, hi = spec.get("min"), spec.get("max")
+    if lo is not None and hi is not None:
+        if isinstance(lo, int) and isinstance(hi, int) and 0 <= hi - lo <= 16:
+            # A small integer range is one chip per step, not a slider: the
+            # G-Wolves DPI stages are 1..7, and dragging a thumb across a
+            # 7-stop track is the worse tool for it. `allowed` enumerates the
+            # range (below) so the panel gets every chip.
+            return "chips"
+        return "slider"
+    return "info"
 
 
 def _valid_profile_name(name: str) -> bool:

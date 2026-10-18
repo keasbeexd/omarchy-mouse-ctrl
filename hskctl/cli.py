@@ -209,12 +209,20 @@ def cmd_status(args) -> int:
             for f in settings
             if profile.allowed(f) is not None
         },
+        # How each field asks to be rendered: its label, its widget, its
+        # step. The panel used to hardcode all of this per field name; now
+        # the profile decides, and `hskctl fields` prints the same labels the
+        # panel will. A profile with no `ui` blocks still carries the derived
+        # widget, so a barebones profile still gets the right control per
+        # field -- only its label degrades to the CLI's fallback table.
+        "ui": {f: profile.field_ui(f) for f in settings},
+        "sections": profile.ui_sections(),
     }
 
     def human(p):
         print(f"{p['model']}  ({p['device']})   hskctl {p['version']}\n")
         for key, value in p["settings"].items():
-            label = FRIENDLY_LABELS.get(key, key)
+            label = _field_label(profile, key)
             if key == "batteryPercent":
                 value = f"{value}%"
             elif key == "pollingRate":
@@ -421,6 +429,21 @@ def cmd_set(args) -> int:
 # --- fields -----------------------------------------------------------------
 
 
+def _field_label(profile, name: str) -> str:
+    """The name shown to a user for a field: the profile says first.
+
+    The profile's `ui.label` travels with the bytes it names, so a profile
+    authoring a mouse with a sensor setting hskctl has never heard of can
+    call it what the vendor calls it. FRIENDLY_LABELS remains the fallback
+    for profiles written before this existed and for a label the validation
+    dropped.
+    """
+    meta = profile.field_ui(name)
+    if meta and isinstance(meta.get("label"), str) and meta["label"]:
+        return meta["label"]
+    return FRIENDLY_LABELS.get(name, name)
+
+
 def cmd_fields(args) -> int:
     try:
         profile = detect_profile(args.profile)
@@ -431,10 +454,13 @@ def cmd_fields(args) -> int:
     for name, spec in profile.data.get("fields", {}).items():
         if name.startswith("_") or not isinstance(spec, dict):
             continue
+        meta = profile.field_ui(name) or {}
         rows.append(
             {
                 "field": name,
-                "label": FRIENDLY_LABELS.get(name, name),
+                "label": _field_label(profile, name),
+                "description": meta.get("description", ""),
+                "widget": meta.get("widget", "info"),
                 "mapped": profile.has_field(name),
                 "writable": profile.field_writable(name),
                 "unverified": bool(spec.get("_needsVerification")),
