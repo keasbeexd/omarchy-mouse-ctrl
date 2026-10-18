@@ -32,29 +32,6 @@ function plain(text, limit) {
   return out
 }
 
-// Fallback only, for a profile that reports no `allowed` list of its own (an
-// older hskctl, or a field with no `values`/min-max in the profile). Every one
-// of these was measured by timing the G-Wolves mouse's own reports -- a
-// different mouse's real rates come from its profile via `allowedRatesFor`
-// below, since a fixed list here cannot know about an 8000 Hz Pulsar.
-var POLLING_RATES = [250, 500, 1000, 2000, 4000]
-
-// The polling rates this specific mouse actually offers, from the `allowed`
-// map hskctl derives from the profile's `values` table. Falls back to the
-// G-Wolves list so an older hskctl (no `allowed` in its JSON) still works.
-function allowedRatesFor(allowed) {
-  var rates = allowed && allowed.pollingRate
-  if (!Array.isArray(rates)) return POLLING_RATES
-  var clean = []
-  for (var i = 0; i < rates.length && clean.length < MAX_ALLOWED_VALUES; i++) {
-    var r = rates[i]
-    if (typeof r === "number" && isFinite(r) && r === Math.floor(r) && r > 0 && r <= 100000
-        && clean.indexOf(r) === -1) clean.push(r)
-  }
-  if (clean.length === 0) return POLLING_RATES
-  return clean.sort(function(a, b) { return a - b })
-}
-
 // --- the shape of hskctl's JSON ---------------------------------------------
 //
 // hskctl is our own CLI, but what it reports comes from the mouse's firmware
@@ -63,6 +40,11 @@ function allowedRatesFor(allowed) {
 // model: field names are short identifiers, values are finite numbers,
 // booleans or short strings, and every collection is capped. Anything else
 // is dropped rather than coerced into shape.
+//
+// Nothing else in this file invents an option list for any field either: a
+// control that appears comes from the profile's own allowed values, or it
+// does not appear at all. Nothing from one mouse is carried into another by
+// guesswork.
 
 var MAX_FIELDS = 64
 var MAX_ALLOWED_VALUES = 32
@@ -133,6 +115,65 @@ function cleanAllowed(raw) {
   return out
 }
 
+// How a field asks to be rendered. hskctl derives the widget from the
+// field's byte shape and passes the profile's own label through, but both
+// sides of that pipe are JSON we parse, so everything here is re-validated
+// with the same rules the other collections get before it reaches QML.
+var WIDGETS = ["toggle", "chips", "slider", "color", "info"]
+
+function cleanMeta(raw) {
+  var out = {}
+  if (!isPlainObject(raw)) return out
+  var n = 0
+  for (var key in raw) {
+    if (n >= MAX_FIELDS) break
+    if (!Object.prototype.hasOwnProperty.call(raw, key) || !isFieldName(key)) continue
+    var meta = raw[key]
+    if (!isPlainObject(meta)) continue
+    var clean = {}
+    var widget = meta.widget
+    if (WIDGETS.indexOf(widget) !== -1) clean.widget = widget
+    if (typeof meta.label === "string" && meta.label) clean.label = plain(meta.label, 40)
+    if (typeof meta.description === "string" && meta.description) clean.description = plain(meta.description, 120)
+    if (typeof meta.unit === "string" && meta.unit) clean.unit = plain(meta.unit, 8)
+    if (typeof meta.step === "number" && isFinite(meta.step) && meta.step > 0) clean.step = meta.step
+    // A field with no recognizable widget is not rendered at all rather than
+    // guessed at -- the fallback here is the same info row the engine means
+    // for read-only diagnostics, and writable rows must never degrade that far.
+    if (!WIDGETS.includes(clean.widget)) continue
+    out[key] = clean
+    n++
+  }
+  return out
+}
+
+// The profile's own section layout, capped the way every other collection
+// is. A section survives only with a title and known, distinct field names;
+// `hskctl` already filtered to mapped fields, so what survives here decides
+// the panel's whole order -- which is exactly why it gets a hard cap.
+var MAX_SECTIONS = 16
+var MAX_SECTION_FIELDS = 16
+
+function cleanSections(raw) {
+  var out = []
+  if (!Array.isArray(raw)) return out
+  for (var i = 0; i < raw.length && out.length < MAX_SECTIONS; i++) {
+    var section = raw[i]
+    if (!isPlainObject(section)) continue
+    var title = typeof section.title === "string" ? plain(section.title, 24) : ""
+    if (!title) continue
+    var fields = section.fields
+    if (!Array.isArray(fields)) continue
+    var clean = []
+    for (var j = 0; j < fields.length && clean.length < MAX_SECTION_FIELDS; j++) {
+      var f = fields[j]
+      if (isFieldName(f) && clean.indexOf(f) === -1) clean.push(f)
+    }
+    if (clean.length > 0) out.push({ title: title, fields: clean })
+  }
+  return out
+}
+
 function parseStatus(raw) {
   var text = String(raw || "").trim()
   if (text === "") {
@@ -172,6 +213,8 @@ function parseStatus(raw) {
     settings: cleanSettings(parsed.settings),
     writable: cleanWritable(parsed.writable),
     allowed: cleanAllowed(parsed.allowed),
+    meta: cleanMeta(parsed.ui),
+    sections: cleanSections(parsed.sections),
     version: typeof parsed.version === "string" ? plain(parsed.version, 32) : "",
     error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
   }
@@ -285,53 +328,6 @@ function barLabel(settings, showBattery) {
   return settings.batteryPercent + "%"
 }
 
-// The mouse's one and only editable DPI stage. Every profile this plugin
-// ships only ever maps `dpiStage1` -- see the profiles' own `_note`/`_source`
-// blocks for why: switching which stage is live does not work on the
-// hardware this was built against, so the UI never offers a stage picker.
-// Returns null when the profile has no DPI reading at all.
-function dpiStage1Info(settings) {
-  if (!has(settings, "dpiStage1")) return null
-  return {
-    dpi: settings.dpiStage1,
-    y: has(settings, "dpiStage1Y") ? settings.dpiStage1Y : settings.dpiStage1,
-    color: has(settings, "dpiStage1Color") ? settings.dpiStage1Color : "",
-    // The axes should track together; surface it when they do not so a
-    // split stage is visible rather than silently odd.
-    split: has(settings, "dpiStage1Y") && settings.dpiStage1Y !== settings.dpiStage1
-  }
-}
-
-// The DPI range and step this mouse actually offers, from the `allowed` map
-// hskctl derives from the profile's own `min`/`max`, so a mouse with a
-// different sensor range gets its own slider bounds instead of this plugin's.
-// Falls back to the range both shipped profiles use (50-26000, 50-unit steps)
-// when a profile carries no bounds of its own.
-var DPI_MIN = 50
-var DPI_MAX = 26000
-var DPI_STEP = 50
-
-function dpiBounds(allowed) {
-  var pair = allowed ? allowed.dpiStage1 : undefined
-  if (Array.isArray(pair) && pair.length === 2) {
-    var lo = pair[0], hi = pair[1]
-    if (typeof lo === "number" && typeof hi === "number"
-        && isFinite(lo) && isFinite(hi)
-        && lo > 0 && hi > lo && hi - lo <= 100000) {
-      return { min: lo, max: hi, step: DPI_STEP }
-    }
-  }
-  return { min: DPI_MIN, max: DPI_MAX, step: DPI_STEP }
-}
-
-function clampDpi(value, min, max, step) {
-  var lo = typeof min === "number" ? min : DPI_MIN
-  var hi = typeof max === "number" ? max : DPI_MAX
-  var st = (typeof step === "number" && step > 0) ? step : DPI_STEP
-  var v = Math.round(value / st) * st
-  return Math.max(lo, Math.min(hi, v))
-}
-
 // Eight preset colors the panel cycles through with one click, so a color can
 // be changed without opening a full picker. This is the plugin's own set, not
 // a palette read back from the firmware; the hex field below accepts any
@@ -356,18 +352,6 @@ function isValidHexColor(text) {
   return /^#[0-9a-fA-F]{6}$/.test(String(text || ""))
 }
 
-function pollingOptions(current, allowed) {
-  var rates = allowedRatesFor(allowed)
-  var options = []
-  for (var i = 0; i < rates.length; i++) {
-    var rate = rates[i]
-    options.push({
-      value: String(rate),
-      label: rate >= 1000 ? (rate / 1000) + "K" : String(rate)
-    })
-  }
-  return options
-}
 
 function isLow(settings, threshold) {
   if (!has(settings, "batteryPercent")) return false
@@ -375,48 +359,111 @@ function isLow(settings, threshold) {
   return settings.batteryPercent <= threshold
 }
 
-// Build the flat list of keyboard-navigable rows for the panel. Keeping this
-// as data rather than QML structure means the cursor logic is one index into
-// one array, instead of a section/row state machine.
+// Fallback for an hskctl whose JSON predates sections (a mixed --dev
+// checkout, most likely): one unsorted section of whatever is writable, so
+// the panel degrades to a flat list instead of rendering nothing. Never a
+// path a matching shipped pair takes.
+function sectionsOrFallback(state, writable, meta, sections) {
+  if (state === "ready" && Array.isArray(sections) && sections.length > 0) return sections
+  var out = []
+  if (state !== "ready" || !writable) return out
+  var fields = []
+  for (var i = 0; i < writable.length; i++) {
+    var field = writable[i]
+    var m = meta[field]
+    if (m && (m.widget !== "toggle" && m.widget !== "chips" && m.widget !== "slider" && m.widget !== "color")) continue
+    if (m) fields.push(field)
+  }
+  if (fields.length > 0) out.push({ title: "SETTINGS", fields: fields })
+  return out
+}
+
 function canWrite(writable, field) {
   if (!writable) return false
   return writable.indexOf(field) !== -1
 }
 
-function buildRows(state, settings, writable) {
+// The flat list of keyboard-navigable rows, straight from the profile:
+// the profile's sections in order, their fields in order, writable fields
+// only. No field name lives in this function -- that is the point of it.
+// Keeping this as data rather than QML structure means the cursor logic is
+// one index into one array, instead of a section/row state machine.
+//
+// Rows are capped by cleanSections/cleanMeta upstream (16 sections x 16
+// fields), but a profile that lists one field in several sections would
+// still have produced one cursor stop per mention, so a field renders at
+// most once panel-wide.
+function buildRows(state, writable, sections, meta) {
   var rows = []
   if (state !== "ready") return rows
-
-  // Only writable settings become cursor stops. Only stage 1 is ever mapped
-  // (see dpiStage1Info), so there is at most one DPI row.
-  var dpi = dpiStage1Info(settings)
-  if (dpi && canWrite(writable, "dpiStage1")) {
-    rows.push({ kind: "dpiStage", dpi: dpi.dpi, color: dpi.color })
+  var seen = []
+  for (var s = 0; s < sections.length; s++) {
+    var fields = sections[s].fields
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i]
+      if (seen.indexOf(field) !== -1) continue
+      if (!canWrite(writable, field)) continue
+      var m = meta[field]
+      if (!m) continue
+      // Only controls the panel can render become rows; info widgets are
+      // the read-only diagnostics the panel never shows as controls.
+      if (m.widget !== "toggle" && m.widget !== "chips" && m.widget !== "slider" && m.widget !== "color") continue
+      seen.push(field)
+      rows.push({ field: field, widget: m.widget })
+    }
   }
-  if (canWrite(writable, "pollingRate")) rows.push({ kind: "pollingRate" })
-  if (canWrite(writable, "liftOffDistance")) rows.push({ kind: "liftOffDistance" })
-  if (canWrite(writable, "motionSync")) rows.push({ kind: "toggle", field: "motionSync" })
-  if (canWrite(writable, "angleSnap")) rows.push({ kind: "toggle", field: "angleSnap" })
-  if (canWrite(writable, "rippleControl")) rows.push({ kind: "toggle", field: "rippleControl" })
-  if (canWrite(writable, "turboMode")) rows.push({ kind: "toggle", field: "turboMode" })
   return rows
 }
 
-function toggleLabel(field) {
-  if (field === "motionSync") return "Motion Sync"
-  if (field === "angleSnap") return "Angle snapping"
-  if (field === "rippleControl") return "Ripple control"
-  if (field === "turboMode") return "Turbo mode"
-  return field
+// The choices a chips row renders: the profile's own allowed values, in the
+// order hskctl sorted them, each with a label. String values print as they
+// are ("1mm"); numbers get the field's unit -- including the Hz shorthand
+// ("4K" for 4000), which is exactly the formatting the polling-rate chips
+// have always used, now driven by the unit the profile declares instead of
+// a rate-shaped special case in the QML.
+function chipsOptions(field, allowed, unit) {
+  var values = allowed && allowed[field]
+  if (!Array.isArray(values)) return []
+  var options = []
+  for (var i = 0; i < values.length && options.length < MAX_ALLOWED_VALUES; i++) {
+    var v = values[i]
+    var label
+    if (typeof v === "number" && isFinite(v)) {
+      label = (unit === "Hz" && v >= 1000 && v % 1000 === 0) ? (v / 1000) + "K" : String(v)
+    } else {
+      label = String(v)
+    }
+    options.push({ value: Array.isArray(v) ? "" : String(v), label: label })
+  }
+  return options
 }
 
-function toggleDescription(field) {
-  if (field === "motionSync") return "Align sensor reads to the polling clock"
-  if (field === "angleSnap") return "Straighten near-horizontal movement"
-  if (field === "rippleControl") return "Smooth jitter at high DPI"
-  if (field === "turboMode") return "Report clicks faster than the switch debounces"
-  return ""
+// The [min, max] a slider row drags between, from the profile's allowed
+// list (hskctl sends the endpoints of bounded ranges). The step is the
+// field's own if the profile says one, else 1 -- a slider with no reason
+// to skip steps does not invent a reason.
+var SLIDER_STEP_DEFAULT = 1
+
+function sliderBounds(field, allowed, meta) {
+  var pair = allowed ? allowed[field] : undefined
+  if (Array.isArray(pair) && pair.length === 2) {
+    var lo = pair[0], hi = pair[1]
+    if (typeof lo === "number" && typeof hi === "number"
+        && isFinite(lo) && isFinite(hi)
+        && lo < hi && hi - lo <= 1000000) {
+      var step = meta && typeof meta.step === "number" && meta.step > 0 ? meta.step : SLIDER_STEP_DEFAULT
+      return { min: lo, max: hi, step: step }
+    }
+  }
+  return null
 }
+
+function clampStep(value, bounds) {
+  if (!bounds) return value
+  var v = Math.round(value / bounds.step) * bounds.step
+  return Math.max(bounds.min, Math.min(bounds.max, v))
+}
+
 
 // Does this hskctl error mean "you lack permission" rather than "no mouse"?
 // Matched on the message because the failure surfaces from several layers --
