@@ -12,13 +12,6 @@ The panel above is running under a DOS-blue Omarchy theme. It is theme
 dependent: every color it draws comes from whichever Omarchy theme is active,
 so under yours it takes on your theme's colors.
 
-> **Formerly HSK Mouse.** Versions before 2.0 were G-Wolves-only, called
-> `keasbeexd.hskmouse`, and lived in
-> [`omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk), which still
-> installs that old version unchanged. Moving to this plugin is a remove and
-> add, not an automatic update — see
-> [Upgrading from HSK Mouse](#upgrading-from-hsk-mouse).
-
 Most of these mice have no libratbag support, and several vendors' own Linux
 story is "there isn't one" — DPI and polling rate configuration ships as a
 Windows-only app, if it ships at all. This plugin talks to the mouse directly
@@ -296,42 +289,6 @@ as the widget is loaded, and never talks to the mouse itself. Mouse
 configuration lives on the mouse itself and follows the mouse, not this
 plugin.
 
-## Upgrading from HSK Mouse
-
-Versions before 2.0 were `keasbeexd.hskmouse` / "HSK Mouse", G-Wolves only,
-and lived in a **different repository**,
-[`keasbeexd/omarchy-hsk`](https://github.com/keasbeexd/omarchy-hsk) — this
-plugin is not a new version published from that repo, it is a new repo
-(`keasbeexd/omarchy-mouse-ctrl`) that continues the same project under a new name.
-`omarchy-hsk` has not been touched and still installs the old, G-Wolves-only
-plugin if you never move. Since both the plugin id and the source repo
-changed, this is neither an automatic update nor an in-place one:
-
-```bash
-omarchy plugin remove keasbeexd.hskmouse
-omarchy plugin add https://github.com/keasbeexd/omarchy-mouse-ctrl.git
-omarchy plugin enable keasbeexd.mousectrl
-~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev
-```
-
-Re-add the widget under its new name in `shell.json` (or the bar settings UI)
-and carry over any of the settings you had customized — `lowBatteryPercent`,
-`showBatteryLabel` — onto the new entry; they were not renamed, only the
-`id` they hang off of. `batteryPollSec` is new in 2.0. `refreshIntervalSec`
-is gone: 2.0 no longer re-reads the whole mouse on a timer (see
-[Settings](#settings)), so drop it if you had set it. `hskctlPath` is gone
-too: the widget only ever runs the copy of hskctl that ships beside it.
-
-`install.sh --udev` notices an old udev rule from a previous install — the
-G-Wolves-only `/etc/udev/rules.d/60-gwolves-hsk.rules`, or the short-lived
-`60-mousectl.rules` — and, **once the new rule is in place**, offers to remove
-it (it is otherwise harmless left behind — the new rule covers the same vendor
-ids). Your G-Wolves mouse's own settings are unaffected either way: they live
-on the mouse, not in the plugin.
-
-For anything about G-Wolves, Pulsar, or multi-mouse support going forward,
-file it here rather than on `omarchy-hsk`.
-
 ## Model notes
 
 ### G-Wolves HSK Pro 4K
@@ -482,10 +439,8 @@ omarchy plugin enable keasbeexd.mousectrl
 The tree that ships to the marketplace holds only what a user needs at
 runtime. Contributor tooling — the test suite, the vendor-binary decoder,
 and the internal development notes — lives in this repo's git history
-(inherited from `omarchy-hsk`, where it was stripped from the shipped tree
-by the "Slim the shipped tree to what the marketplace needs" commit) rather
-than in the installed tree, so `omarchy plugin add` does not copy 300+ KiB of
-developer-only files onto every user's machine.
+rather than in the installed tree, so `omarchy plugin add` does not copy
+300+ KiB of developer-only files onto every user's machine.
 
 ```
 manifest.json  Panel.qml  Service.qml  Model.js   the plugin
