@@ -1,24 +1,10 @@
 {
-  "profileVersion": 2,
+  "profileVersion": 3,
   "model": "G-Wolves HSK Pro 4K",
   "status": "partial",
-  "_source": [
-    "Extracted from G-Wolves_Software_V1.0.20.07 (2024-03-20), a C++/CLI",
-    "mixed-mode .NET binary using hidapi. The transport and the command table",
-    "are read directly out of the shipped code -- hts_send_cmd's IL and the",
-    "HTS_*_CMD static byte arrays -- so they are observed, not guessed.",
-    "",
-    "What is still unconfirmed is marked with _needsVerification on the field:",
-    "the raw<->friendly value maps (which byte means 4000 Hz), because those",
-    "live in WinForms UI code rather than in the command table. Read them off",
-    "your own mouse with `hskctl get <field>` while the vendor app shows you",
-    "the real value, then fill in `values` and set status to verified.",
-    "",
-    "status: partial means hskctl will talk to the device but you should",
-    "sanity-check every reading before trusting a write."
-  ],
+  "_source": "Recovered from G-Wolves_Software_V1.0.20.07's shipped .NET binary; every byte below is observed, not guessed. Full provenance, the repaired-DPI story and what `_needsVerification` here means: docs/profiles/gwolves-hsk-pro-4k.md",
   "match": {
-    "_comment": "VID and PIDs are the constants hts_init matches on. The config endpoint is identified by a vendor usage page (0xffff observed) plus a feature report -- not by interface number, which was 7 on the dongle despite the driver's 'mi_02' string.",
+    "_note": "The config endpoint is identified by a vendor usage page (0xffff observed) plus a feature report -- not by interface number, which was 7 on the dongle. VID/PIDs are hts_init's own constants.",
     "vendorIds": [
       "33e4"
     ],
@@ -43,7 +29,7 @@
     "requireFeatureReport": true
   },
   "transport": {
-    "_comment": "hts_send_cmd: Sleep(60); hid_send_feature_report(h, tx, 65); Sleep(60); hid_get_feature_report(h, rx, 65); accept iff rx[1] == 0xA1. Byte 0 is the hidapi report-id byte and is 0 (unnumbered reports). No checksum anywhere in the command table.",
+    "_note": "hts_send_cmd: feature report 65 bytes, report id 0, no checksum; accept iff reply byte 1 == 0xA1. Byte 2 payload length, byte 3 opcode (read = write + 0x80), byte 4 link flag, payload from byte 5.",
     "kind": "feature",
     "reportId": 0,
     "packetLength": 65,
@@ -62,12 +48,12 @@
     "defaultWireless": true,
     "linkProbe": {
       "command": "dpi",
-      "payloadFrom": 5
-    },
-    "_linkProbeComment": "Byte 4 says which transport the packet is addressed over -- it is a property of the endpoint you opened, NOT of where the mouse currently is. The `connection` reply answers a different question (is the mouse linked over RF or sitting on the cable), and using it to pick byte 4 breaks the moment those disagree: plug the cable in while the dongle is still in, connection reports 0, every packet then goes to the dongle with the wrong flag, and the firmware ACKs and ignores all of it -- so every field reads 0 and nothing says why. Instead, probe: send this read on each flag and keep whichever answers with a payload that is not all zeros. dpi is the right probe because a working mouse cannot have an all-zero DPI block, whereas battery, motion sync and angle snap can all legitimately read 0."
+      "payloadFrom": 5,
+      "_note": "Link flag is a property of the endpoint, not of where the mouse is: an ACK on the wrong flag still returns an all-zero payload. Probing both and keeping the one that answers with data is the only honest detection."
+    }
   },
   "commands": {
-    "_comment": "Byte 2 is the payload length, byte 3 the opcode, byte 4 the link flag, byte 5 onwards the value. The read opcode is always the write opcode + 0x80. Commands whose opcode already has the high bit set are read-only.",
+    "_note": "Read opcode = write opcode + 0x80. `linkFlag: false` marks commands whose byte 4 is part of the sub-command, not a link flag. The reply echoes the request: length, opcode, flag, payload from byte 5.",
     "battery": {
       "get": "00 00 02 8f",
       "responseOffset": 5,
@@ -126,7 +112,6 @@
       "valueOffset": 5,
       "responseOffset": 5
     },
-    "_dpiComment": "ONE write, not two. hts_set_get_dpis_colors (7 bytes per stage: X u16be, Y u16be, R G B) and hts_set_get_dpis_colors_O (5 bytes per stage, no separate Y) are selected by globe_FW_Old_New_Flag -- new firmware uses the first, old firmware the second. They are alternatives, never a sequence. Firmware 1.0.7 reports separate X and Y, so it is the new path. Sending the legacy packet to new firmware misaligns every stage from byte 9 on and writes color bytes into the Y axis.",
     "dpi": {
       "get": "00 00 39 83",
       "responseOffset": 5,
@@ -137,9 +122,9 @@
         5,
         65
       ],
-      "_verified": "writes confirmed on hardware 2026-08-18",
       "settleMs": 140,
-      "_settleComment": "51 bytes of payload, against one for the scalar commands. At the vendor's 60ms the reply is sometimes not ready, which arrives as an all-zero payload and looks exactly like a command the mouse ignored -- so selecting a stage from the panel failed intermittently while the smaller commands were fine.",
+      "_note": "51 payload bytes need a longer settle than the scalar commands, or the reply sometimes arrives all-zero and an ignored write is indistinguishable from success. readModifyWrite so changing one stage never zeroes the others.",
+      "_verified": "writes confirmed on hardware 2026-08-18",
       "repairOnWrite": [
         {
           "offset": 6,
@@ -147,22 +132,18 @@
             0
           ],
           "value": 7,
-          "why": "stage count of 0 makes the firmware write no stages at all"
+          "why": "stage count of 0 makes the firmware write no stages at all; confirmed on hardware 2026-08-18"
         }
-      ],
-      "_repairComment": "rx[6] is the DPI stage count, and the firmware writes that many stages out of the packet. Read-modify-write copies it back verbatim, so a mouse reporting 0 -- as this one did, almost certainly zeroed by the legacy-packet incident -- discards every DPI value and every stage color, restores the 0, and does it again next time. The active-stage byte beside it keeps working because it sits outside the array, which is exactly how the bug hid. Confirmed on hardware 2026-08-18: setting the count to 7 made both value and color writes land immediately."
+      ]
     },
-    "_sleepComment": "Sleep is a sub-command of opcode 0x02: byte 6 selects 0x07 to set or 0x87 to get, and the value is a big-endian u16 at bytes 7-8.",
     "sleep": {
       "get": "00 00 00 02 02 00 87",
       "set": "00 00 00 02 02 00 07",
       "valueOffset": 7,
       "responseOffset": 7,
-      "linkFlag": false
-    },
-    "_resetComment": "HTS_RESET_CMD restores factory defaults. Deliberately not wired to any field -- nothing in the panel should be one keystroke away from wiping the mouse's config.",
-    "_linkFlagComment": "linkFlag:false marks commands whose vendor function never sets byte 4. For sleep that byte carries part of the sub-command, so writing a link flag into it corrupts the packet.",
-    "_replyComment": "The reply echoes the request: rx[2]=response length, rx[3]=opcode, rx[4]=link flag, payload from rx[5]. Crucially the firmware ACKs a packet carrying the wrong link flag and then ignores it, replying with an all-zero payload -- so an ACK is not proof of success."
+      "linkFlag": false,
+      "_note": "Sleep is a sub-command of opcode 0x02: byte 6 selects get (0x87) or set (0x07), value is u16be at bytes 7-8."
+    }
   },
   "fields": {
     "batteryPercent": {
@@ -172,8 +153,12 @@
       "max": 100,
       "readOnly": true,
       "offset": 6,
-      "_note": "rx[6], and for this model it really is a percentage. get_Battery_empty branches on product id: the 5407/5408, 5707/5708, 5807/5808 and 5907/5908 family -- the HSK Pro 4K among them -- takes a path that only rounds the byte down to a multiple of 5 before display. The other family (5403/5404, 5703/5704, 5803/5804) runs it through a four-segment piecewise curve instead: raw/2 up to 40, then (raw-40)*25/30+20, (raw-70)*30/20+45 and (raw-90)*25/10+76. So 'the byte is a percentage' is a fact about this model, not about the protocol -- do not carry it to another profile without checking which branch that product id takes. hskctl reports the byte unrounded, which is why it can read 97 where the vendor app shows 95.",
-      "_verified": "Discharge confirmed on hardware 2026-08-19: 100 -> 81 across a night on the dongle, about 2.4 points/hour, implying roughly 40 hours from full. Monotonic, right direction, plausible magnitude."
+      "ui": {
+        "label": "Battery",
+        "unit": "%"
+      },
+      "_note": "A percentage for this model specifically: get_Battery_empty branches on product id, and the curve the vendor app applies differs per family. hskctl reports the byte unrounded.",
+      "_verified": "Discharge confirmed on hardware 2026-08-19: 100 -> 81 overnight, ~2.4 points/hour"
     },
     "charging": {
       "command": "battery",
@@ -181,30 +166,44 @@
       "encoding": "u8",
       "type": "bool",
       "readOnly": true,
-      "_note": "rx[5] > 0. Decoded from hts_get_battery + battery_update_ui, confirmed on hardware 2026-08-19: it read 0, flipped to 1 within one sample of the cable going in, and returned to 0 when it came out. rx[4] stayed 1 (dongle) throughout, so the mouse keeps its RF link while charging."
+      "ui": {
+        "label": "Charging"
+      },
+      "_note": "rx[5] > 0. Flips within one sample of the cable going in / coming out, confirmed 2026-08-19."
     },
     "connection": {
       "command": "connection",
       "encoding": "u8",
       "readOnly": true,
+      "ui": {
+        "label": "Connection"
+      },
       "values": {
         "0": "wired",
         "1": "dongle"
       },
-      "_note": "observed 1 on the dongle; the cable reports 0"
+      "_note": "Observed 1 on the dongle; the cable reports 0."
     },
     "firmwareVersion": {
       "command": "version",
       "offset": 5,
       "encoding": "version3",
       "readOnly": true,
-      "_note": "three bytes major.minor.patch; observed 01 00 07"
+      "ui": {
+        "label": "Firmware"
+      },
+      "_note": "Three bytes major.minor.patch; observed 01 00 07."
     },
     "pollingRate": {
       "command": "polling",
       "encoding": "u8",
-      "_note": "Every value here was measured by timing the mouse's own input reports -- none inferred. The register is NOT a single formula: raw 1..6 divide a 1000 Hz base, while raw 32 and 64 are high-rate codes clocking 2000 and 4000 Hz. Non-monotonic, so an explicit map is the only honest model. Raw 8 (predicted 125 Hz) and raw 16 are untested.",
-      "_uiOptionsComment": "200/333/167 Hz are real, confirmed, settable values (see `values` below) -- they are just not the rates G-Wolves' own app offers as a selection, and the panel's button row has no wrap/scroll, so all eight pushed 4000 Hz off the edge. uiOptions is what the panel renders as buttons; `values` is still the full set `hskctl set pollingRate <n>` accepts.",
+      "ui": {
+        "label": "Polling rate",
+        "unit": "Hz",
+        "description": "How often the mouse reports its position"
+      },
+      "_note": "Measured by timing the mouse's own reports, none inferred: the register is not a formula. Raw 1..6 divide a 1000 Hz base; 32 and 64 are the 2000/4000 Hz high-rate codes.",
+      "_uiOptionsNote": "uiOptions is what the panel renders; `values` is the full set `hskctl set pollingRate <n>` accepts (200/333/167 Hz are real, settable, just not vendor-selectable).",
       "uiOptions": [250, 500, 1000, 2000, 4000],
       "values": {
         "1": 1000,
@@ -220,21 +219,33 @@
     "liftOffDistance": {
       "command": "liftOff",
       "encoding": "u8",
+      "ui": {
+        "label": "Lift-off distance",
+        "description": "How far above the desk the sensor keeps tracking"
+      },
       "values": {
         "1": "1mm",
         "2": "2mm"
       },
-      "_note": "Read out of hts_liftoff_low_radioButton_CheckedChanged: the low button sets 1, the high button sets 2. The earlier 0/1 map was wrong in both directions -- writing '1mm' sent raw 0, which the firmware rejected, and a mouse sitting at raw 1 (actually 1mm) was displayed as 2mm."
+      "_note": "Raw 0 is rejected by the firmware -- the earlier 0/1 map was wrong in both directions."
     },
     "motionSync": {
       "command": "motion",
       "encoding": "u8",
-      "type": "bool"
+      "type": "bool",
+      "ui": {
+        "label": "Motion sync",
+        "description": "Align sensor reads to the polling clock"
+      }
     },
     "angleSnap": {
       "command": "angle",
       "encoding": "u8",
-      "type": "bool"
+      "type": "bool",
+      "ui": {
+        "label": "Angle snapping",
+        "description": "Straighten near-horizontal movement"
+      }
     },
     "sleepSeconds": {
       "command": "sleep",
@@ -242,16 +253,23 @@
       "min": 0,
       "max": 3600,
       "step": 30,
-      "_note": "SECONDS, confirmed on hardware 2026-08-19 by leaving the mouse still and timing it: a stored 240 slept after four minutes, not four hours. It was called sleepMinutes until then, on no evidence whatsoever. The 30s step comes from Sleep_update_ui, which positions its slider at (value / 30) - 1, so the vendor only ever emits multiples of 30; a value under 30 selects a different label, presumably 'off'.",
-      "_rangeNote": "The unit and the step are established; the slider's Maximum is not in Sleep_update_ui, so max here is deliberately generous. This is a bound, not an unverified mapping -- a value the firmware rejects fails `set`'s read-back and is reported, rather than landing somewhere unexpected."
+      "ui": {
+        "label": "Sleep timer",
+        "unit": "s",
+        "description": "Auto-sleep after inactivity"
+      },
+      "_note": "SECONDS, confirmed by timing the mouse. The 30s step is what Sleep_update_ui positions its slider for; a value under 30 presumably selects 'off'."
     },
     "debounceMs": {
       "command": "debounce",
       "encoding": "u8",
       "min": 0,
       "max": 20,
-      "_needsVerification": "read returns byte 0 of a 4-byte tuple (observed 03 0a 23 14, row 1 of the driver's 6-row table) while the write takes a row index -- the two are not the same number, so writing is disabled until the table is modelled",
-      "readOnly": true
+      "readOnly": true,
+      "ui": {
+        "label": "Debounce"
+      },
+      "_needsVerification": "read returns byte 0 of a 4-byte tuple while the write takes a row index -- the two are not the same number, so writing stays disabled until the table is modelled"
     },
     "activeDpiStage": {
       "command": "dpi",
@@ -259,7 +277,11 @@
       "encoding": "u8",
       "min": 1,
       "max": 7,
-      "_note": "rx[5]. hts_set_get_dpis_colors reads it into the struct field the level combo clamps, so it is the currently selected stage."
+      "ui": {
+        "label": "DPI stage",
+        "description": "Which stage is live"
+      },
+      "_note": "rx[5], the stage the dpi-level combo drives. Stage switching is verified against hardware by the panel's runtime probe, never by this flag."
     },
     "dpiStageCount": {
       "command": "dpi",
@@ -267,9 +289,12 @@
       "encoding": "u8",
       "min": 1,
       "max": 7,
-      "_note": "rx[6] -- how many DPI stages the mouse cycles through, not an unknown flag. hts_set_get_dpis_colors writes tx[6] from the struct field that hts_dpi_level_combo_SelectionChangeCommitted sets from the 'DPI level' combo, and that handler clamps the active stage down to it. Reads 0 on this mouse, which is odd -- it cycles more stages than that -- so either the firmware does not use it the way the app does, or an earlier bad packet zeroed it.",
-      "_needsVerification": "writing it is untested on hardware; read it, change the count, and check the mouse cycles that many stages before trusting the write",
-      "readOnly": true
+      "readOnly": true,
+      "ui": {
+        "label": "DPI stage count"
+      },
+      "_note": "rx[6] -- how many stages the firmware writes out of the packet. Reads 0 on this mouse, which the repairOnWrite fix above handles.",
+      "_needsVerification": "writing it is untested on hardware; read, change the count, and check the mouse cycles that many stages before trusting the write"
     },
     "dpiStage1": {
       "command": "dpi",
@@ -277,8 +302,14 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "X axis of stage 1. Writing it also writes the Y axis in the same packet, matching the vendor app, which keeps the axes equal unless XY_DPI_Enable is ticked. Set dpiStage1Y on its own for an independent Y.",
-      "linkedField": "dpiStage1Y"
+      "step": 50,
+      "linkedField": "dpiStage1Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "description": "Stage 1 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 1. dpiStage1Y rides the same packet, so the axes track together unless set apart."
     },
     "dpiStage1Y": {
       "command": "dpi",
@@ -286,12 +317,21 @@
       "encoding": "u16be",
       "min": 50,
       "max": 26000,
-      "_note": "Y axis of stage 1. Writing this alone leaves X, so the axes can be set independently; writing X re-links them."
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 1. Writing it alone leaves X; writing X re-links them."
     },
     "dpiStage1Color": {
       "command": "dpi",
       "offset": 11,
       "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "description": "Stage 1's LED color"
+      },
       "_note": "LED color for stage 1"
     }
   },
@@ -299,14 +339,12 @@
     "dpiStages": [
       "dpiStage1"
     ],
-    "quickToggles": [
-      "motionSync",
-      "angleSnap"
-    ],
     "sections": [
       {
         "title": "DPI",
         "fields": [
+          "dpiStage1",
+          "dpiStage1Color",
           "activeDpiStage"
         ]
       },
@@ -319,8 +357,8 @@
       {
         "title": "SENSOR",
         "fields": [
-          "motionSync",
           "liftOffDistance",
+          "motionSync",
           "angleSnap"
         ]
       },
