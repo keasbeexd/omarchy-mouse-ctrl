@@ -559,12 +559,14 @@ Panel {
 
               required property var modelData
 
-              // A section exists only if it has something writable: a section
-              // of read-only diagnostics would render headers above nothing.
+              // A section exists only if it has a row to render, judged by
+              // the same predicate buildRows uses (hsk.rowVisible), or a
+              // section of gated or read-only fields would render headers
+              // above nothing.
               readonly property bool hasAny: {
                 if (!modelData || !Array.isArray(modelData.fields)) return false
                 for (var i = 0; i < modelData.fields.length; i++) {
-                  if (hsk.canWrite(modelData.fields[i])) return true
+                  if (hsk.rowVisible(modelData.fields[i])) return true
                 }
                 return false
               }
@@ -601,12 +603,11 @@ Panel {
 
                     required property string modelData
 
-                    // A field renders only if it is writable AND its widget is
-                    // one of the four the panel can draw. The same gate
-                    // Model.buildRows applies to cursor stops, so a drawn row
-                    // and a cursor stop never disagree.
-                    readonly property bool activeField: hsk.canWrite(modelData)
-                      && !!hsk.metaFor(modelData)
+                    // A field renders only if hskctl says it is a row at all --
+                    // writable, renderable widget, not hidden by a capability
+                    // gate. The same predicate Model.buildRows applies, so a
+                    // drawn row and a cursor stop never disagree.
+                    readonly property bool activeField: hsk.rowVisible(modelData)
                     property string fieldName: modelData
 
                     active: activeField
