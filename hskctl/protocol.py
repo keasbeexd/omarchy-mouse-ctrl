@@ -7,7 +7,7 @@ reply, slice fields out of it.
 
 So all the device-specific knowledge lives in a JSON profile under profiles/,
 and this module is a generic interpreter for that JSON. When the capture work
-in docs/PROTOCOL-DISCOVERY.md yields real byte layouts, you edit the profile,
+in docs/contributor/PROTOCOL-DISCOVERY.md yields real byte layouts, you edit the profile,
 not this file.
 """
 
@@ -50,7 +50,7 @@ class NotDiscovered(ProtocolError):
         self.field = field
         super().__init__(
             f"'{field}' is not mapped yet in this device profile. "
-            f"Run a capture (see docs/PROTOCOL-DISCOVERY.md) and fill in "
+            f"Run a capture (see docs/contributor/PROTOCOL-DISCOVERY.md) and fill in "
             f"profiles/*.json, then re-run."
         )
 

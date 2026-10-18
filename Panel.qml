@@ -415,7 +415,12 @@ Panel {
             // strip < > & (and controls) and cap before assignment -- the
             // model name comes from the mouse's own product string.
             title: Model.plain(hsk.model, 60)
-            meta: Model.plain(hsk.summary, 160)
+            // When the mouse is being read, the numbers live one line below
+            // (the stat row) and the hero stays a single austere line --
+            // repeating them here would be two places to look for one thing.
+            // When it is NOT, this uppercased one-liner is the state: it is
+            // what tells a user what went wrong before the setup card.
+            meta: hsk.state === "ready" ? "" : Model.plain(hsk.summary, 160)
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconOpacity: hsk.ready ? 1.0 : 0.5
@@ -438,6 +443,64 @@ Panel {
                 fontFamily: root.fontFamily
                 onClicked: hsk.refresh()
               }
+            }
+            detail: {
+              // The firmware revision in a pill beside the title. A version
+              // number is not a button, so the render type -- a bordered
+              // BorderSurface -- communicates "attribute", never "control".
+              if (hsk.state !== "ready" || !hsk.has("firmwareVersion")) return ""
+              return "fw " + Model.plain(hsk.value("firmwareVersion"), 24)
+            }
+          }
+
+          // One line, no boxes: the reading a person actually glances at,
+          // without the full settings tree under it. Battery carries its state
+          // in color (urgent when low, accent while charging); link and
+          // firmware sit beside it in dim text so attention goes where the
+          // theme says it should. Values a profile has no reading for simply
+          // do not appear -- an unknown number is not drawn.
+          Row {
+            id: statRow
+            visible: hsk.state === "ready"
+              && (hsk.has("batteryPercent") || linkLabel !== "")
+            width: parent.width
+            spacing: Style.space(14)
+
+            readonly property string linkLabel: hsk.has("connection")
+              ? Model.connectionLabel(hsk.value("connection")) : ""
+
+            Row {
+              visible: hsk.has("batteryPercent")
+              spacing: Style.space(4)
+
+              Text {
+                textFormat: Text.PlainText
+                text: Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
+                // The charging bolt and the percent share the battery's color:
+                // one color for one fact, and never a literal one.
+                color: hsk.lowBattery ? root.urgent
+                    : (hsk.value("charging") === true ? root.accent : root.foreground)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: hsk.value("batteryPercent") + "%"
+                color: hsk.lowBattery ? root.urgent
+                    : (hsk.value("charging") === true ? root.accent : root.foreground)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: statRow.linkLabel !== ""
+              text: statRow.linkLabel
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
             }
           }
 
