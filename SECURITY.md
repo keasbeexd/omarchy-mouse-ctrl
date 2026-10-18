@@ -23,7 +23,7 @@ we want to hear about:
 
 - a way for the plugin, `hskctl` or `install.sh` to run something as root
   that it did not show you and ask about first, or to change anything as
-  root beyond its own udev rule (and the old HSK Mouse rule it offers to
+  root beyond its own udev rule (and any outdated udev rule it offers to
   remove);
 - a udev rule that opens a device (or more devices) to more than the
   logged-in user;
@@ -36,5 +36,4 @@ we want to hear about:
 ## Supported versions
 
 Only the latest commit on the default branch is supported: Omarchy installs
-plugins from it and `omarchy-plugin-update` moves to its newest commit. The
-old `keasbeexd.hskmouse` in `omarchy-hsk` is archived and gets no fixes.
+plugins from it and `omarchy-plugin-update` moves to its newest commit.
