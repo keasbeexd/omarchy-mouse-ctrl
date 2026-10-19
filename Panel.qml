@@ -736,10 +736,16 @@ Panel {
                 textFormat: Text.PlainText
                 width: parent.width
                 text: {
-                  if (root.looksLikePermissions)
+                  var installed = hsk.udevRules ? hsk.udevRules.installed : null
+                  if (root.looksLikePermissions) {
+                    if (installed && installed.present && !installed.upToDate)
+                      return "A rule file already exists but predates the current grant set "
+                           + "(installed by an earlier version, or before a profile grew a new "
+                           + "identity). Fix below rewrites it in place -- same file, same name."
                     return "Configuring the mouse uses HID feature reports, and those need "
                          + "read-write access to /dev/hidraw*, which is root-only by default. "
                          + "Install the udev rule, then unplug and replug the mouse or its dongle."
+                  }
                   if (root.hasError) return Model.plain(hsk.lastError, 400)
                   if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
                   return "hskctl can see the device but does not know its config protocol yet. "
@@ -827,9 +833,15 @@ Panel {
                 textFormat: Text.PlainText
                 width: parent.width
                 visible: root.looksLikePermissions && hsk.udevRules !== null
-                text: "Fix installs the plugin's whole rule file -- vendor grants for every "
-                      + "supported mouse plus the line above -- to "
-                      + Model.plain(hsk.udevRules.ruleFile, 80) + "."
+                text: {
+                  var installed = hsk.udevRules ? hsk.udevRules.installed : null
+                  var verb = (installed && installed.present)
+                    ? "rewrites that existing file with the current grants"
+                    : "installs the plugin's whole rule file with vendor grants for "
+                      + "every supported mouse"
+                  return "Fix " + verb
+                       + " plus the line above, via a polkit password prompt."
+                }
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
