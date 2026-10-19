@@ -2123,9 +2123,15 @@ def _udev_payload() -> dict:
         text = text[:_MAX_TEXT_BYTES]
 
     installed = _installed_udev_rules()
-    up_to_date = bool(installed) and all(
-        rule["line"] in installed for rule in rules
-    )
+    # The comparison is against the text itself, not the `rules` metadata:
+    # device lines covered by a vendor line are listed as data but never
+    # written to the file, so comparing the metadata would mark a perfectly
+    # current file outdated forever.
+    text_lines = {
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    up_to_date = bool(installed) and text_lines <= installed
 
     return {
         "ok": True,
