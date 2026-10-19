@@ -599,6 +599,24 @@ class Profile:
             meta["unit"] = unit
         widget = raw.get("widget")
         meta["widget"] = widget if widget in self._UI_WIDGETS else _derive_widget(spec)
+        # Stage-bound rows: a field tagged with `showForStage` is one stage's
+        # config (say stage 3's DPI), and the panel renders it only while
+        # stage 3 is live. That needs a switcher to drive the live stage, so
+        # the tag only survives if the profile actually declares
+        # `ui.stageSwitch`; the full validation (writable, chips, verified,
+        # probed) gates the switcher row itself, and the panel hides bound
+        # rows when it has no switcher to drive them -- losing a tagged row
+        # is the correct failure for an inconsistent profile, because the
+        # alternative is several rows that all claim to be "the" DPI.
+        switch_ui = self.data.get("ui", {}).get("stageSwitch")
+        stage = raw.get("showForStage")
+        if (
+            isinstance(switch_ui, dict)
+            and isinstance(stage, int)
+            and not isinstance(stage, bool)
+            and 0 < stage <= 16
+        ):
+            meta["showForStage"] = stage
         step = spec.get("step")
         if isinstance(step, bool) or not isinstance(step, int) or not 0 < step <= 10000:
             step = None

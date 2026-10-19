@@ -49,6 +49,14 @@ read-modify-write copies that 0 straight back, so it never recovers. The
 2026-08-18: setting the count to 7 made value and color writes land
 immediately in both.
 
+The layout read back and decoded 2026-10-18 (dongle link, no writes):
+stage entries start at `rx[7]` and stride 7 bytes each — X (u16be), Y
+(u16be), RGB — so stage N lives at `rx[7 + (N-1)*7]` through
+`rx[6 + N*7]`. That one read showed the vendor ramp
+400/1600/1600/3200/4500/5000/6400 with per-stage colors, and it is why
+the profile can map all seven stages as ordinary offset fields in the
+same block rather than staging a write to read one.
+
 The DPI write also needs a longer `settleMs` (140 vs 60): 51 bytes of
 payload against one for the scalar commands, and at the vendor's 60 ms the
 reply is sometimes not ready — an all-zero payload that looks exactly like
