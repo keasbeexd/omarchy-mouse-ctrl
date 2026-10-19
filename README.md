@@ -315,9 +315,11 @@ Beyond that, the plugin writes no log and no state of its own. While it runs,
 hskctl holds an empty lock file, `$XDG_RUNTIME_DIR/hskctl.lock`, which goes
 away with the runtime directory at logout. The only other cache is Python's
 own bytecode in `hskctl/__pycache__` (delete with the plugin). The only thing
-it runs alongside the shell is `hskctl watch-link`, which watches for the
-mouse or dongle being plugged in or out, for as long as the widget is loaded,
-and never talks to the mouse itself. Mouse configuration lives on the mouse
+it runs alongside the shell is one long-lived `hskctl serve` process per bar,
+which carries every exchange with the mouse (reads, writes, the battery poll,
+the stage probe) over a single JSON-line channel, and also watches for the
+mouse or dongle being plugged in or out — plug detection never talks to the
+mouse itself. Mouse configuration lives on the mouse
 itself and follows the mouse, not this plugin — with all three exceptions
 above listed where they are.
 

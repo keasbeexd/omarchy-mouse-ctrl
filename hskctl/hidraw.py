@@ -376,6 +376,10 @@ _libc = ctypes.CDLL("libc.so.6", use_errno=True)
 IN_CREATE = 0x00000100
 IN_DELETE = 0x00000200
 IN_ATTRIB = 0x00000004
+# The activity file's rename-in (atomic_publish) needs the MOVE hooks; a
+# rename is how _atomic_write_json replaces its target, and IN_CREATE alone
+# never sees it land.
+IN_MOVED_TO = 0x00000080
 
 _INOTIFY_EVENT_FMT = "iIII"
 _INOTIFY_EVENT_SIZE = struct.calcsize(_INOTIFY_EVENT_FMT)
