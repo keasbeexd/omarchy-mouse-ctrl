@@ -60,6 +60,13 @@ Item {
   property string stageSwitchField: ""
   property var stageCapable: ({})
 
+  // The udev rule file this machine needs, from the engine's `udev-rule`
+  // request: { ruleFile, rules: [...], text } or null until asked. Lives
+  // beside the settings state because the panel shows it on the permission
+  // card -- which only appears when the device is unreachable, so this must
+  // be answerable with no device access at all (it reads /sys only).
+  property var udevRules: null
+
   // The capability gate as a map, in the shape buildRows/fieldRowVisible take.
   // A field with no verdict is hidden, never half-shown: the switcher
   // appearing after the probe is better than appearing before it.
@@ -308,6 +315,29 @@ Item {
     for (var existing in stageCapable) map[existing] = stageCapable[existing]
     map[key] = parsed.capable
     stageCapable = map
+    changed()
+  }
+
+  // Asked by the panel when the permission/setup card shows: the exact rule
+  // text and the connected device's ids, without touching the mouse.
+  function requestUdevRules() {
+    if (_destroyed) return
+    if (udevRules !== null || _pendingHas("udev")) return
+    // A couple of bytes of sysfs text; if serve is not up the card's other
+    // content still says what to run by hand.
+    if (!_serveUp) return
+    _send("udev", { cmd: "udev-rule" })
+  }
+
+  function applyUdevRules(obj) {
+    var rules = Model.isList(obj && obj.rules) ? obj.rules : []
+    var text = typeof (obj && obj.text) === "string" ? obj.text : ""
+    if (rules.length === 0 && text === "") return
+    udevRules = {
+      ruleFile: typeof obj.ruleFile === "string" ? obj.ruleFile : "",
+      rules: rules,
+      text: text
+    }
     changed()
   }
 
@@ -673,6 +703,8 @@ Item {
       root._resolveSet(obj, entry.field)
     } else if (entry.kind === "battery") {
       root.applyBattery(obj)
+    } else if (entry.kind === "udev") {
+      root.applyUdevRules(obj)
     } else if (entry.kind === "probe") {
       root.applyStageProbe(obj)
     }

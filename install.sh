@@ -2,6 +2,7 @@
 # Setup for the Mouse CTRL plugin.
 #
 #   --udev       grant your user access to the mouse            (REQUIRED)
+               (append --yes to skip the confirm; the rule text is still shown)
 #   --link       put `hskctl` on your PATH for use in a terminal
 #   --plugin     copy the plugin into place by hand, if you cloned it yourself
 #   --dev        symlink this checkout into the plugins dir, for hacking on it
@@ -14,9 +15,14 @@
 # feature report, and the hidraw ioctls that carry those need the node opened
 # read-write -- so without the rule the plugin cannot even read the battery.
 #
-# This script is deliberately self-contained: the rule is a heredoc below
-# rather than a separate file, because a plugin is distributed by cloning a
-# repository and a file that must be present is a file that can go missing.
+# This script was once deliberately self-contained: the rule was a heredoc
+# below, because a plugin is distributed by cloning a repository and a file
+# that must be present is a file that can go missing. In v3 the rule text has
+# one source of truth -- the engine, which additionally knows the connected
+# hardware and the per VID:PID lines user-authored profiles claim -- and the
+# heredoc stays only as a fallback for a machine where the engine will not
+# run. Either way, every line is validated against one narrow pattern before
+# root installs it.
 
 set -euo pipefail
 
@@ -106,7 +112,9 @@ public_dir() {
   [[ "$owner" == "$(id -u)" ]] || die "$dir is not owned by you"
 }
 
-udev_rule_text() {
+bundled_rule_text() {
+  # Fallback for a machine where the engine will not run -- the same
+  # whole-vendor text this script installed before the engine absorbed it.
   cat <<HEADER
 # Mouse CTRL plugin -- hidraw access for every supported mouse vendor.
 #
@@ -130,6 +138,40 @@ HEADER
   done
 }
 
+# The one pattern every rule line may take, and the only thing that gets past
+# this script into a root-owned file. A rule grants device access to whoever
+# sits at the seat, so a tampered or buggy generator gets rejected wholesale
+# rather than line-edited into shape.
+RULE_LINE_OK='^KERNEL=="hidraw\*", ATTRS\{idVendor\}=="[0-9a-f]{4}"(, ATTRS\{idProduct\}=="[0-9a-f]{4}")?, MODE="0660", TAG\+="uaccess"$'
+
+validate_rule_text() {
+  local text
+  text="$(cat)"
+  [[ -n "$text" ]] || return 1
+  if grep -vE '^(#|$)' <<<"$text" | grep -qvE "$RULE_LINE_OK"; then
+    return 1
+  fi
+  printf '%s\n' "$text"
+}
+
+rule_file_text() {
+  # Primary source: the engine, which adds per VID:PID lines for
+  # user-authored profiles and for the hidraw nodes actually on this machine
+  # (read from world-readable /sys, so it works before the rule exists).
+  local text=""
+  if [[ -x "$REPO_DIR/bin/hskctl" && -x "$PYTHON" ]]; then
+    text="$(
+      "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.cli import _udev_payload; print(_udev_payload()["text"], end="")' "$REPO_DIR" 2>/dev/null || true
+    )"
+  fi
+  if validate_rule_text <<<"$text"; then
+    printf '%s\n' "$text"
+    return 0
+  fi
+  warn "engine-generated rule text missing or not validated -- using the bundled whole-vendor rule only"
+  bundled_rule_text
+}
+
 migrate_old_udev_rules() {
   local old
   for old in "${OLD_UDEV_RULES[@]}"; do
@@ -149,11 +191,18 @@ migrate_old_udev_rules() {
 }
 
 install_udev() {
+  local assume_yes="${1:-}"
   info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
   echo
-  udev_rule_text | sed 's/^/    /'
+  rule_file_text | sed 's/^/    /'
   echo
-  read -r -p "Write this to $UDEV_RULE (needs sudo)? [y/N] " reply
+  local reply="n"
+  if [[ "$assume_yes" == "--yes" ]]; then
+    info "The text above was shown before this ask; running non-interactively (--yes)."
+    reply="y"
+  else
+    read -r -p "Write this to $UDEV_RULE (needs sudo)? [y/N] " reply
+  fi
   if [[ ! "$reply" =~ ^[Yy] ]]; then
     warn "Skipped. The plugin will not be able to reach the mouse until this"
     warn "rule exists -- rerun './install.sh --udev' when you are ready."
@@ -164,7 +213,7 @@ install_udev() {
   # version wrote to a mktemp file first and passed the path to install(1),
   # which is a second pathname resolution the plugin does not need. stdin is
   # one fewer resolution and one fewer file to clean up on error.
-  udev_rule_text \
+  rule_file_text \
     | "$SUDO" "$INSTALL_BIN" -o root -g root -m 0644 /dev/stdin "$UDEV_RULE"
   "$SUDO" "$UDEVADM" control --reload-rules
   # Only hidraw nodes -- re-triggering every device on the system is not
@@ -275,7 +324,7 @@ uninstall() {
 }
 
 case "${1:-}" in
-  --udev)      install_udev ;;
+  --udev)      install_udev "${2:-}" ;;
   --link)      link_cli ;;
   --plugin)    copy_plugin ;;
   --dev)       link_plugin ;;

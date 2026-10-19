@@ -51,9 +51,15 @@ reports, and the hidraw ioctls that carry those need the device node opened
 read-write. `/dev/hidraw*` is root-only by default, so without the rule the
 plugin cannot reach the mouse at all — not even to read the battery. The rule
 grants access to whoever is logged in at the seat (the same `uaccess` mechanism
-your sound card uses), scoped to one line per supported vendor's id and
-nothing else — see the script's `VENDOR_IDS` list. The script shows you
-exactly what it will write before asking for `sudo`.
+your sound card uses), scoped to one line per supported vendor's id plus tight
+per-device lines for user-authored profiles — see `hskctl udev-rule`, which
+generates the exact text. The script shows you exactly what it will write
+before asking for `sudo`.
+
+You can skip the script if you prefer the panel: when the widget cannot reach
+the mouse over permissions it shows the connected mouse's HID ids, the rule
+line it needs, and a **Fix with pkexec** button that installs the same
+generated file — the password prompt replaces the sudo one.
 
 If something looks wrong, `hskctl doctor` says in the first few lines whether
 permissions are the problem.
@@ -492,7 +498,7 @@ rather than in the installed tree, so `omarchy plugin add` does not copy
 
 ```
 manifest.json  Panel.qml  Service.qml  Model.js   the plugin
-install.sh                                        udev rule, self-contained
+install.sh                                        udev rule install -- engine-generated text
 bin/hskctl                                        launcher for the bundled CLI
 hskctl/          hidraw, protocol engine, device, CLI
 profiles/        one JSON file per supported mouse -- data, not code
