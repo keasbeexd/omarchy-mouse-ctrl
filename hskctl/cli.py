@@ -25,7 +25,7 @@ from .device import (
     open_session,
     rank_candidates,
 )
-from .hidraw import HidrawError, enumerate_devices
+from .hidraw import HidrawError, enumerate_devices, sysfs_hid_devices
 from .protocol import NotDiscovered, ProtocolError, list_profiles, load_profile
 from .safeio import read_bounded_json
 
@@ -1982,51 +1982,6 @@ def _profile_vendor_products(profile) -> list[tuple[str, str | None]]:
     return [(vendor, product) for vendor in vendors for product in products]
 
 
-def _sysfs_hid_devices() -> list[dict]:
-    """VID:PID of every hidraw node on the machine, read from sysfs only.
-
-    Under a missing udev rule this still works -- /sys is world-readable,
-    unlike /dev/hidraw*. That is the point: the advice "this is your mouse,
-    here is the line it needs" cannot depend on the very permission being
-    fixed. USB HID is the only bus where an ATTRS{idVendor} rule reliably
-    matches, so everything else comes out flagged.
-    """
-    out = []
-    try:
-        nodes = sorted(os.listdir("/sys/class/hidraw"))
-    except OSError:
-        return out
-    for node in nodes:
-        if len(out) >= _MAX_RULES:
-            break
-        try:
-            with open(
-                f"/sys/class/hidraw/{node}/device/uevent", "rb"
-            ) as fh:
-                data = fh.read(4096).decode("utf-8", "replace")
-        except OSError:
-            continue
-        hid_id = next(
-            (line[len("HID_ID="):] for line in data.splitlines()
-             if line.startswith("HID_ID=")),
-            "",
-        )
-        parts = [part for part in hid_id.strip().split(":") if part]
-        if len(parts) != 3:
-            continue
-        try:
-            bustype, vendor, product = (int(part, 16) for part in parts)
-        except ValueError:
-            continue
-        out.append({
-            "node": f"/dev/{node}",
-            "bus": f"{bustype:04x}",
-            "vid": f"{vendor:04x}".lower(),
-            "pid": f"{product:04x}".lower(),
-        })
-    return out
-
-
 def _installed_udev_rules() -> set[str]:
     """The rule lines currently in /etc, read permission-free (rules are 0644).
 
@@ -2089,7 +2044,7 @@ def _udev_payload() -> dict:
 
     device_rules: list[dict] = []
     pair_lines: dict[str, dict] = {}
-    for device in _sysfs_hid_devices():
+    for device in sysfs_hid_devices():
         if device["vid"] not in known_vendors:
             continue
         covered = device["vid"] in vendor_grants

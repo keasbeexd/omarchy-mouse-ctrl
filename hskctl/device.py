@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .hidraw import HidrawDevice, HidrawInfo, enumerate_devices
+from .hidraw import HidrawDevice, HidrawInfo, enumerate_devices, sysfs_hid_devices
 from .protocol import NotDiscovered, Profile, ProtocolError, list_profiles, load_profile
 
 # Vendors ship several USB bridge chips across revisions, so name matching is
@@ -926,6 +926,35 @@ def _new_session(profile: Profile, info: HidrawInfo, identified: bool = True) ->
     )
 
 
+def _no_node_error(profile: Profile) -> str:
+    """The message for an empty candidate list.
+
+    With a missing (or stale) udev rule every /dev/hidraw node opens with
+    EACCES, describe() returns None for all of them, and the candidate list
+    comes back empty -- indistinguishable from an unplugged dongle without a
+    second look. The second look is sysfs: if a node whose ids match the
+    profile is visible there, the dongle is present and the real failure is
+    access -- so the message says what is plugged in and names the rule,
+    which is what the panel's permission card keys off (Model.js
+    isPermissionError matches "udev"+"hidraw" in the text).
+    """
+    match = profile.match if profile else {}
+    want_vids = {str(v).lower() for v in match.get("vendorIds") or []}
+    for device in sysfs_hid_devices():
+        if want_vids and device["vid"] in want_vids:
+            return (
+                "The mouse looks plugged in -- sysfs shows a HID node "
+                f"{device['vid']}:{device['pid']} at {device['node']} -- but the node "
+                "cannot be opened read-write, almost always the missing udev rule. "
+                "Run the plugin's `install.sh --udev` (or use the panel's fix button); "
+                "then unplug and replug the mouse or its dongle."
+            )
+    return (
+        "No candidate HID node found. Is the mouse plugged in (or its dongle)? "
+        "Run `hskctl probe` to see every HID device on the system."
+    )
+
+
 def open_session(profile: Profile, path: str | None = None, lock: bool = True) -> Session:
     # Every caller that reaches the device goes through here, so this is the
     # one place the lock has to be taken. `lock=False` is for a serve process:
@@ -949,10 +978,7 @@ def open_session(profile: Profile, path: str | None = None, lock: bool = True) -
 
     candidates = rank_candidates(profile)
     if not candidates:
-        raise DeviceNotFound(
-            "No candidate HID node found. Is the mouse plugged in (or its dongle)? "
-            "Run `hskctl probe` to see every HID device on the system."
-        )
+        raise DeviceNotFound(_no_node_error(profile))
     best = candidates[0]
     if not profile.discovered:
         raise DeviceNotFound(

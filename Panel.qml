@@ -14,6 +14,12 @@ Panel {
   ipcTarget: "keasbeexd.mousectrl"
   manageIpc: false
 
+  // The engine's udev survey answers "what does this machine need" whenever
+  // the permission state begins -- watching the predicate, not the card's
+  // visibility, because the card often becomes visible for a plain error
+  // first and the permission-flavored one replaces it with no flip.
+  onLooksLikePermissionsChanged: if (root.looksLikePermissions) hsk.requestUdevRules()
+
   property int cursorIndex: 0
   property bool cursorActive: false
 
@@ -703,7 +709,6 @@ Panel {
           // missing and what to run next.
           CursorSurface {
             visible: root.needsSetup || root.hasError
-            onVisibleChanged: if (visible && root.looksLikePermissions) hsk.requestUdevRules()
             width: parent.width
             implicitHeight: setupColumn.implicitHeight + Style.spacing.xl
             foreground: root.foreground
