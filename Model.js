@@ -153,6 +153,12 @@ function cleanMeta(raw) {
     if (typeof meta.description === "string" && meta.description) clean.description = plain(meta.description, 120)
     if (typeof meta.unit === "string" && meta.unit) clean.unit = plain(meta.unit, 8)
     if (typeof meta.step === "number" && isFinite(meta.step) && meta.step > 0) clean.step = meta.step
+    // Stage-bound rows: the profile tags one stage's fields `showForStage: N`
+    // and the row predicate shows it only while stage N is live. The engine
+    // already validated the shape (an int 1..16 beside a declared switcher);
+    // this re-tests the shape so a hand-edited payload cannot crash the gate.
+    if (typeof meta.showForStage === "number" && Number.isInteger(meta.showForStage)
+        && meta.showForStage > 0 && meta.showForStage <= 16) clean.showForStage = meta.showForStage
     // A field with no recognizable widget is not rendered at all rather than
     // guessed at -- the fallback here is the same info row the engine means
     // for read-only diagnostics, and writable rows must never degrade that far.
@@ -436,11 +442,21 @@ function isRowWidget(widget) {
 // A field renders only if it is writable, has renderable metadata, and is not
 // hidden by a capability gate (true = shown). `gate` maps names as the engine
 // reported them; nothing about the gate is hardwired to any field here.
-function fieldRowVisible(field, writable, meta, gate) {
+function fieldRowVisible(field, writable, meta, gate, stage) {
   if (gate && Object.prototype.hasOwnProperty.call(gate, field) && gate[field] !== true) return false
-  if (!canWrite(writable, field)) return false
   var m = meta[field]
   if (!m) return false
+  // Stage-bound rows (the profile tags them `showForStage: N`) render only
+  // while stage N is live -- the stage-switch field's value, carried in by
+  // the caller as {value: n} -- so a stage switch swaps which DPI/color row
+  // the section holds rather than stacking seven of them. No switch
+  // context (no switcher declared, or the live stage not yet readable) and
+  // the row stays hidden: several rows each claiming to be "the" DPI is
+  // the wrong outcome an inconsistent profile would produce.
+  if (m.showForStage !== undefined) {
+    if (!stage || stage.value !== m.showForStage) return false
+  }
+  if (!canWrite(writable, field)) return false
   return isRowWidget(m.widget)
 }
 
@@ -460,7 +476,7 @@ function fieldRowVisible(field, writable, meta, gate) {
 // stage switching, whose probe reports back after the panel's first status.
 // It is keyed by field name exactly as the engine reported it, so no QML
 // side knowledge is involved in what it hides.
-function buildRows(state, writable, sections, meta, gate) {
+function buildRows(state, writable, sections, meta, gate, stage) {
   var rows = []
   if (state !== "ready") return rows
   var seen = []
@@ -469,7 +485,7 @@ function buildRows(state, writable, sections, meta, gate) {
     for (var i = 0; i < fields.length; i++) {
       var field = fields[i]
       if (seen.indexOf(field) !== -1) continue
-      if (!fieldRowVisible(field, writable, meta, gate)) continue
+      if (!fieldRowVisible(field, writable, meta, gate, stage)) continue
       seen.push(field)
       rows.push({ field: field, widget: meta[field].widget })
     }

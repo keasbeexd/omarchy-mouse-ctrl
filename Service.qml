@@ -63,8 +63,20 @@ Item {
     return gate
   }
 
+  // The stage context buildRows/fieldRowVisible take: the profile's
+  // stage-switch field and the stage it currently holds, from
+  // `effectiveValues` so a click's optimistic overlay swaps which stage's
+  // rows the section shows the instant the chip is pressed. Fields tagged
+  // `showForStage` render only on their one stage; a null value (stage not
+  // readable, switcher absent) keeps them hidden.
+  function _stageContext() {
+    if (stageSwitchField === "") return null
+    var v = effectiveValues[stageSwitchField]
+    return { field: stageSwitchField, value: typeof v === "number" ? v : null }
+  }
+
   function rowVisible(field) {
-    return Model.fieldRowVisible(field, writable, meta, _stageGate())
+    return Model.fieldRowVisible(field, writable, meta, _stageGate(), _stageContext())
   }
 
   // Optimistic overlay: a click should move the UI immediately rather than
@@ -164,7 +176,7 @@ Item {
   // Cursor stops: the profile's own layout, writable fields only. Anything
   // the profile cannot write never becomes a stop, so the cursor can never
   // park on a control that would error.
-  readonly property var rows: Model.buildRows(state, writable, sections, meta, _stageGate())
+  readonly property var rows: Model.buildRows(state, writable, sections, meta, _stageGate(), _stageContext())
 
   signal changed()
 

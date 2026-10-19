@@ -677,6 +677,12 @@ Panel {
                     property string fieldName: modelData
 
                     active: activeField
+                    // Inactive (stage-swapped-out, gated) fields must also be
+                    // invisible, not merely unloaded: an inactive Loader still
+                    // holds its layout slot, and each one left visible leaves
+                    // the Column's spacing behind it -- the dead space a
+                    // stage switch otherwise builds up under the chips row.
+                    visible: activeField
                     width: parent.width
                     // One Loader per field, whose source component is the
                     // widget the profile's metadata asks for: this is the
@@ -945,13 +951,13 @@ Panel {
             }
 
             // Only follow the device (and the slider) while not focused, or a
-            // refresh mid-edit would overwrite what is being typed.
-            Binding {
-              target: valueField
-              property: "text"
-              value: String(Math.round(sliderRow.value))
-              when: !valueField.activeFocus
-            }
+            // refresh mid-edit would overwrite what is being typed. An
+            // explicit handler, not a Binding: the same-shaped Binding over
+            // the thumb below went dead inside its Loader (never re-applied
+            // after the row's field property changed), so both rows track the
+            // device explicitly for the same reason.
+            readonly property real deviceValue: sliderRow.value
+            onDeviceValueChanged: if (!activeFocus) text = String(Math.round(deviceValue))
 
             onEditingFinished: {
               var n = parseInt(text, 10)
@@ -1018,13 +1024,14 @@ Panel {
 
           // Track the device only while not being dragged -- otherwise a
           // refresh mid-drag yanks the handle back under the pointer and
-          // `released` never arrives where the user let go.
-          Binding {
-            target: slider
-            property: "value"
-            value: sliderRow.value
-            when: !slider.pressed
-          }
+          // `released` never arrives where the user let go. Explicit like the
+          // number above: the earlier Binding-with-when pattern died inside
+          // its Loader -- assigned `slider.value` once, then never re-applied
+          // when the row's field (and so the device value) changed -- so the
+          // thumb sat wherever it had been left, showing one stage's DPI
+          // while the number beside it told the truth.
+          readonly property real deviceValue: sliderRow.value
+          onDeviceValueChanged: if (!pressed) value = deviceValue
 
           onMoved: {
             if (row.bounds) hsk.setSoon(row.field, Model.clampStep(value, row.bounds))
@@ -1159,13 +1166,13 @@ Panel {
             validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
 
             // Only follow the device while the field is not focused, or a
-            // refresh mid-edit would overwrite what is being typed.
-            Binding {
-              target: hexField
-              property: "text"
-              value: colorRow.swatch
-              when: !hexField.activeFocus
-            }
+            // refresh mid-edit would overwrite what is being typed. Explicit
+            // like the slider row's number: the same-shaped Binding went dead
+            // inside its Loader (never re-applied when the row's field
+            // changed), and a hex box showing the previous stage's color is
+            // exactly the lie this row must not tell.
+            readonly property string deviceSwatch: colorRow.swatch
+            onDeviceSwatchChanged: if (!activeFocus) text = deviceSwatch
 
             onEditingFinished: {
               var v = text.trim()

@@ -307,6 +307,7 @@
       "ui": {
         "label": "DPI",
         "unit": "DPI",
+        "showForStage": 1,
         "description": "Stage 1 sensitivity; writes the Y axis with it, like the vendor app"
       },
       "_note": "X axis of stage 1. dpiStage1Y rides the same packet, so the axes track together unless set apart."
@@ -330,15 +331,253 @@
       "encoding": "rgb",
       "ui": {
         "label": "LED color",
+        "showForStage": 1,
         "description": "Stage 1's LED color"
       },
       "_note": "LED color for stage 1"
+    },
+    "dpiStage2": {
+      "command": "dpi",
+      "offset": 14,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "linkedField": "dpiStage2Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "showForStage": 2,
+        "description": "Stage 2 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 2. dpiStage2Y rides the same packet, so the axes track together unless set apart."
+    },
+    "dpiStage2Y": {
+      "command": "dpi",
+      "offset": 16,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 2. The panel never renders it; it exists so stage 2 writes keep the two axes equal, like the vendor app."
+    },
+    "dpiStage2Color": {
+      "command": "dpi",
+      "offset": 18,
+      "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "showForStage": 2,
+        "description": "Stage 2's LED color"
+      },
+      "_note": "LED color for stage 2"
+    },
+    "dpiStage3": {
+      "command": "dpi",
+      "offset": 21,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "linkedField": "dpiStage3Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "showForStage": 3,
+        "description": "Stage 3 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 3. dpiStage3Y rides the same packet, so the axes track together unless set apart."
+    },
+    "dpiStage3Y": {
+      "command": "dpi",
+      "offset": 23,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 3. The panel never renders it; it exists so stage 3 writes keep the two axes equal, like the vendor app."
+    },
+    "dpiStage3Color": {
+      "command": "dpi",
+      "offset": 25,
+      "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "showForStage": 3,
+        "description": "Stage 3's LED color"
+      },
+      "_note": "LED color for stage 3"
+    },
+    "dpiStage4": {
+      "command": "dpi",
+      "offset": 28,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "linkedField": "dpiStage4Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "showForStage": 4,
+        "description": "Stage 4 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 4. dpiStage4Y rides the same packet, so the axes track together unless set apart."
+    },
+    "dpiStage4Y": {
+      "command": "dpi",
+      "offset": 30,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 4. The panel never renders it; it exists so stage 4 writes keep the two axes equal, like the vendor app."
+    },
+    "dpiStage4Color": {
+      "command": "dpi",
+      "offset": 32,
+      "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "showForStage": 4,
+        "description": "Stage 4's LED color"
+      },
+      "_note": "LED color for stage 4"
+    },
+    "dpiStage5": {
+      "command": "dpi",
+      "offset": 35,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "linkedField": "dpiStage5Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "showForStage": 5,
+        "description": "Stage 5 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 5. dpiStage5Y rides the same packet, so the axes track together unless set apart."
+    },
+    "dpiStage5Y": {
+      "command": "dpi",
+      "offset": 37,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 5. The panel never renders it; it exists so stage 5 writes keep the two axes equal, like the vendor app."
+    },
+    "dpiStage5Color": {
+      "command": "dpi",
+      "offset": 39,
+      "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "showForStage": 5,
+        "description": "Stage 5's LED color"
+      },
+      "_note": "LED color for stage 5"
+    },
+    "dpiStage6": {
+      "command": "dpi",
+      "offset": 42,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "linkedField": "dpiStage6Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "showForStage": 6,
+        "description": "Stage 6 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 6. dpiStage6Y rides the same packet, so the axes track together unless set apart."
+    },
+    "dpiStage6Y": {
+      "command": "dpi",
+      "offset": 44,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 6. The panel never renders it; it exists so stage 6 writes keep the two axes equal, like the vendor app."
+    },
+    "dpiStage6Color": {
+      "command": "dpi",
+      "offset": 46,
+      "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "showForStage": 6,
+        "description": "Stage 6's LED color"
+      },
+      "_note": "LED color for stage 6"
+    },
+    "dpiStage7": {
+      "command": "dpi",
+      "offset": 49,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "linkedField": "dpiStage7Y",
+      "ui": {
+        "label": "DPI",
+        "unit": "DPI",
+        "showForStage": 7,
+        "description": "Stage 7 sensitivity; writes the Y axis with it, like the vendor app"
+      },
+      "_note": "X axis of stage 7. dpiStage7Y rides the same packet, so the axes track together unless set apart."
+    },
+    "dpiStage7Y": {
+      "command": "dpi",
+      "offset": 51,
+      "encoding": "u16be",
+      "min": 50,
+      "max": 26000,
+      "step": 50,
+      "ui": {
+        "label": "DPI (Y axis)",
+        "unit": "DPI"
+      },
+      "_note": "Y axis of stage 7. The panel never renders it; it exists so stage 7 writes keep the two axes equal, like the vendor app."
+    },
+    "dpiStage7Color": {
+      "command": "dpi",
+      "offset": 53,
+      "encoding": "rgb",
+      "ui": {
+        "label": "LED color",
+        "showForStage": 7,
+        "description": "Stage 7's LED color"
+      },
+      "_note": "LED color for stage 7; the last entry in the block, ending at rx[55]"
     }
   },
   "ui": {
-    "dpiStages": [
-      "dpiStage1"
-    ],
     "stageSwitch": {
       "field": "activeDpiStage"
     },
@@ -346,9 +585,21 @@
       {
         "title": "DPI",
         "fields": [
+          "activeDpiStage",
           "dpiStage1",
           "dpiStage1Color",
-          "activeDpiStage"
+          "dpiStage2",
+          "dpiStage2Color",
+          "dpiStage3",
+          "dpiStage3Color",
+          "dpiStage4",
+          "dpiStage4Color",
+          "dpiStage5",
+          "dpiStage5Color",
+          "dpiStage6",
+          "dpiStage6Color",
+          "dpiStage7",
+          "dpiStage7Color"
         ]
       },
       {
