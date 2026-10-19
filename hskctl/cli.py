@@ -2027,6 +2027,27 @@ def _sysfs_hid_devices() -> list[dict]:
     return out
 
 
+def _installed_udev_rules() -> set[str]:
+    """The rule lines currently in /etc, read permission-free (rules are 0644).
+
+    Comparing content against the generated text is what lets the panel tell
+    "no rule at all" from "a rule from an older version that predates these
+    grants" -- the second is the common case after a profile grows a new
+    identity, and its fix (rewrite in place) is the same button.
+    """
+    try:
+        with open(UDEV_RULE_FILE, "r", encoding="utf-8", errors="replace") as fh:
+            data = fh.read(65536)
+    except OSError:
+        return set()
+    lines = set()
+    for line in data.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            lines.add(line)
+    return lines
+
+
 def _udev_payload() -> dict:
     """Build the whole udev rule file this machine needs, as data and as text.
 
@@ -2146,11 +2167,21 @@ def _udev_payload() -> dict:
     if len(text.encode()) > _MAX_TEXT_BYTES:
         text = text[:_MAX_TEXT_BYTES]
 
+    installed = _installed_udev_rules()
+    up_to_date = bool(installed) and all(
+        rule["line"] in installed for rule in rules
+    )
+
     return {
         "ok": True,
         "ruleFile": UDEV_RULE_FILE,
         "rules": rules,
         "text": text,
+        # present=false: no rule file at all. present+not upToDate: an older
+        # file rewritten by a previous version -- still a superset of its own
+        # grants, but missing whatever this version would add. Either way the
+        # fix is the same button; the two states only change the wording.
+        "installed": {"present": bool(installed), "upToDate": up_to_date},
     }
 
 

@@ -333,10 +333,15 @@ Item {
     var rules = Model.isList(obj && obj.rules) ? obj.rules : []
     var text = typeof (obj && obj.text) === "string" ? obj.text : ""
     if (rules.length === 0 && text === "") return
+    var installed = Model.isPlainObject(obj && obj.installed)
+      ? { present: obj.installed.present === true,
+          upToDate: obj.installed.upToDate === true }
+      : { present: false, upToDate: false }
     udevRules = {
       ruleFile: typeof obj.ruleFile === "string" ? obj.ruleFile : "",
       rules: rules,
-      text: text
+      text: text,
+      installed: installed
     }
     changed()
   }
