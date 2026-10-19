@@ -236,6 +236,51 @@ def _require_char_device(fd: int, path: str) -> None:
         raise HidrawError(f"{path} is not a character device; refusing it")
 
 
+def sysfs_hid_devices(limit: int = 64) -> list[dict]:
+    """VID:PID of every hidraw node on the machine, read from sysfs only.
+
+    Under a missing udev rule /dev/hidraw* is unreadable and the candidate
+    list comes back empty -- indistinguishable from an unplugged dongle
+    without a second look. /sys is world-readable, so this second look works
+    precisely when the first one failed: "this is your mouse, here is the
+    node it lives on" does not depend on the very permission being fixed.
+    USB HID (bus 0003) is the only bus where an ATTRS{idVendor} udev rule
+    reliably matches, so crossings of that line are flagged.
+    """
+    out: list[dict] = []
+    try:
+        nodes = sorted(os.listdir("/sys/class/hidraw"))
+    except OSError:
+        return out
+    for node in nodes:
+        if len(out) >= limit:
+            break
+        try:
+            with open(f"/sys/class/hidraw/{node}/device/uevent", "rb") as fh:
+                data = fh.read(4096).decode("utf-8", "replace")
+        except OSError:
+            continue
+        hid_id = next(
+            (line[len("HID_ID="):] for line in data.splitlines()
+             if line.startswith("HID_ID=")),
+            "",
+        )
+        parts = [part for part in hid_id.strip().split(":") if part]
+        if len(parts) != 3:
+            continue
+        try:
+            bustype, vendor, product = (int(part, 16) for part in parts)
+        except ValueError:
+            continue
+        out.append({
+            "node": f"/dev/{node}",
+            "bus": f"{bustype:04x}",
+            "vid": f"{vendor:04x}".lower(),
+            "pid": f"{product:04x}".lower(),
+        })
+    return out
+
+
 def describe(path: str) -> HidrawInfo | None:
     """Read everything about one hidraw node. Returns None if unreadable."""
     try:
