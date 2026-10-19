@@ -235,6 +235,125 @@ Panel {
     return -1
   }
 
+  // ---- permission repair -----------------------------------------------------
+  //
+  // Missing udev access is the first-run blocker, and the fix is one file in
+  // /etc/udev/rules.d. The engine states what THIS machine needs (from /sys,
+  // so the answer exists even with the device node unreadable), the card
+  // shows it, and "Fix with pkexec" installs exactly that text -- which was
+  // displayed first, and is validated line by line here against the same
+  // one-rule pattern install.sh checks before its sudo call.
+  property bool _fixBusy: false
+  property string _fixStatus: ""
+  property string _fixStderr: ""
+
+  // The path of this plugin's own install.sh, from the QML's location --
+  // honest for both the installed copy and a --dev symlink to a checkout.
+  function installCommand() {
+    var url = Qt.resolvedUrl("install.sh").toString()
+    if (url.indexOf("file://") === 0) url = url.substring(7)
+    return decodeURIComponent(url) + " --udev"
+  }
+
+  // Every non-comment line of the rule text must be exactly one of the two
+  // rule shapes. This is the gate on the pkexec button: text that does not
+  // pass is never handed to anything privileged.
+  function ruleTextIsSafe(text) {
+    var lines = String(text || "").split("\n")
+    var rule = /^KERNEL=="hidraw\*", ATTRS\{idVendor\}=="[0-9a-f]{4}"(, ATTRS\{idProduct\}=="[0-9a-f]{4}")?, MODE="0660", TAG\+="uaccess"$/
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i]
+      if (line === "" || line.charAt(0) === "#") continue
+      if (!rule.test(line)) return false
+    }
+    return true
+  }
+
+  // The hidraw nodes on this machine that match a known profile, grouped by
+  // id: "33e4:5807 (hidraw5, hidraw6, hidraw7)". The node list is capped on
+  // the engine side already; this only groups and shortens.
+  function udevDevicesLine(rules) {
+    if (!rules || !Model.isList(rules.rules)) return ""
+    var byIds = {}
+    for (var i = 0; i < rules.rules.length; i++) {
+      var r = rules.rules[i]
+      if (!r || r.kind !== "device") continue
+      var key = (typeof r.vid === "string" ? r.vid : "???") + ":"
+                + (typeof r.pid === "string" ? r.pid : "???")
+      var nodes = byIds[key]
+      if (!nodes) { nodes = []; byIds[key] = nodes }
+      var node = typeof r.node === "string" ? r.node : ""
+      if (node.indexOf("/dev/hidraw") === 0) nodes.push(node.substring(5))
+    }
+    var parts = []
+    for (var id in byIds) {
+      parts.push(id + (byIds[id].length > 0 ? " (" + byIds[id].join(", ") + ")" : ""))
+    }
+    return parts.join("; ")
+  }
+
+  // The rule line that actually applies to THIS machine's devices: the
+  // device's own line unless a whole-vendor line already grants the same
+  // access, in which case that one is the effective rule.
+  function effectiveRuleLine(rules) {
+    if (!rules || !Model.isList(rules.rules)) return ""
+    var deviceLine = "", covered = ""
+    for (var i = 0; i < rules.rules.length; i++) {
+      var r = rules.rules[i]
+      if (!r || r.kind !== "device" || typeof r.line !== "string") continue
+      deviceLine = r.line
+      if (r.coveredByVendor === true) {
+        // Find the vendor line by id.
+        for (var j = 0; j < rules.rules.length; j++) {
+          var v = rules.rules[j]
+          if (v && v.kind === "vendor" && v.vid === r.vid && typeof v.line === "string") {
+            covered = v.line
+            break
+          }
+        }
+        return covered !== "" ? covered : r.line
+      }
+      return deviceLine
+    }
+    return ""
+  }
+
+  function fixRulePayload() {
+    var rules = hsk.udevRules
+    if (!rules || typeof rules.text !== "string") return null
+    if (!ruleTextIsSafe(rules.text)) return null
+    if (typeof rules.ruleFile !== "string"
+        || !/^\/etc\/udev\/rules\.d\/[A-Za-z0-9._-]+\.rules$/.test(rules.ruleFile)) return null
+    return rules
+  }
+
+  function fixPermissions() {
+    if (_fixBusy) return
+    var rules = fixRulePayload()
+    if (!rules) {
+      _fixStatus = "Rule text failed its safety check -- nothing will be installed."
+      return
+    }
+    _fixBusy = true
+    _fixStatus = "Waiting for authorization..."
+    _fixStderr = ""
+    fixRuleFile.setText(rules.text + (rules.text.endsWith("\n") ? "" : "\n"))
+    fixRuleFile.waitForJob()
+    // The child script is fixed, and its two path arguments are the one filed
+    // by this FileView and the rule path a regex checked. Nothing from device
+    // data or profile text is ever interpolated -- the installed CONTENT was
+    // validated as rule text above, so a quoted profile name can only affect
+    // comments, which udev ignores.
+    var staging = (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/mousectrl-fix.rules"
+    fixRuleProcess.command = [
+      "/usr/bin/pkexec", "/usr/bin/bash", "-c",
+      "/usr/bin/install -o root -g root -m 0644 '" + staging + "' '" + rules.ruleFile + "'"
+      + " && /usr/bin/udevadm control --reload-rules"
+      + " && /usr/bin/udevadm trigger --subsystem-match=hidraw --action=change"
+    ]
+    fixRuleProcess.running = true
+  }
+
   // Opening the panel used to force a refresh too, on top of startup, the
   // link watcher and the explicit triggers below (this button, middle-click,
   // 'r'). Read/write is otherwise more than enough to keep `values` correct,
@@ -251,6 +370,39 @@ Panel {
     target: hsk
     function onChanged() { root.clampCursor() }
   }
+
+  // Staging copy of the rule text for the pkexec child, written by the shell
+  // itself (atomic, 0600 under $XDG_RUNTIME_DIR). Root reads it and installs
+  // it; the panel keeps no root-writable copy around.
+  FileView {
+    id: fixRuleFile
+    path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/mousectrl-fix.rules"
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+  }
+
+  Process {
+    id: fixRuleProcess
+    running: false
+    stdout: StdioCollector {}
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root._fixStderr = String(root._fixStderr + chunk).slice(0, 400) }
+    }
+    onExited: function(exitCode, exitStatus) {
+      root._fixBusy = false
+      if (exitCode === 0) {
+        root._fixStatus = "Rule installed. Unplug and replug the mouse or its dongle."
+      } else {
+        var detail = root._fixStderr.trim()
+        root._fixStatus = exitCode === 127
+          ? "Authorization declined (close the dialog to retry)."
+          : ("Could not install the rule" + (detail !== "" ? ": " + Model.plain(detail, 200) : "."))
+      }
+    }
+  }
+
 
   IpcHandler {
     target: root.ipcTarget
@@ -551,6 +703,7 @@ Panel {
           // missing and what to run next.
           CursorSurface {
             visible: root.needsSetup || root.hasError
+            onVisibleChanged: if (visible && root.looksLikePermissions) hsk.requestUdevRules()
             width: parent.width
             implicitHeight: setupColumn.implicitHeight + Style.spacing.xl
             foreground: root.foreground
@@ -603,12 +756,95 @@ Panel {
                 width: parent.width
                 visible: root.needsSetup || root.looksLikePermissions
                 text: root.looksLikePermissions
-                  ? "~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev"
+                  ? root.installCommand()
                   : "hskctl probe"
                 wrapMode: Text.WrapAnywhere
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
+              }
+
+              // The engine's survey of this machine, asked when the card
+              // shows: the mouse's ids read permission-free from /sys, and
+              // the rule line it needs. Two buttons follow: one copies the
+              // install command for terminal users, one runs the same
+              // install through polkit -- the password dialog the user
+              // already knows how to answer, no terminal needed.
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                visible: root.looksLikePermissions && hsk.udevRules !== null
+                text: "This machine: " + Model.plain(root.udevDevicesLine(hsk.udevRules), 120)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                visible: root.looksLikePermissions
+                         && hsk.udevRules !== null
+                         && root.effectiveRuleLine(hsk.udevRules) !== ""
+                text: "The rule line that grants it:\n"
+                      + root.effectiveRuleLine(hsk.udevRules)
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WrapAnywhere
+              }
+
+              Row {
+                visible: root.looksLikePermissions && hsk.udevRules !== null
+                spacing: Style.space(8)
+
+                Button {
+                  text: root._fixBusy ? "Waiting..." : "Fix with pkexec"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  enabled: root.fixRulePayload() !== null && !root._fixBusy
+                  onClicked: root.fixPermissions()
+                }
+
+                Button {
+                  text: "Copy install command"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: {
+                    Quickshell.execDetached([
+                      "bash", "-c",
+                      "printf %s " + Util.shellQuote(root.installCommand()) + " | wl-copy"
+                    ])
+                    root._fixStatus = "Install command copied."
+                  }
+                }
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                visible: root.looksLikePermissions && hsk.udevRules !== null
+                text: "Fix installs the plugin's whole rule file -- vendor grants for every "
+                      + "supported mouse plus the line above -- to "
+                      + Model.plain(hsk.udevRules.ruleFile, 80) + "."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                visible: root.looksLikePermissions && root._fixStatus !== ""
+                text: root._fixStatus
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
               }
             }
           }

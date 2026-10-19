@@ -26,7 +26,7 @@ from .device import (
     rank_candidates,
 )
 from .hidraw import HidrawError, enumerate_devices
-from .protocol import NotDiscovered, ProtocolError, list_profiles
+from .protocol import NotDiscovered, ProtocolError, list_profiles, load_profile
 from .safeio import read_bounded_json
 
 FRIENDLY_LABELS = {
@@ -671,8 +671,11 @@ def cmd_serve(args) -> int:
     `{"id": 1, "cmd": "status"}`, `{"id": 2, "cmd": "set", "field": ...,
     "value": ...}`, `{"id": 3, "cmd": "battery"}`, `{"id": 4, "cmd":
     "probe-stages"}` -- and reads one JSON line back per request on stdout,
-    carrying the same `id`. watch-link events ride the same stream as
-    `{"event": ...}` lines with no `id`, so the two are told apart by shape.
+    carrying the same `id`. `{"cmd": "udev-rule"}` is the one request that
+    skips the lock and the device entirely: it answers what rule file the
+    machine needs, unreadable-device case included. watch-link events ride
+    the same stream as `{"event": ...}` lines with no `id`, so the two are
+    told apart by shape.
 
     The point is cost: a click is one exchange over pipes that are already
     open, instead of a Python interpreter launch, a profile detect and a
@@ -750,6 +753,11 @@ def cmd_serve(args) -> int:
 
     def handle(req: dict) -> dict:
         cmd = str(req.get("cmd") or "")
+        if cmd == "udev-rule":
+            # Pure sysfs/text work -- no device open, no fence. It must answer
+            # even when the device is unreachable, because "here is the rule
+            # you are missing" is exactly the permission-denied case.
+            return _udev_payload()
         with device_lock():
             try:
                 if cmd == "status":
@@ -1892,6 +1900,265 @@ def cmd_profiles(args) -> int:
     return _emit(payload, args.json, lambda p: print("\n".join(p["profiles"]) or "(none)"))
 
 
+# --- udev rule ---------------------------------------------------------------
+
+
+# Single source of truth for the udev rule file. install.sh used to carry this
+# text as a heredoc; generating it in the engine means the actually connected
+# hardware and per VID:PID lines for user-authored profiles land in the same
+# file the panel's pkexec helper writes, with one place to review the wording.
+# install.sh keeps a heredoc fallback for a machine where the engine will not
+# run, and validates every generated line before anything reaches root.
+
+UDEV_RULE_FILE = "/etc/udev/rules.d/60-mousectrl.rules"
+
+_USER_PROFILE_DIR = os.path.expanduser("~/.config/hskctl/profiles")
+
+_UDEV_HEADER = """\
+# Mouse CTRL plugin -- hidraw access for every supported mouse vendor.
+#
+# Configuring the mouse means sending HID *feature* reports, and the hidraw
+# ioctls for those (HIDIOCSFEATURE / HIDIOCGFEATURE) require the device node to
+# be opened read-write. The default mode on /dev/hidraw* is root-only, so
+# without this rule hskctl and the Omarchy panel cannot talk to the mouse at
+# all -- not even to read the battery.
+#
+# uaccess hands read-write to whoever is logged in at the seat, which is the
+# same mechanism your sound card and webcam use. Each line below is scoped to
+# one vendor id, or one vendor+product pair -- adding a mouse means adding a
+# line here, never widening one to match everything.
+"""
+
+# Reading order for vendor ids that have no label of their own, and fallback
+# labels. Kept in step with the list install.sh carried before this command
+# absorbed it.
+VENDOR_RULE_LABELS = {
+    "33e4": "G-Wolves (HSK Pro 4K and siblings)",
+    "3710": "Pulsar (wired models, and the X2A/Feinmann wireless dongles)",
+    "3554": "Pulsar (Nordic wireless dongle -- X2A/X2 V2 Mini family, X2H mini until confirmed)",
+}
+
+# Bounds on generated output: list_profiles is already capped, this keeps a
+# pathological user profile from making the rule file absurd.
+_MAX_RULES = 256
+_MAX_TEXT_BYTES = 65536
+
+
+def _hex4(value) -> str | None:
+    """Normalize any spelling of a 16-bit USB id to four lowercase hex digits."""
+    try:
+        number = int(str(value).strip(), 16)
+    except ValueError:
+        return None
+    if not 0 <= number <= 0xFFFF:
+        return None
+    return f"{number:04x}"
+
+
+def _vendor_rule_line(vid: str) -> str:
+    return f'KERNEL=="hidraw*", ATTRS{{idVendor}}=="{vid}", MODE="0660", TAG+="uaccess"'
+
+
+def _vidpid_rule_line(vid: str, pid: str) -> str:
+    return (
+        f'KERNEL=="hidraw*", ATTRS{{idVendor}}=="{vid}", '
+        f'ATTRS{{idProduct}}=="{pid}", MODE="0660", TAG+="uaccess"'
+    )
+
+
+def _profile_vendor_products(profile) -> list[tuple[str, str | None]]:
+    """(vendor, product) pairs a profile's match block declares.
+
+    product is None when the block names vendors but no products -- then a
+    vendor-scoped line is the only scope the profile actually claims.
+    """
+    match = profile.data.get("match") or {}
+    vendors = [v for v in (_hex4(x) for x in (match.get("vendorIds") or [])) if v]
+    products = [p for p in (_hex4(x) for x in (match.get("productIds") or [])) if p]
+    if not vendors:
+        return []
+    if not products:
+        return [(vendor, None) for vendor in vendors]
+    return [(vendor, product) for vendor in vendors for product in products]
+
+
+def _sysfs_hid_devices() -> list[dict]:
+    """VID:PID of every hidraw node on the machine, read from sysfs only.
+
+    Under a missing udev rule this still works -- /sys is world-readable,
+    unlike /dev/hidraw*. That is the point: the advice "this is your mouse,
+    here is the line it needs" cannot depend on the very permission being
+    fixed. USB HID is the only bus where an ATTRS{idVendor} rule reliably
+    matches, so everything else comes out flagged.
+    """
+    out = []
+    try:
+        nodes = sorted(os.listdir("/sys/class/hidraw"))
+    except OSError:
+        return out
+    for node in nodes:
+        if len(out) >= _MAX_RULES:
+            break
+        try:
+            with open(
+                f"/sys/class/hidraw/{node}/device/uevent", "rb"
+            ) as fh:
+                data = fh.read(4096).decode("utf-8", "replace")
+        except OSError:
+            continue
+        hid_id = next(
+            (line[len("HID_ID="):] for line in data.splitlines()
+             if line.startswith("HID_ID=")),
+            "",
+        )
+        parts = [part for part in hid_id.strip().split(":") if part]
+        if len(parts) != 3:
+            continue
+        try:
+            bustype, vendor, product = (int(part, 16) for part in parts)
+        except ValueError:
+            continue
+        out.append({
+            "node": f"/dev/{node}",
+            "bus": f"{bustype:04x}",
+            "vid": f"{vendor:04x}".lower(),
+            "pid": f"{product:04x}".lower(),
+        })
+    return out
+
+
+def _udev_payload() -> dict:
+    """Build the whole udev rule file this machine needs, as data and as text.
+
+    Three kinds of line, most specific last:
+    - vendor lines: every vendor a *bundled* profile declares, exactly the
+      whole-vendor grants install.sh always wrote (superset safety -- an old
+      rule file never grants less than before);
+    - profile lines: one VID:PID pair per line for *user-authored* profiles,
+      scoped tight, tagged with the profile that claims it;
+    - device lines: every hidraw node on the machine whose ids match any known
+      profile, read permission-free from sysfs. A device already covered by a
+      vendor line is listed but not duplicated in the text.
+    """
+    vendor_grants: dict[str, str] = {}
+    known_vendors: set[str] = set()
+
+    # Seed with the exact list of vendors install.sh has always granted
+    # whole-vendor access for. A bundled profile no longer declaring one of
+    # them (or declaring one not shipped when that list was written, like the
+    # pulsar profile's Cfg.ini alternate ids) must not silently narrow or
+    # miss a grant on regenerating this file.
+    vendor_grants.update(VENDOR_RULE_LABELS)
+    known_vendors.update(VENDOR_RULE_LABELS)
+
+    for name in list_profiles():
+        try:
+            profile = load_profile(name)
+        except ProtocolError:
+            continue
+        pairs = _profile_vendor_products(profile)
+        bundled = os.path.dirname(profile.path) != _USER_PROFILE_DIR
+        for vendor, _product in pairs:
+            known_vendors.add(vendor)
+            if not bundled or vendor in vendor_grants:
+                continue
+            vendor_grants[vendor] = VENDOR_RULE_LABELS.get(
+                vendor, f"vendor {vendor} (from profile {profile.name} -- {profile.model})"
+            )
+
+    device_rules: list[dict] = []
+    pair_lines: dict[str, dict] = {}
+    for device in _sysfs_hid_devices():
+        if device["vid"] not in known_vendors:
+            continue
+        covered = device["vid"] in vendor_grants
+        device_rules.append({
+            "kind": "device",
+            "node": device["node"],
+            "vid": device["vid"],
+            "pid": device["pid"],
+            "line": _vidpid_rule_line(device["vid"], device["pid"]),
+            "coveredByVendor": covered,
+            "usb": device["bus"] == "0003",
+        })
+
+    for name in list_profiles():
+        try:
+            profile = load_profile(name)
+        except ProtocolError:
+            continue
+        if os.path.dirname(profile.path) != _USER_PROFILE_DIR:
+            continue
+        for vendor, product in _profile_vendor_products(profile):
+            if product is None:
+                line = _vendor_rule_line(vendor)
+            else:
+                line = _vidpid_rule_line(vendor, product)
+            if line not in pair_lines:
+                pair_lines[line] = {
+                    "kind": "profile",
+                    "vid": vendor,
+                    "pid": product or "",
+                    "profile": profile.name,
+                    "model": profile.model,
+                    "line": line,
+                }
+
+    profile_only = list(pair_lines.values())
+    known_lines = set(pair_lines)
+    vendor_rules = [
+        {"kind": "vendor", "vid": vid, "label": label, "line": _vendor_rule_line(vid)}
+        for vid, label in sorted(vendor_grants.items())
+    ]
+    known_lines.update(r["line"] for r in vendor_rules)
+    rules = (vendor_rules + profile_only + device_rules)[:_MAX_RULES]
+    dropped = set()
+    for rule in device_rules:
+        if rule["line"] in known_lines:
+            dropped.add(rule["line"])
+    if dropped:
+        device_rules = [r for r in device_rules if r["line"] not in dropped]
+        rules = (vendor_rules + profile_only + device_rules)[:_MAX_RULES]
+
+    sections = [_UDEV_HEADER]
+    for rule in vendor_rules:
+        sections.append(f"# {rule['label']}\n{rule['line']}\n")
+    if profile_only:
+        sections.append(
+            "# Per-device lines from user-authored profiles (~/.config/hskctl/profiles)\n"
+        )
+        for rule in profile_only:
+            sections.append(f"# {rule['model']} ({rule['profile']})\n{rule['line']}\n")
+    uncovered = [r for r in device_rules if not r["coveredByVendor"]]
+    if uncovered:
+        sections.append(
+            "# Devices on this machine whose ids match a known profile and are\n"
+            "# not already granted by a vendor line above\n"
+        )
+        for rule in uncovered:
+            sections.append(f"# {rule['node']}: {rule['vid']}:{rule['pid']}\n")
+            if not rule["usb"]:
+                sections.append(
+                    "# Non-USB HID: an ATTRS{idVendor} rule may not match this node\n"
+                )
+            sections.append(f"{rule['line']}\n")
+    text = "".join(sections)
+    if len(text.encode()) > _MAX_TEXT_BYTES:
+        text = text[:_MAX_TEXT_BYTES]
+
+    return {
+        "ok": True,
+        "ruleFile": UDEV_RULE_FILE,
+        "rules": rules,
+        "text": text,
+    }
+
+
+def cmd_udev_rule(args) -> int:
+    payload = _udev_payload()
+    return _emit(payload, args.json, lambda p: sys.stdout.write(p["text"]))
+
+
 # --- entry point ------------------------------------------------------------
 
 
@@ -1940,6 +2207,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("profiles", help="list available device profiles").set_defaults(
         func=cmd_profiles
     )
+    sub.add_parser(
+        "udev-rule",
+        help="print the udev rule file this machine needs "
+             "(reads /sys, never the device, needs no root)",
+    ).set_defaults(func=cmd_udev_rule)
     sub.add_parser(
         "doctor", help="dump the raw bytes of every read command (writes nothing)"
     ).set_defaults(func=cmd_doctor)
