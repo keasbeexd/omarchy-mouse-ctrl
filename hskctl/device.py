@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import errno
 import fcntl
 import os
@@ -254,8 +255,8 @@ def _open_lock_file():
     return path, os.fdopen(fd, "r+b")
 
 
-def acquire_device_lock(timeout: float = 6.0) -> None:
-    """Serialise device access across every hskctl process.
+def _acquire_device_lock_handle(timeout: float = 6.0):
+    """Take the cross-process flock, waiting up to `timeout`.
 
     A command is a send followed by a read of the *device's* single reply
     buffer, so two processes interleaving turns both of them into nonsense:
@@ -265,27 +266,66 @@ def acquire_device_lock(timeout: float = 6.0) -> None:
     This is not hypothetical. Omarchy runs one bar per monitor, each with its
     own refresh timer, so a two-monitor setup fires concurrent `status` reads
     by default -- and a click lands a `set` right in the middle of one.
+
+    Returns the (path, handle) pair on success; the caller owns releasing it,
+    either through atexit (one-shot processes) or a scope exit (`device_lock`).
+    """
+    handle = None
+    try:
+        path, handle = _open_lock_file()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise DeviceBusy(
+                        f"another hskctl is talking to the mouse and did not finish "
+                        f"within {timeout:.0f}s (lock: {path}). The lock is released "
+                        f"when that process exits, so wait for it or stop it."
+                    )
+                time.sleep(0.05)
+        return path, handle
+    except BaseException:
+        if handle is not None:
+            handle.close()
+        raise
+
+
+def acquire_device_lock(timeout: float = 6.0) -> None:
+    """Hold the device lock for the rest of this process.
+
+    One-shot commands run at most one request, so taking the lock once and
+    releasing it at exit is both simplest and safest -- the release cannot be
+    forgotten. A long-lived `serve` process cannot do this: its lock would
+    fence every CLI one-shot out for the life of the panel, so it scopes the
+    lock per request with `device_lock` instead.
     """
     global _LOCK_HANDLE
     if _LOCK_HANDLE is not None:
         return
-    path, handle = _open_lock_file()
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except OSError:
-            if time.monotonic() >= deadline:
-                handle.close()
-                raise DeviceBusy(
-                    f"another hskctl is talking to the mouse and did not finish "
-                    f"within {timeout:.0f}s (lock: {path}). The lock is released "
-                    f"when that process exits, so wait for it or stop it."
-                )
-            time.sleep(0.05)
-    _LOCK_HANDLE = handle
+    _LOCK_HANDLE = _acquire_device_lock_handle(timeout)[1]
     atexit.register(_release_device_lock)
+
+
+@contextlib.contextmanager
+def device_lock(timeout: float = 6.0):
+    """Hold the cross-process device lock for a bounded scope.
+
+    Same fence `acquire_device_lock` builds, but the release happens when the
+    `with` block ends instead of at process exit -- the shape `serve` needs,
+    since it must leave the lock free between requests.
+    """
+    path, handle = _acquire_device_lock_handle(timeout)
+    try:
+        yield path
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
 
 
 def _release_device_lock() -> None:
@@ -886,10 +926,14 @@ def _new_session(profile: Profile, info: HidrawInfo, identified: bool = True) ->
     )
 
 
-def open_session(profile: Profile, path: str | None = None) -> Session:
+def open_session(profile: Profile, path: str | None = None, lock: bool = True) -> Session:
     # Every caller that reaches the device goes through here, so this is the
-    # one place the lock has to be taken.
-    acquire_device_lock()
+    # one place the lock has to be taken. `lock=False` is for a serve process:
+    # it scopes the lock around each request with `device_lock`, including the
+    # ones that build a session, rather than holding the fence for the life
+    # of the panel.
+    if lock:
+        acquire_device_lock()
     if path:
         from .hidraw import describe
 

@@ -17,7 +17,14 @@ import time
 from typing import Any
 
 from . import __version__
-from .device import DeviceBusy, DeviceNotFound, detect_profile, open_session, rank_candidates
+from .device import (
+    DeviceBusy,
+    DeviceNotFound,
+    detect_profile,
+    device_lock,
+    open_session,
+    rank_candidates,
+)
 from .hidraw import HidrawError, enumerate_devices
 from .protocol import NotDiscovered, ProtocolError, list_profiles
 from .safeio import read_bounded_json
@@ -39,14 +46,18 @@ FRIENDLY_LABELS = {
 }
 
 
-def _session(args, profile, path=None):
+def _session(args, profile, path=None, lock: bool = True):
     """Open a session, carrying the user's explicit override if they gave one.
 
     The override exists because profiling a device the profile does not know
     about requires writing to it -- and refusing that outright would make the
     tool unable to grow. It is deliberately awkward to reach.
+
+    `lock` is passed through to `open_session`: False inside a `serve`
+    process, which scopes the device fence per request instead of once per
+    process (see cmd_serve).
     """
-    session = open_session(profile, path if path is not None else args.device)
+    session = open_session(profile, path if path is not None else args.device, lock=lock)
     if getattr(args, "force_unmatched", False):
         session.allow_unidentified_writes = True
     return session
@@ -141,15 +152,16 @@ def cmd_probe(args) -> int:
 # --- status -----------------------------------------------------------------
 
 
-def cmd_status(args) -> int:
-    try:
-        profile = detect_profile(args.profile)
-    except ProtocolError as exc:
-        return _fail(str(exc), args.json)
+def _status_payload(args, profile, session=None) -> dict:
+    """Everything `status` reports, as the payload dict; device failures become
+    `ok: false` payloads, not exceptions -- the panel parses errors.
 
+    `session` lets a long-lived caller hand in a session it keeps alive
+    between requests; the default is one per call, the one-shot shape.
+    """
     if not profile.discovered:
         candidates = rank_candidates(profile)
-        payload = {
+        return {
             "ok": False,
             "state": "undiscovered",
             "model": profile.model,
@@ -159,28 +171,23 @@ def cmd_status(args) -> int:
             "settings": {},
             "version": __version__,
         }
-        return _emit(
-            payload,
-            args.json,
-            lambda p: print(
-                f"{p['model']}: "
-                + (
-                    "detected, but the config protocol is not mapped yet.\n"
-                    "Run `hskctl probe` and follow docs/contributor/PROTOCOL-DISCOVERY.md."
-                    if p["detected"]
-                    else "not detected."
-                )
-            ),
-        )
 
     try:
-        session = _session(args, profile, args.device)
+        if session is None:
+            session = _session(args, profile, args.device)
         settings = session.read_all()
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
-        return _fail(str(exc), args.json, state="error", model=profile.model,
-                     settings={}, version=__version__)
+        return {
+            "ok": False,
+            "state": "error",
+            "model": profile.model,
+            "error": str(exc),
+            "detected": False,
+            "settings": {},
+            "version": __version__,
+        }
 
-    payload = {
+    return {
         "ok": True,
         "state": "ready",
         # The panel reads its footer label from here. It used to fetch
@@ -227,8 +234,28 @@ def cmd_status(args) -> int:
         "stageSwitchField": profile.stage_switch_field(),
     }
 
+
+def cmd_status(args) -> int:
+    try:
+        profile = detect_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    payload = _status_payload(args, profile)
+
     def human(p):
-        print(f"{p['model']}  ({p['device']})   hskctl {p['version']}\n")
+        if p["state"] == "undiscovered":
+            print(
+                f"{p['model']}: "
+                + (
+                    "detected, but the config protocol is not mapped yet.\n"
+                    "Run `hskctl probe` and follow docs/contributor/PROTOCOL-DISCOVERY.md."
+                    if p["detected"]
+                    else "not detected."
+                )
+            )
+            return
+        print(f"{p['model']}  ({p.get('device', 'not found')})   hskctl {p['version']}\n")
         for key, value in p["settings"].items():
             label = _field_label(profile, key)
             if key == "batteryPercent":
@@ -305,6 +332,85 @@ def _stage_cache_store(path: str, entries: dict) -> None:
     os.replace(tmp, path)
 
 
+def _probe_stages_payload(args, profile, session=None) -> dict:
+    """The probe's verdict tree, shared by `probe-stages` and `serve`.
+
+    `ok: true` always; a verdict of `null` means inconclusive (transient
+    failure, or the profile offers no switcher) -- never cached, retried on
+    the next call.
+    """
+    field = profile.stage_switch_field() if profile.discovered else None
+    if field is None:
+        return {
+            "ok": True,
+            "field": field,
+            "capable": None,
+            "cached": False,
+            "reason": (
+                "the profile offers no stage switcher"
+                if profile.discovered
+                else "the protocol is not mapped for this device"
+            ),
+        }
+
+    try:
+        if session is None:
+            session = open_session(profile)
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return {"ok": False, "field": field, "capable": None, "cached": False,
+                "error": str(exc)}
+
+    vidpid = session.info.vidpid
+    firmware = ""
+    if profile.has_field("firmwareVersion"):
+        try:
+            firmware = str(session.get("firmwareVersion"))
+        except (DeviceBusy, ProtocolError, OSError):
+            firmware = ""
+    key = f"{vidpid}|{firmware}|{profile.name}"
+    path = _stage_cache_path()
+    entries = _stage_cache_load(path)
+    cached = entries.get(key)
+    if isinstance(cached, dict) and cached.get("capable") in (True, False):
+        return {
+            "ok": True,
+            "field": field,
+            "capable": cached["capable"],
+            "cached": True,
+            "reason": cached.get("reason", ""),
+        }
+
+    try:
+        result = session.probe_stage_switch(field)
+    except (DeviceBusy, ProtocolError, OSError) as exc:
+        return {"ok": False, "field": field, "capable": None, "cached": False,
+                "error": f"stage probe failed: {exc}"}
+
+    if result.get("capable") in (True, False) and result.get("reverted"):
+        entries[key] = {
+            "capable": result["capable"],
+            "reason": result.get("reason", ""),
+            "checkedAt": int(time.time()),
+        }
+        try:
+            _stage_cache_store(path, entries)
+        except OSError as exc:
+            # A cache write failure degrades to re-probing next time; the
+            # probe itself already happened and the verdict is real.
+            if not args.json:
+                print(f"(cache write failed: {exc})", file=sys.stderr)
+
+    return {
+        "ok": True,
+        "field": field,
+        "capable": result.get("capable"),
+        "cached": False,
+        "reason": result.get("reason", ""),
+        "reverted": result.get("reverted", True),
+        "stages": result.get("stages"),
+    }
+
+
 def cmd_probe_stages(args) -> int:
     """Answer, once per mouse+firmware: does switching DPI stages actually work?
 
@@ -325,77 +431,7 @@ def cmd_probe_stages(args) -> int:
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
-    field = None
-    try:
-        field = profile.stage_switch_field()
-        if not profile.discovered or field is None:
-            payload = {
-                "ok": True,
-                "field": field,
-                "capable": None,
-                "cached": False,
-                "reason": (
-                    "the profile offers no stage switcher"
-                    if profile.discovered
-                    else "the protocol is not mapped for this device"
-                ),
-            }
-            return _emit(payload, args.json, lambda p: print(p["reason"]))
-
-        session = open_session(profile)
-    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
-        return _fail(str(exc), args.json)
-
-    vidpid = session.info.vidpid
-    firmware = ""
-    if profile.has_field("firmwareVersion"):
-        try:
-            firmware = str(session.get("firmwareVersion"))
-        except (DeviceBusy, ProtocolError, OSError):
-            firmware = ""
-    key = f"{vidpid}|{firmware}|{profile.name}"
-    path = _stage_cache_path()
-    entries = _stage_cache_load(path)
-    cached = entries.get(key)
-    if isinstance(cached, dict) and cached.get("capable") in (True, False):
-        payload = {
-            "ok": True,
-            "field": field,
-            "capable": cached["capable"],
-            "cached": True,
-            "reason": cached.get("reason", ""),
-        }
-        return _emit(payload, args.json, lambda p: _print_probe(p))
-
-    try:
-        result = session.probe_stage_switch(field)
-    except (DeviceBusy, ProtocolError, OSError) as exc:
-        return _fail(f"stage probe failed: {exc}", args.json)
-
-    if result.get("capable") in (True, False) and result.get("reverted"):
-        entries[key] = {
-            "capable": result["capable"],
-            "reason": result.get("reason", ""),
-            "checkedAt": int(time.time()),
-        }
-        try:
-            _stage_cache_store(path, entries)
-        except OSError as exc:
-            # A cache write failure degrades to re-probing next time; the
-            # probe itself already happened and the verdict is real.
-            if not args.json:
-                print(f"(cache write failed: {exc})", file=sys.stderr)
-
-    payload = {
-        "ok": True,
-        "field": field,
-        "capable": result.get("capable"),
-        "cached": False,
-        "reason": result.get("reason", ""),
-        "reverted": result.get("reverted", True),
-        "stages": result.get("stages"),
-    }
-    return _emit(payload, args.json, lambda p: _print_probe(p))
+    return _emit(_probe_stages_payload(args, profile), args.json, _print_probe)
 
 
 def _print_probe(p: dict) -> None:
@@ -411,8 +447,8 @@ def _print_probe(p: dict) -> None:
         print(p.get("reason") or "inconclusive; will re-probe next time")
 
 
-def cmd_battery(args) -> int:
-    """Read only batteryPercent and charging -- one exchange, not the whole profile.
+def _battery_payload(args, profile, session=None) -> dict:
+    """batteryPercent + charging only -- one exchange, not the whole profile.
 
     `status` reads every mapped field, one exchange per distinct command; for
     a widget polling every few seconds just to notice a charging-cable flip,
@@ -421,24 +457,27 @@ def cmd_battery(args) -> int:
     share one command on every shipped profile, so asking for both here still
     costs one exchange rather than two separate process spawns.
     """
+    if not profile.discovered:
+        return {"ok": False, "state": "undiscovered", "settings": {}}
+
+    try:
+        if session is None:
+            session = _session(args, profile, args.device)
+        settings = session.read_some(["batteryPercent", "charging"])
+    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return {"ok": False, "state": "error", "settings": {}, "error": str(exc)}
+
+    return {"ok": True, "state": "ready", "settings": settings}
+
+
+def cmd_battery(args) -> int:
     try:
         profile = detect_profile(args.profile)
     except ProtocolError as exc:
         return _fail(str(exc), args.json)
 
-    if not profile.discovered:
-        payload = {"ok": False, "state": "undiscovered", "settings": {}}
-        return _emit(payload, args.json, lambda p: print("not discovered"))
-
-    try:
-        session = _session(args, profile, args.device)
-        settings = session.read_some(["batteryPercent", "charging"])
-    except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
-        return _fail(str(exc), args.json, state="error", settings={})
-
-    payload = {"ok": True, "state": "ready", "settings": settings}
     return _emit(
-        payload, args.json,
+        _battery_payload(args, profile), args.json,
         lambda p: print(
             f"{p['settings'].get('batteryPercent', '?')}%"
             + (" (charging)" if p["settings"].get("charging") else "")
@@ -449,9 +488,8 @@ def cmd_battery(args) -> int:
 # --- watch-link ---------------------------------------------------------
 
 
-def cmd_watch_link(args) -> int:
-    """Print one JSON line whenever the mouse's cable or dongle is plugged
-    or unplugged, for as long as this process runs.
+def _watch_link_loop(profile, emit) -> None:
+    """Emit one event per plug/unplug of this profile's HID nodes.
 
     Deliberately never talks to the mouse: a hidraw node for this profile's
     vendor/product IDs appearing or disappearing under /dev is the kernel's
@@ -459,28 +497,23 @@ def cmd_watch_link(args) -> int:
     costs nothing on the wire. A caller that wants to know *what* changed
     (battery percent, charging) still has to ask the mouse itself -- this
     just tells it when it is worth asking right now instead of on a timer.
+
+    `emit(event, present)` receives a snapshot set of node paths. The one-shot
+    `watch-link` command passes a printer; `serve` passes a thread-safe
+    stream writer.
     """
     from . import hidraw
 
-    try:
-        profile = detect_profile(args.profile)
-    except ProtocolError as exc:
-        return _fail(str(exc), args.json)
-
     def snapshot() -> set[str]:
         return {c.info.path for c in rank_candidates(profile) if c.identified}
-
-    def emit(event: str, present: set[str]) -> None:
-        line = json.dumps({"ok": True, "event": event, "connected": bool(present)})
-        print(line, flush=True)
 
     last = snapshot()
     emit("initial", last)
 
     try:
         fd = hidraw.inotify_init()
-    except OSError as exc:
-        return _fail(f"could not start inotify: {exc}", args.json)
+    except OSError:
+        return
 
     try:
         hidraw.inotify_add_watch(
@@ -493,17 +526,283 @@ def cmd_watch_link(args) -> int:
             # udev still has to run its rules (permissions, symlinks) after
             # the node appears; without this a snapshot taken immediately on
             # IN_CREATE can catch the node before it is readable yet.
-            import time as _time
-
-            _time.sleep(0.15)
+            time.sleep(0.15)
             current = snapshot()
             if current != last:
                 last = current
                 emit("changed", current)
-    except KeyboardInterrupt:
-        return 0
+    except OSError:
+        # The watch fd died (an unmount, a kill race). Stop quietly: for the
+        # one-shot that is an exit, for serve the restart machinery notices.
+        return
     finally:
-        os.close(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def cmd_watch_link(args) -> int:
+    """Print one JSON line whenever the mouse's cable or dongle is plugged
+    or unplugged, for as long as this process runs.
+    """
+    try:
+        profile = detect_profile(args.profile)
+    except ProtocolError as exc:
+        return _fail(str(exc), args.json)
+
+    def emit(event: str, present: set[str]) -> None:
+        line = json.dumps({"ok": True, "event": event, "connected": bool(present)})
+        print(line, flush=True)
+
+    _watch_link_loop(profile, emit)
+    return 0
+
+
+# --- cross-bar activity ------------------------------------------------------
+
+
+def _activity_path() -> str | None:
+    """Where settings-changes are published to other hskctl processes.
+
+    One mouse, many consumers: a serve process per bar, plus one-shot `set`
+    commands from a terminal. Whichever of them writes, the writer is the
+    only holder of the authoritative readback, so instead of having every
+    other panel re-read the device, the writer publishes what it did to a
+    small file under XDG_RUNTIME_DIR (per-user, wiped at logout, mode 0700)
+    and every serve process watching it relays the fact onto its own stream,
+    where the panels merge it into their values locally. One notification,
+    zero device traffic, and no panel shows a stale stage after its twin
+    changes one.
+
+    Without XDG_RUNTIME_DIR (a bare terminal through su, say) publishing is
+    skipped: the panels fall back to what they already had until they next
+    refresh, exactly as before this file existed.
+    """
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        return None
+    return os.path.join(base, "hskctl", "activity.json")
+
+
+def _notify_activity(payload: dict) -> None:
+    """Publish a change; failures are silent by design.
+
+    This is a courtesy signal, not a transaction: a failed publish leaves
+    the sibling panels on their next scheduled refresh, which is exactly
+    what they did before the file existed.
+    """
+    path = _activity_path()
+    if path is None:
+        return
+    try:
+        _atomic_write_json(path, payload, private=True)
+    except (OSError, ValueError):
+        pass
+
+
+def _watch_activity_loop(emit) -> None:
+    """Relay published changes onto a stream, in house style.
+
+    The reader half of _notify_activity: watches the activity directory with
+    inotify and re-emits the file's payload as one event per change. Writes
+    are atomic renames, so what is read is always a complete document; a
+    short settle covers the rename landing. Never talks to the mouse and
+    never writes the file -- exchanging the reader and writer halves would
+    be a feedback loop.
+    """
+    from . import hidraw
+
+    path = _activity_path()
+    if path is None:
+        return
+    directory = os.path.dirname(path)
+    name = os.path.basename(path)
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        fd = hidraw.inotify_init()
+    except OSError:
+        return
+
+    try:
+        hidraw.inotify_add_watch(
+            fd, directory, hidraw.IN_CREATE | hidraw.IN_MOVED_TO
+        )
+        while True:
+            names = hidraw.read_inotify_events(fd)
+            if not any(n == name for n in names):
+                continue
+            time.sleep(0.03)
+            try:
+                with open(path, "rb") as handle:
+                    doc = json.loads(handle.read(4096))
+            except (OSError, ValueError):
+                # A torn or alien file: ignore it. The next atomic rename is
+                # a fresh, complete document again.
+                continue
+            if not isinstance(doc, dict):
+                continue
+            event = doc.get("event")
+            if event not in ("set-applied", "refresh"):
+                continue
+            out = {"ok": True, "event": event}
+            if event == "set-applied":
+                if not isinstance(doc.get("field"), str):
+                    continue
+                out["field"] = doc["field"]
+                out["value"] = doc.get("value")
+            emit(out)
+    except OSError:
+        return
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+# --- serve -------------------------------------------------------------------
+
+
+def cmd_serve(args) -> int:
+    """Long-lived transport for the panel: one process per widget instance.
+
+    The panel writes one JSON request per line to this process's stdin --
+    `{"id": 1, "cmd": "status"}`, `{"id": 2, "cmd": "set", "field": ...,
+    "value": ...}`, `{"id": 3, "cmd": "battery"}`, `{"id": 4, "cmd":
+    "probe-stages"}` -- and reads one JSON line back per request on stdout,
+    carrying the same `id`. watch-link events ride the same stream as
+    `{"event": ...}` lines with no `id`, so the two are told apart by shape.
+
+    The point is cost: a click is one exchange over pipes that are already
+    open, instead of a Python interpreter launch, a profile detect and a
+    link re-probe. Byte counters, watchdogs and backoff-restart live with
+    the panel's supervisor (Service.qml), which still treats this process's
+    death as something to restart, not to mourn.
+
+    Two serializations stack, on purpose. Within the panel, requests are
+    handled strictly in arrival order by this loop -- the QML side no longer
+    has to be the serialization point. Across processes, the same `device_lock`
+    fence the one-shot commands take is taken here per request, not held for
+    the process lifetime: a serve process holds the panel alive for the whole
+    session, and holding the fence that long would deadlock every CLI one-shot
+    the user runs from a terminal while the panel happens to exist.
+
+    A `changed` link event drops the cached session: node numbering under
+    /dev can move on a replug, so the next request re-establishes path and
+    link flag rather than trusting a stale path. DeviceBusy is the one
+    exception that keeps the session -- another hskctl process merely held
+    the fence; the path it guarded is still real. Stdin closing ends the
+    process; nothing is written to the mouse on shutdown.
+    """
+    import threading
+
+    try:
+        profile = detect_profile(args.profile)
+    except ProtocolError as exc:
+        # One parseable line, then a nonzero exit: the panel's restart
+        # machinery sees the exit and backs off, and the line explains why.
+        sys.stdout.write(
+            json.dumps({"ok": False, "state": "error", "error": str(exc)}) + "\n"
+        )
+        sys.stdout.flush()
+        return 1
+
+    out_lock = threading.Lock()
+
+    def emit(payload: dict) -> None:
+        line = json.dumps(payload, separators=(",", ":"))
+        with out_lock:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+
+    holder = {"session": None}
+
+    # The link watcher runs on a daemon thread beside the request loop: it
+    # only walks /dev and sleeps, never touching the mouse, which is what
+    # makes running it here without extra locking safe.
+    def watcher_emit(event: str, present: set[str]) -> None:
+        emit({"ok": True, "event": event, "connected": bool(present)})
+        if event == "changed":
+            holder["session"] = None
+
+    threading.Thread(
+        target=_watch_link_loop, args=(profile, watcher_emit), daemon=True
+    ).start()
+
+    # A second watcher relays changes published by *other* hskctl processes
+    # (the sibling bars' serve processes, a terminal `set`): the writer
+    # already holds the authoritative readback, so the panel gets told the
+    # value rather than asked to re-read the device.
+    def activity_emit(payload: dict) -> None:
+        emit(payload)
+
+    threading.Thread(
+        target=_watch_activity_loop, args=(activity_emit,), daemon=True
+    ).start()
+
+    # A serve session must not take the process-lifetime lock (see docstring),
+    # so it is built with lock disabled and every request scopes its own.
+    def get_session():
+        if holder["session"] is None:
+            holder["session"] = _session(args, profile, args.device, lock=False)
+        return holder["session"]
+
+    def handle(req: dict) -> dict:
+        cmd = str(req.get("cmd") or "")
+        with device_lock():
+            try:
+                if cmd == "status":
+                    return _status_payload(args, profile, get_session())
+                if cmd == "battery":
+                    return _battery_payload(args, profile, get_session())
+                if cmd == "probe-stages":
+                    return _probe_stages_payload(args, profile, get_session())
+                if cmd == "set":
+                    field = req.get("field")
+                    if not isinstance(field, str):
+                        return {"ok": False, "error": "set needs a field name"}
+                    raw_value = req.get("value")
+                    if isinstance(raw_value, (dict, list)) or raw_value is None:
+                        return {"ok": False, "field": field,
+                                "error": "set needs a scalar value"}
+                    # Same string-coercion the argparse path applies -- the
+                    # panel sends "1600", "true", "#ffa500", exactly the
+                    # spellings its queue used to hand the CLI.
+                    return _set_payload(
+                        args, profile, field, _coerce(str(raw_value)), get_session()
+                    )
+            except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+                # A vanished node means the cached session might still name a
+                # path something else owns; drop it so the next request
+                # re-establishes. A fence timeout means the node is fine --
+                # another hskctl process came and went.
+                if not isinstance(exc, DeviceBusy):
+                    holder["session"] = None
+                return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": f"unknown command {cmd!r}"}
+
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+        if len(line) > 4096:
+            emit({"ok": False, "error": "request line too long"})
+            continue
+        try:
+            req = json.loads(line)
+        except ValueError:
+            emit({"ok": False, "error": "request is not valid JSON"})
+            continue
+        if not isinstance(req, dict):
+            emit({"ok": False, "error": "request is not an object"})
+            continue
+        out = handle(req)
+        if req.get("id") is not None:
+            out["id"] = req["id"]
+        emit(out)
+
+    return 0
 
 
 # --- get / set --------------------------------------------------------------
@@ -553,30 +852,27 @@ def _print_trace(session) -> None:
             print(f"    {i:>3}  {' '.join(tokens[i:i + 16])}", file=sys.stderr)
 
 
-def cmd_set(args) -> int:
-    value = _coerce(args.value)
+def _set_payload(args, profile, field: str, value: Any, session=None) -> dict:
+    """Write one field, read it back, report both -- the readback is the
+    authoritative value, so the panel needs no separate re-read.
+    """
     try:
-        profile = detect_profile(args.profile)
-        session = _session(args, profile, args.device)
-        if getattr(args, "verbose", False):
-            session.trace = []
-        if getattr(args, "raw", False):
-            session.set_raw(args.field, int(args.value))
-            readback = session.get_raw(args.field)
-            value = int(args.value)
-        else:
-            session.set(args.field, value)
-            readback = session.get(args.field)
+        if session is None:
+            session = _session(args, profile, args.device)
+        session.set(field, value)
+        readback = session.get(field)
     except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
-        return _fail(str(exc), args.json, field=args.field, requested=value)
-
-    if getattr(args, "verbose", False) and session.trace:
-        _print_trace(session)
+        return {
+            "ok": False,
+            "field": field,
+            "requested": value,
+            "error": str(exc),
+        }
 
     ok = str(readback) == str(value)
     payload = {
         "ok": ok,
-        "field": args.field,
+        "field": field,
         "requested": value,
         "value": readback,
         "link": "dongle" if session.wireless else "wired",
@@ -586,12 +882,58 @@ def cmd_set(args) -> int:
         # usual cause is a mouse that was asleep when the packet landed, which
         # looks identical unless the message says so.
         payload["error"] = (
-            f"wrote {value!r} to {args.field} but the mouse reads back "
+            f"wrote {value!r} to {field} but the mouse reads back "
             f"{readback!r} (link: {payload['link']}). If that is 0 or blank the "
             f"mouse was probably asleep -- move it and try again. If it is a "
             f"different real value, the mapping in the profile is wrong."
         )
-    return _emit(payload, args.json, lambda p: print(f"{p['field']} = {p['value']}"))
+    else:
+        # Other panels holding this mouse show the old value until they are
+        # told. The readback above is the truth; publish it.
+        _notify_activity({"event": "set-applied", "field": field, "value": readback})
+    return payload
+
+
+def cmd_set(args) -> int:
+    value = _coerce(args.value)
+    try:
+        profile = detect_profile(args.profile)
+        if getattr(args, "raw", False):
+            # The wire value can be handed over directly (calibration work):
+            # bypass the friendly-value table, write the number the mouse
+            # expects, read the raw number back. Not reachable through the
+            # panel, deliberately -- it is for humans profiling hardware.
+            session = _session(args, profile, args.device)
+            if getattr(args, "verbose", False):
+                session.trace = []
+            session.set_raw(args.field, int(args.value))
+            value = int(args.value)
+            readback = session.get_raw(args.field)
+            payload = {
+                "ok": str(readback) == str(value),
+                "field": args.field,
+                "requested": value,
+                "value": readback,
+                "link": "dongle" if session.wireless else "wired",
+            }
+            if not payload["ok"]:
+                payload["error"] = (
+                    f"wrote raw {value} to {args.field} but the mouse reads "
+                    f"back {readback}"
+                )
+        elif not getattr(args, "verbose", False):
+            payload = _set_payload(args, profile, args.field, value)
+        else:
+            session = _session(args, profile, args.device)
+            session.trace = []
+            payload = _set_payload(args, profile, args.field, value, session=session)
+    except (NotDiscovered, DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
+        return _fail(str(exc), args.json, field=args.field, requested=value)
+
+    if getattr(args, "verbose", False) and session.trace:
+        _print_trace(session)
+
+    return _emit(payload, args.json, lambda p: print(f"{p['field']} = {p.get('value', p.get('error'))}"))
 
 
 # --- fields -----------------------------------------------------------------
@@ -725,6 +1067,11 @@ def cmd_probe_write(args) -> int:
     moved = [i for i in range(width)
              if (before[i] if i < len(before) else None)
              != (after[i] if i < len(after) else None)]
+
+    # Nothing is restored (that is the point of a probe), so the write stuck:
+    # tell every panel to re-read rather than drift on a stale rendering.
+    if write_error is None:
+        _notify_activity({"event": "refresh"})
 
     payload = {
         "ok": write_error is None,
@@ -1332,6 +1679,11 @@ def cmd_fix_dpi(args) -> int:
     except (NotDiscovered, HidrawError, ProtocolError, OSError) as exc:
         return _fail(str(exc), args.json, changes=changes)
 
+    # Other panels display the repaired block; tell them to re-read it (the
+    # repair touches several fields; one event is cheaper than several).
+    if changes:
+        _notify_activity({"event": "refresh"})
+
     payload = {"ok": True, "changes": changes}
 
     def human(p):
@@ -1519,6 +1871,10 @@ def cmd_apply(args) -> int:
 
     payload = {"ok": True, "path": path, "applied": applied, "skipped": skipped}
 
+    # Every field written changed a value some panel may be showing.
+    if applied:
+        _notify_activity({"event": "refresh"})
+
     def human(p):
         if not p["applied"]:
             print("Mouse already matches the saved settings.")
@@ -1573,6 +1929,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="print a line whenever the cable/dongle is plugged or unplugged "
              "(runs until killed; never talks to the mouse)",
     ).set_defaults(func=cmd_watch_link)
+    sub.add_parser(
+        "serve",
+        help="panel transport: JSON requests on stdin, replies on stdout "
+             "(one process per widget; not for interactive use)",
+    ).set_defaults(func=cmd_serve)
     sub.add_parser("fields", help="show which settings are mapped").set_defaults(
         func=cmd_fields
     )

@@ -196,29 +196,40 @@ function cleanSections(raw) {
   return out
 }
 
+// A parsed-elsewhere object passes through; a string is parsed here. Serve
+// invokes both: responses arrive as lines the service parses once at the
+// stream boundary, while an empty or malformed one-shot output is diagnosed
+// from its raw text.
+function asJsonObject(raw) {
+  return isPlainObject(raw) ? raw : null
+}
+
 function parseStatus(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") {
-    return {
-      ok: false,
-      state: "error",
-      model: "",
-      settings: {},
-      error: "hskctl produced no output"
+  var parsed = asJsonObject(raw)
+  var text = ""
+  if (parsed === null) {
+    text = String(raw || "").trim()
+    if (text === "") {
+      return {
+        ok: false,
+        state: "error",
+        model: "",
+        settings: {},
+        error: "hskctl produced no output"
+      }
     }
-  }
-  var parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch (e) {
-    return {
-      ok: false,
-      state: "error",
-      model: "",
-      settings: {},
-      // hskctl always emits JSON, so non-JSON here means the wrapper itself
-      // failed -- a missing interpreter, a stale PATH, a partial install.
-      error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200)
+    try {
+      parsed = JSON.parse(text)
+    } catch (e) {
+      return {
+        ok: false,
+        state: "error",
+        model: "",
+        settings: {},
+        // hskctl always emits JSON, so non-JSON here means the wrapper itself
+        // failed -- a missing interpreter, a stale PATH, a partial install.
+        error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200)
+      }
     }
   }
   if (!isPlainObject(parsed)) {
@@ -251,13 +262,16 @@ function parseStatus(raw) {
 // sanitisation as any error string. The name of the field probed comes
 // straight back so the capability is stored under the name it was asked for.
 function parseStageProbe(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return { ok: false, capable: null, field: "", cached: false, reason: "" }
-  var parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch (e) {
-    return { ok: false, capable: null, field: "", cached: false, reason: plain(text.split("\n")[0], 200) }
+  var parsed = asJsonObject(raw)
+  var text = ""
+  if (parsed === null) {
+    text = String(raw || "").trim()
+    if (text === "") return { ok: false, capable: null, field: "", cached: false, reason: "" }
+    try {
+      parsed = JSON.parse(text)
+    } catch (e) {
+      return { ok: false, capable: null, field: "", cached: false, reason: plain(text.split("\n")[0], 200) }
+    }
   }
   if (!isPlainObject(parsed)) return { ok: false, capable: null, field: "", cached: false, reason: "" }
   var out = {
@@ -273,37 +287,44 @@ function parseStageProbe(raw) {
 // Same shape of parsing as parseStatus, for `hskctl battery`'s much smaller
 // payload -- just ok/settings, no model/writable/allowed to carry.
 function parseBattery(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return { ok: false, settings: {} }
-  try {
-    var parsed = JSON.parse(text)
-    if (!isPlainObject(parsed)) return { ok: false, settings: {} }
-    return { ok: parsed.ok === true, settings: cleanSettings(parsed.settings) }
-  } catch (e) {
-    return { ok: false, settings: {} }
+  var parsed = asJsonObject(raw)
+  if (parsed === null) {
+    var text = String(raw || "").trim()
+    if (text === "") return { ok: false, settings: {} }
+    try {
+      parsed = JSON.parse(text)
+    } catch (e) {
+      return { ok: false, settings: {} }
+    }
   }
+  if (!isPlainObject(parsed)) return { ok: false, settings: {} }
+  return { ok: parsed.ok === true, settings: cleanSettings(parsed.settings) }
 }
 
 // hskctl's `set` payload: {ok, field, requested, value, link, error}. `value`
 // is the mouse's own readback of what it just wrote -- the authoritative
 // number to show, no separate re-read needed.
 function parseSet(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return { ok: false, field: "", value: undefined, error: "hskctl produced no output" }
-  try {
-    var parsed = JSON.parse(text)
-    if (!isPlainObject(parsed)) return { ok: false, field: "", value: undefined, error: "hskctl output is not an object" }
-    var field = isFieldName(parsed.field) ? parsed.field : ""
-    var value = cleanValue(parsed.value)
-    return {
-      // A readback the panel cannot represent is not a success.
-      ok: parsed.ok === true && field !== "" && value !== undefined,
-      field: field,
-      value: value,
-      error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
+  var parsed = asJsonObject(raw)
+  var text = ""
+  if (parsed === null) {
+    text = String(raw || "").trim()
+    if (text === "") return { ok: false, field: "", value: undefined, error: "hskctl produced no output" }
+    try {
+      parsed = JSON.parse(text)
+    } catch (e) {
+      return { ok: false, field: "", value: undefined, error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200) }
     }
-  } catch (e) {
-    return { ok: false, field: "", value: undefined, error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200) }
+  }
+  if (!isPlainObject(parsed)) return { ok: false, field: "", value: undefined, error: "hskctl output is not an object" }
+  var field = isFieldName(parsed.field) ? parsed.field : ""
+  var value = cleanValue(parsed.value)
+  return {
+    // A readback the panel cannot represent is not a success.
+    ok: parsed.ok === true && field !== "" && value !== undefined,
+    field: field,
+    value: value,
+    error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
   }
 }
 
