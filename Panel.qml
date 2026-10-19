@@ -571,7 +571,7 @@ Panel {
                 text: root.needsSetup
                   ? (hsk.detected ? "Mouse found, protocol not mapped" : "Mouse not detected")
                   : (root.looksLikePermissions ? "No permission to reach the mouse"
-                                               : "hskctl unavailable")
+                                               : "Can't talk to the mouse")
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -627,7 +627,10 @@ Panel {
               // section of gated or read-only fields would render headers
               // above nothing.
               readonly property bool hasAny: {
-                if (!modelData || !Array.isArray(modelData.fields)) return false
+                // isList, not Array.isArray: modelData comes back off the
+                // Service's `property var` boundary as a wrapped sequence,
+                // and only Model.isList recognizes it (see Model.js).
+                if (!modelData || !Model.isList(modelData.fields)) return false
                 for (var i = 0; i < modelData.fields.length; i++) {
                   if (hsk.rowVisible(modelData.fields[i])) return true
                 }
@@ -932,8 +935,13 @@ Panel {
               border.color: valueField.activeFocus ? root.accent : root.dim
             }
             validator: IntValidator {
-              bottom: row.bounds ? row.bounds.min : 0
-              top: row.bounds ? row.bounds.max : 999999
+              // The validator is a nested property-wrapper object, not part of
+              // the signal-handler scope -- valueField's own `row` property is
+              // not in its lookup chain (this is a real, logged error: the
+              // shell showed `row is not defined` binding as soon as the row
+              // rendered). Reference the row by file-scope id instead.
+              bottom: sliderRow.bounds ? sliderRow.bounds.min : 0
+              top: sliderRow.bounds ? sliderRow.bounds.max : 999999
             }
 
             // Only follow the device (and the slider) while not focused, or a

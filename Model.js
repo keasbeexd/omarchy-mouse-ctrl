@@ -61,6 +61,22 @@ function isPlainObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v)
 }
 
+// A list in the widest sense that matters here. Values that cross a QML
+// QObject property boundary (anything read back off a `property var`) come
+// back as wrapped sequence objects: they index, iterate and slice like
+// arrays -- `fields.length`, `fields[i]`, `Array.prototype.slice.call`
+// all work -- but `Array.isArray()` returns false for them, and a check
+// written that way silently hides every row that depends on it. The panel's
+// vanished sections were exactly this. Whatever the data's route here, the
+// shape test must stay the same, so every check that can receive such a
+// value goes through this one.
+function isList(v) {
+  if (Array.isArray(v)) return true
+  return v !== null && v !== undefined && typeof v === "object"
+      && typeof v.length === "number"
+      && typeof v.slice === "function"
+}
+
 // A single reading: a finite number, a boolean, or a short plain string.
 // Returns undefined for anything else so callers can drop the field.
 function cleanValue(v) {
@@ -88,7 +104,7 @@ function cleanSettings(raw) {
 
 function cleanWritable(raw) {
   var out = []
-  if (!Array.isArray(raw)) return out
+  if (!isList(raw)) return out
   for (var i = 0; i < raw.length && out.length < MAX_FIELDS; i++) {
     if (isFieldName(raw[i]) && out.indexOf(raw[i]) === -1) out.push(raw[i])
   }
@@ -103,7 +119,7 @@ function cleanAllowed(raw) {
     if (n >= MAX_FIELDS) break
     if (!Object.prototype.hasOwnProperty.call(raw, key) || !isFieldName(key)) continue
     var list = raw[key]
-    if (!Array.isArray(list)) continue
+    if (!isList(list)) continue
     var clean = []
     for (var i = 0; i < list.length && clean.length < MAX_ALLOWED_VALUES; i++) {
       var v = cleanValue(list[i])
@@ -156,14 +172,14 @@ var MAX_SECTION_FIELDS = 16
 
 function cleanSections(raw) {
   var out = []
-  if (!Array.isArray(raw)) return out
+  if (!isList(raw)) return out
   for (var i = 0; i < raw.length && out.length < MAX_SECTIONS; i++) {
     var section = raw[i]
     if (!isPlainObject(section)) continue
     var title = typeof section.title === "string" ? plain(section.title, 24) : ""
     if (!title) continue
     var fields = section.fields
-    if (!Array.isArray(fields)) continue
+    if (!isList(fields)) continue
     var clean = []
     for (var j = 0; j < fields.length && clean.length < MAX_SECTION_FIELDS; j++) {
       var f = fields[j]
@@ -392,7 +408,7 @@ function isLow(settings, threshold) {
 // the panel degrades to a flat list instead of rendering nothing. Never a
 // path a matching shipped pair takes.
 function sectionsOrFallback(state, writable, meta, sections) {
-  if (state === "ready" && Array.isArray(sections) && sections.length > 0) return sections
+  if (state === "ready" && isList(sections) && sections.length > 0) return sections
   var out = []
   if (state !== "ready" || !writable) return out
   var fields = []
@@ -469,7 +485,7 @@ function buildRows(state, writable, sections, meta, gate) {
 // a rate-shaped special case in the QML.
 function chipsOptions(field, allowed, unit) {
   var values = allowed && allowed[field]
-  if (!Array.isArray(values)) return []
+  if (!isList(values)) return []
   var options = []
   for (var i = 0; i < values.length && options.length < MAX_ALLOWED_VALUES; i++) {
     var v = values[i]
@@ -492,7 +508,7 @@ var SLIDER_STEP_DEFAULT = 1
 
 function sliderBounds(field, allowed, meta) {
   var pair = allowed ? allowed[field] : undefined
-  if (Array.isArray(pair) && pair.length === 2) {
+  if (isList(pair) && pair.length === 2) {
     var lo = pair[0], hi = pair[1]
     if (typeof lo === "number" && typeof hi === "number"
         && isFinite(lo) && isFinite(hi)
