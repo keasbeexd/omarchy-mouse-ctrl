@@ -222,7 +222,12 @@ dpi, performance, sensor, power, device). Lessons:
   is not available, so `rescanPlugins` reuses the compiled component).
   Developing through `install.sh --dev` needs `omarchy-restart-shell`.
 - The HSK has no DPI button, so its stage count is not offered.
-- Every write is logged: `journalctl --user -t omarchy-shell | grep mousectrl`.
+- Every write is logged (DEBUG level): `journalctl --user -t omarchy-shell | grep mousectrl`.
+- Layout rules, settled with the owner: one two-column grid (label 40%,
+  control 60%, a fixed unit slot at the right edge) for every row; choices
+  are segmented controls filling the control column; only controls react to
+  hover and carry the keyboard cursor, never rows or labels; the footer
+  carries device facts and the keyboard hints.
 - Tests: `python3 -I -m unittest discover -s tests -t tests` and
   `node --test tests/`.
 

@@ -3,16 +3,22 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// One setting: its label, and the control its capability kind calls for --
-// a switch for toggles, a chip row for choices, a number field for
-// durations. A setting that is not unlocked for writing shows its value with
-// a lock instead of a control.
-CursorSurface {
+// One setting on the panel's two-column grid: the label in the left column
+// (labelWidth), the control in the right. Every control ends at the same
+// right edge; choices and number fields fill the control column, and a
+// number field leaves a unitWidth slot for its unit so fields line up.
+// A setting not unlocked for writing shows its value with a lock instead.
+// Only the control reacts to the mouse and shows the panel cursor; the row
+// and its label never highlight.
+Item {
   id: root
 
   required property var cap
+  property bool hasCursor: false
   property var value
   property bool busy: false
+  property real labelWidth: width * 0.4
+  property real unitWidth: Style.space(28)
   property color foreground
   property color accent
   property string fontFamily
@@ -21,35 +27,16 @@ CursorSurface {
   signal rowHovered()
 
   readonly property bool editable: cap.writable && !busy
-  // A row of more than three choices does not fit beside its label, so it
-  // drops onto its own line underneath.
-  readonly property bool stacked: cap.writable && cap.kind === "enum" && cap.options.length > 3
-  readonly property var chipOptions: cap.options.map(function(o) {
-    return { value: String(o), label: Model.optionLabel(cap, o) }
-  })
+  readonly property real pad: Style.space(8)
+  readonly property real controlWidth: width - labelWidth - pad
 
-  implicitHeight: stacked
-    ? label.implicitHeight + controls.implicitHeight + Style.space(18)
-    : Math.max(Style.space(32), controls.implicitHeight + Style.space(6))
-  foreground: root.foreground
-
-  MouseArea {
-    anchors.fill: parent
-    hoverEnabled: true
-    acceptedButtons: Qt.NoButton
-    onContainsMouseChanged: if (containsMouse && root.cap.writable) root.rowHovered()
-  }
+  implicitHeight: Style.spacing.controlHeight + Style.space(2)
 
   Text {
-    id: label
     textFormat: Text.PlainText
-    anchors.left: parent.left
-    anchors.leftMargin: Style.space(8)
-    anchors.top: root.stacked ? parent.top : undefined
-    anchors.topMargin: Style.space(6)
-    anchors.verticalCenter: root.stacked ? undefined : parent.verticalCenter
-    anchors.right: root.stacked ? parent.right : controls.left
-    anchors.rightMargin: Style.space(8)
+    x: root.pad
+    width: root.labelWidth - root.pad * 2
+    anchors.verticalCenter: parent.verticalCenter
     text: root.cap.label
     color: root.cap.writable ? root.foreground : Qt.darker(root.foreground, 1.4)
     font.family: root.fontFamily
@@ -57,20 +44,17 @@ CursorSurface {
     elide: Text.ElideRight
   }
 
-  // A Row lays out only its visible child, so exactly one control shows.
-  Row {
-    id: controls
-    anchors.right: root.stacked ? undefined : parent.right
-    anchors.rightMargin: Style.space(8)
-    anchors.left: root.stacked ? parent.left : undefined
-    anchors.leftMargin: Style.space(8)
-    anchors.top: root.stacked ? label.bottom : undefined
-    anchors.topMargin: Style.space(6)
-    anchors.verticalCenter: root.stacked ? undefined : parent.verticalCenter
+  Item {
+    id: controlColumn
+    x: root.labelWidth
+    width: root.controlWidth
+    height: parent.height
     opacity: root.busy ? 0.5 : 1.0
 
     ToggleSwitch {
       visible: root.cap.writable && root.cap.kind === "toggle"
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
       checked: root.value === true
       interactive: root.editable
       hasCursor: root.hasCursor
@@ -80,30 +64,44 @@ CursorSurface {
       onHovered: function(on) { if (on) root.rowHovered() }
     }
 
-    ButtonGroup {
+    // A segmented control spanning the whole column, one equal segment per
+    // option, however many the capability declares.
+    Row {
+      id: segments
       visible: root.cap.writable && root.cap.kind === "enum"
-      options: root.chipOptions
-      value: root.value === undefined ? "" : String(root.value)
-      focusable: false
-      cursorIndex: root.hasCursor ? selectedOptionIndex() : -1
-      // The default is the theme's base background, which clashes with the
-      // popup surface this panel sits on.
-      background: "transparent"
-      foreground: root.foreground
-      accent: root.accent
-      fontFamily: root.fontFamily
-      fontSize: Style.font.bodySmall
-      onChanged: function(v) {
-        if (!root.editable) return
-        for (var i = 0; i < root.cap.options.length; i++)
-          if (String(root.cap.options[i]) === v) return root.changeRequested(root.cap.options[i])
+      anchors.fill: parent
+      anchors.topMargin: Style.space(1)
+      anchors.bottomMargin: Style.space(1)
+      spacing: Style.space(3)
+
+      Repeater {
+        model: root.cap.kind === "enum" ? root.cap.options : []
+
+        Button {
+          required property var modelData
+          width: (segments.width - segments.spacing * (root.cap.options.length - 1)) / root.cap.options.length
+          height: segments.height
+          horizontalPadding: Style.space(2)
+          text: Model.optionLabel(root.cap, modelData)
+          selected: modelData === root.value
+          hasCursor: root.hasCursor && modelData === root.value
+          bordered: true
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
+          fontSize: Style.font.bodySmall
+          onClicked: if (root.editable && modelData !== root.value) root.changeRequested(modelData)
+          onHovered: function(on) { if (on) root.rowHovered() }
+        }
       }
-      onHovered: function(index, on) { if (on) root.rowHovered() }
     }
 
     NumberField {
       id: numberField
       visible: root.cap.writable && root.cap.kind === "duration"
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      fieldWidth: parent.width - root.unitWidth
       value: typeof root.value === "number" ? root.value : 0
       from: root.cap.minimum !== null ? root.cap.minimum : 0
       to: root.cap.maximum !== null ? root.cap.maximum : 100000
@@ -118,9 +116,11 @@ CursorSurface {
 
     Text {
       textFormat: Text.PlainText
-      visible: numberField.visible && root.cap.unit !== ""
+      visible: numberField.visible
+      anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      leftPadding: Style.space(8)
+      width: root.unitWidth
+      horizontalAlignment: Text.AlignRight
       text: root.cap.unit
       color: Qt.darker(root.foreground, 1.4)
       font.family: root.fontFamily
@@ -129,6 +129,8 @@ CursorSurface {
 
     Row {
       visible: !root.cap.writable
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(6)
 
       Text {
