@@ -151,8 +151,10 @@ Line the packets up against your notes. You are looking for:
 - **Packets you did not cause.** Battery polling and connection state show up
   unbidden and will confuse a naive diff.
 
-Write what you find into a new `profiles/*.json` and let the engine interpret
-it. Resist putting any of it in Python.
+Write what you find into a new family snapshot under
+`docs/contributor/families/*.json` (they are the wizard's seed data: users
+who own the same transport family get a guided, verified setup from it) and
+let the engine interpret it. Resist putting any of it in Python.
 
 ## Step 4 — verify before trusting
 
