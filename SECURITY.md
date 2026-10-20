@@ -18,18 +18,18 @@ unless you ask not to be named.
 ## What counts
 
 Mouse CTRL is an Omarchy shell plugin that talks to your mouse over raw HID
-and, with `install.sh --udev`, installs a udev rule as root. Examples of what
-we want to hear about:
+and installs a udev rule as root, from its setup (through `pkexec`) or from
+`install.sh --udev` (through `sudo`). Examples of what we want to hear about:
 
-- a way for the plugin, `hskctl` or `install.sh` to run something as root
+- a way for the plugin, `mousectrl` or `install.sh` to run something as root
   that it did not show you and ask about first, or to change anything as
   root beyond its own udev rule (and any outdated udev rule it offers to
   remove);
 - a udev rule that opens a device (or more devices) to more than the
   logged-in user;
-- data from the mouse, a profile file or another program that reaches a
-  shell, a command's arguments, the panel or a terminal as anything but plain
-  text;
+- data from the mouse, a profile file, ratbagd or another program that
+  reaches a shell, a command's arguments, the panel or a terminal as anything
+  but plain text;
 - a way to send a mouse a command that could brick it or change its
   firmware, rather than the settings the panel offers.
 
