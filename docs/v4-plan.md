@@ -258,8 +258,12 @@ template and scripts/analyze-driver.py are back; the README is rewritten.
 The omarchy-plugin-security checklist found and fixed six issues (profile
 directory and writes, busctl output bounds, terminal-safe device strings,
 root-side rule validation, analyzer extraction); details in commit
-e590c67. Open before release: a v4 preview.png, the version bump, the
-marketplace baseline scan, merging to master and the [Verify] update.
+e590c67.
+
+**Release.** v4.0.0 with a new preview (real captures of the panel and the
+setup), v3 leftovers removed from install.sh and .gitignore, merged to
+master and submitted to the marketplace as a new [Plugin] (the v3
+submissions were withdrawn by the owner for this rewrite).
 
 ## Settled after the session
 

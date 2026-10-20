@@ -49,15 +49,6 @@ RM="/usr/bin/rm"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 UDEV_RULE="/etc/udev/rules.d/60-mousectrl.rules"
-# Superseded by UDEV_RULE above, across two renames: the original G-Wolves-only
-# plugin, then a short-lived id (keasbeexd.mousectl, dropped before its first
-# release) that used this same filename pattern with the id's spelling at the
-# time. Both are checked for and offered for removal below, so upgrading never
-# leaves a stale rule with a name nothing current reads.
-OLD_UDEV_RULES=(
-  "/etc/udev/rules.d/60-gwolves-hsk.rules"
-  "/etc/udev/rules.d/60-mousectl.rules"
-)
 # Fallback only: the vendor ids the family drivers in mousectrl/families/
 # claim, for a machine where `mousectrl udev-rule` will not run.
 VENDOR_IDS=(
@@ -165,24 +156,6 @@ rule_file_text() {
   bundled_rule_text
 }
 
-migrate_old_udev_rules() {
-  local old
-  for old in "${OLD_UDEV_RULES[@]}"; do
-    [[ -e "$old" ]] || continue
-    warn "Found $old from an older install of this plugin (it used to be"
-    warn "named differently). Every vendor id it granted is also in the rule"
-    warn "just installed, so it is now redundant."
-    read -r -p "Remove $old (needs sudo)? [y/N] " reply
-    if [[ "$reply" =~ ^[Yy] ]]; then
-      "$SUDO" "$RM" -f "$old"
-      info "Removed $old"
-    else
-      warn "Left in place. It does no harm alongside the new rule -- remove it"
-      warn "yourself later with: sudo rm $old"
-    fi
-  done
-}
-
 install_udev() {
   local assume_yes="${1:-}"
   info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
@@ -213,17 +186,12 @@ install_udev() {
   # this plugin's business.
   "$SUDO" "$UDEVADM" trigger --subsystem-match=hidraw --action=change
   info "Installed $UDEV_RULE"
-  # Only now that the replacement rule is on disk is it safe to offer removing
-  # the old ones: a user who declines the new rule must not be left with
-  # neither, which is what removing first would do.
-  migrate_old_udev_rules
   info "Now unplug and replug the mouse or its dongle -- the rule applies when"
   info "the device next appears, not to one that is already plugged in."
 }
 
 # Remove $BIN_DIR/<name> only if it is a symlink this script made, pointing
-# into this checkout. `hskctl` is v3's name for the CLI; its link dangles
-# once v3 is gone.
+# into this checkout.
 remove_own_link() {
   local name="$1" link_target
   if [[ -L "$BIN_DIR/$name" ]]; then
@@ -248,9 +216,6 @@ link_cli() {
     die "$BIN_DIR/mousectrl exists and is not a symlink; move it aside first"
   fi
   "$LN" -sfn "$REPO_DIR/bin/mousectrl" "$BIN_DIR/mousectrl"
-  if [[ -L "$BIN_DIR/hskctl" ]]; then
-    remove_own_link hskctl
-  fi
   case ":$USER_PATH:" in
     *":$BIN_DIR:"*) ;;
     *) warn "$BIN_DIR is not on your PATH" ;;
@@ -308,7 +273,6 @@ uninstall() {
   # Omarchy's own plugin manager, which removes it.
   local link_target
   remove_own_link mousectrl
-  remove_own_link hskctl
 
   if [[ -L "$PLUGIN_DIR" ]]; then
     link_target=$(readlink -- "$PLUGIN_DIR" || true)

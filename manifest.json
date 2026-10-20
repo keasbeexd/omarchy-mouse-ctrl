@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "keasbeexd.mousectrl",
   "name": "Mouse CTRL",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "author": "Marc Ferro @keasbeexd",
   "license": "MIT",
-  "description": "Battery, DPI stages, LED colors, polling rate and sensor settings for G-Wolves and Pulsar mice, with a guided setup; a read-only view for other mice.",
+  "description": "Battery, DPI stages, LED colors, polling rate and sensor settings for G-Wolves and Pulsar mice, with a guided in-panel setup; libratbag mice and any other mouse get a read-only view.",
   "kinds": [
     "bar-widget"
   ],

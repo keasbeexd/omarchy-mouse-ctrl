@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -13,6 +14,23 @@ Panel {
   id: root
   moduleName: "keasbeexd.mousectrl"
   ipcTarget: "keasbeexd.mousectrl"
+  // This panel owns the one IpcHandler the target allows, to add `setup`.
+  manageIpc: false
+
+  // Parameterless only: opening the panel or its setup changes nothing.
+  // `omarchy-shell keasbeexd.mousectrl setup` can sit behind a keybinding.
+  IpcHandler {
+    target: root.ipcTarget
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function setup(): void {
+      root.open()
+      root.openWizard(backend.selectedKey)
+    }
+  }
 
   // Every color comes from the active Omarchy theme. Secondary text is
   // Qt.darker(foreground), matching the first-party panels.
