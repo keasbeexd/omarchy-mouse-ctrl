@@ -1,10 +1,10 @@
-# G-Wolves HSK Pro 4K — profile provenance
+# G-Wolves HSK Pro 4K — protocol provenance
 
-Notes for contributors on `profiles/gwolves-hsk-pro-4k.json`. The profile
-carries the bytes and their one-line caveats; the reasoning lives here.
-For how the protocol itself was decoded, see
-docs/contributor/PROTOCOL-DISCOVERY.md (contributor material; repo history).
-G-Wolves material (repo history / contributor docs).
+Evidence behind `mousectrl/families/gwolves_hts.py` (v4) and every
+verification flag in it. v3's `profiles/gwolves-hsk-pro-4k.json` carried the
+same protocol as data; it is kept in git history and
+`docs/contributor/families/gwolves-hsk-pro-4k.json` until v3 is removed.
+For how the protocol was decoded, see docs/contributor/PROTOCOL-DISCOVERY.md.
 
 ## Source
 
@@ -119,6 +119,22 @@ different label, presumably "off". The slider's Maximum is not in
 `Sleep_update_ui`, so the profile's max is deliberately generous — a value
 the firmware rejects fails `set`'s read-back and is reported, rather than
 landing somewhere unexpected.
+
+## v4 driver findings (2026-10-19, dongle, firmware 1.0.7)
+
+- **Reply byte 1 = `0xA0` means the receiver answered without the mouse.**
+  With the mouse asleep, a read on the dongle flag returned `a0` and an
+  all-zero payload (the cable flag returned `a1`, all-zero); moving the
+  mouse turned it into `a1` with data. The driver reports this as "the
+  mouse is not linked" instead of a generic failure.
+- **The DPI read's length byte is `0x33` (51), not the `0x39` sent.** The
+  driver checks the ACK and the echoed opcode, never the length.
+- **Stage count writes round-trip.** 7 → 6 → 7 read back each step; while at
+  6 the block listed six stages, and stage 7's value and color were intact
+  after returning to 7 — the firmware keeps a dropped stage in memory.
+- **Every writable capability round-tripped through `mousectrl write`:**
+  polling 1000 → 2000 → 1000, motion sync on → off → on, stage 1 color
+  red → white → red (the whole block identical afterwards).
 
 ## Factory reset
 
