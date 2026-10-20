@@ -6,7 +6,7 @@ import "Model.js" as Model
 // The DPI section: stage chips, then the selected stage's DPI and LED
 // color. Clicking a chip selects it for editing, and also makes it the live
 // stage on mice whose driver allows switching (cap.switchable). The live
-// stage is filled; the selected one is outlined.
+// stage is filled; the selected one is bordered.
 Column {
   id: root
 
@@ -17,6 +17,9 @@ Column {
   // Which of this section's rows holds the panel cursor:
   // "" | "stages" | "stageDpi" | "stageColor"
   property string cursorRow: ""
+  // The settings grid, shared with SettingRow so these rows line up with it.
+  property real labelWidth: width * 0.4
+  property real unitWidth: Style.space(28)
   property color foreground
   property color accent
   property color fill
@@ -31,8 +34,12 @@ Column {
   readonly property int active: value ? value.active : -1
   readonly property var selectedStage: selectedIndex >= 0 && selectedIndex < stages.length ? stages[selectedIndex] : null
   readonly property color dim: Qt.darker(foreground, 1.4)
+  // CursorSurface paints only the cursor, never raw hover, so the item under
+  // the mouse is tracked here and given the cursor; -1 means none.
+  property int hoveredChip: -1
+  property int hoveredSwatch: -1
 
-  spacing: Style.space(10)
+  spacing: Style.space(6)
   opacity: busy ? 0.7 : 1.0
 
   function pick(index) {
@@ -102,8 +109,8 @@ Column {
         width: (chips.width - chips.spacing * (chips.columns - 1)) / chips.columns
         implicitHeight: Style.space(28)
         current: isLive
-        outline: isSelected
-        hasCursor: root.cursorRow === "stages" && isSelected
+        bordered: isSelected
+        hasCursor: root.hoveredChip === index || (root.hoveredChip < 0 && root.cursorRow === "stages" && isSelected)
         foreground: root.foreground
         fill: root.fill
         currentFill: root.currentFill
@@ -139,7 +146,14 @@ Column {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onContainsMouseChanged: if (containsMouse) root.rowHovered("stages")
+          onContainsMouseChanged: {
+            if (containsMouse) {
+              root.hoveredChip = chip.index
+              root.rowHovered("stages")
+            } else if (root.hoveredChip === chip.index) {
+              root.hoveredChip = -1
+            }
+          }
           onClicked: root.pick(chip.index)
         }
 
@@ -152,16 +166,15 @@ Column {
     }
   }
 
-  // ---------- the selected stage ----------
+  // ---------- the selected stage, on the settings grid ----------
   Item {
     visible: root.cap.writable && root.selectedStage !== null
     width: parent.width
-    implicitHeight: dpiField.implicitHeight
+    implicitHeight: Style.spacing.controlHeight + Style.space(2)
 
     Text {
       textFormat: Text.PlainText
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(8)
+      x: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       text: "Stage " + (root.selectedIndex + 1)
       color: root.foreground
@@ -169,46 +182,45 @@ Column {
       font.pixelSize: Style.font.body
     }
 
-    Row {
+    NumberField {
+      id: dpiField
+      x: root.labelWidth
+      anchors.verticalCenter: parent.verticalCenter
+      fieldWidth: root.width - root.labelWidth - Style.space(8) - root.unitWidth
+      value: root.selectedStage ? root.selectedStage.dpi : 0
+      from: root.cap.minimum !== null ? root.cap.minimum : 0
+      to: root.cap.maximum !== null ? root.cap.maximum : 100000
+      stepSize: root.cap.step
+      hasCursor: root.cursorRow === "stageDpi"
+      foreground: root.foreground
+      accent: root.accent
+      fontFamily: root.fontFamily
+      onHovered: function(on) { if (on) root.rowHovered("stageDpi") }
+      onModified: function(v) { dpiDebounce.target = v; dpiDebounce.restart() }
+    }
+
+    Text {
+      textFormat: Text.PlainText
       anchors.right: parent.right
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(8)
-
-      NumberField {
-        id: dpiField
-        value: root.selectedStage ? root.selectedStage.dpi : 0
-        from: root.cap.minimum !== null ? root.cap.minimum : 0
-        to: root.cap.maximum !== null ? root.cap.maximum : 100000
-        stepSize: root.cap.step
-        hasCursor: root.cursorRow === "stageDpi"
-        foreground: root.foreground
-        accent: root.accent
-        fontFamily: root.fontFamily
-        onHovered: function(on) { if (on) root.rowHovered("stageDpi") }
-        onModified: function(v) { dpiDebounce.target = v; dpiDebounce.restart() }
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        anchors.verticalCenter: parent.verticalCenter
-        text: "DPI"
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-      }
+      width: root.unitWidth
+      horizontalAlignment: Text.AlignRight
+      text: "DPI"
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
     }
   }
 
   Item {
     visible: root.cap.writable && root.cap.hasColors && root.selectedStage !== null
     width: parent.width
-    implicitHeight: swatches.implicitHeight
+    implicitHeight: Style.spacing.controlHeight + Style.space(2)
 
     Text {
       textFormat: Text.PlainText
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(8)
+      x: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       text: "LED"
       color: root.foreground
@@ -216,11 +228,13 @@ Column {
       font.pixelSize: Style.font.body
     }
 
+    // Spread across the control column, so its edges match the rows below.
     Row {
       id: swatches
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(4)
-      spacing: Style.space(4)
+      x: root.labelWidth
+      width: root.width - root.labelWidth - Style.space(8)
+      height: parent.height
+      spacing: Style.space(3)
 
       Repeater {
         model: Model.STAGE_COLORS
@@ -231,10 +245,10 @@ Column {
           required property int index
           readonly property bool isCurrent: root.selectedStage !== null && root.selectedStage.color === modelData
 
-          width: Style.space(28)
-          height: Style.space(28)
-          outline: isCurrent
-          hasCursor: root.cursorRow === "stageColor" && isCurrent
+          width: (swatches.width - swatches.spacing * (Model.STAGE_COLORS.length - 1)) / Model.STAGE_COLORS.length
+          height: parent.height
+          bordered: isCurrent
+          hasCursor: root.hoveredSwatch === index || (root.hoveredSwatch < 0 && root.cursorRow === "stageColor" && isCurrent)
           foreground: root.foreground
           fill: root.fill
           currentFill: root.currentFill
@@ -252,7 +266,14 @@ Column {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) root.rowHovered("stageColor")
+            onContainsMouseChanged: {
+              if (containsMouse) {
+                root.hoveredSwatch = swatch.index
+                root.rowHovered("stageColor")
+              } else if (root.hoveredSwatch === swatch.index) {
+                root.hoveredSwatch = -1
+              }
+            }
             onClicked: root.setColor(swatch.modelData)
           }
         }

@@ -26,6 +26,10 @@ Panel {
   readonly property var caps: backend.capabilities
   readonly property var stagesCap: Model.firstOfKind(caps, "dpiStages")
   readonly property bool ready: backend.status === "ready"
+  // The settings grid every row shares: label column, then controls, with a
+  // fixed slot for units at the right edge.
+  readonly property real labelWidth: column.width * 0.4
+  readonly property real unitWidth: Style.space(28)
 
   // --- keyboard cursor -----------------------------------------------------
 
@@ -226,7 +230,7 @@ Panel {
         Column {
           id: column
           width: flick.width
-          spacing: Style.space(14)
+          spacing: Style.space(10)
 
           // ---------- hero: which mouse, and its battery ----------
           Column {
@@ -421,6 +425,8 @@ Panel {
             fill: root.hoverFill
             currentFill: root.selectedFill
             fontFamily: root.fontFamily
+            labelWidth: root.labelWidth
+            unitWidth: root.unitWidth
             onSelected: function(index) { root.selectStage(index) }
             onWriteRequested: function(value) { backend.write(root.stagesCap.id, value) }
             onRowHovered: function(row) { root.hoverRow(row, root.stagesCap.id) }
@@ -435,14 +441,15 @@ Panel {
               id: section
               required property var modelData
               width: column.width
-              spacing: Style.space(2)
+              spacing: 0
 
               PanelSeparator {
                 foreground: root.foreground
               }
 
               PanelSectionHeader {
-                topPadding: Style.space(8)
+                topPadding: Style.space(6)
+                bottomPadding: Style.space(4)
                 text: section.modelData.title
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -460,8 +467,9 @@ Panel {
                   hasCursor: root.rowHasCursor("setting", modelData.id)
                   foreground: root.foreground
                   accent: root.accent
-                  fill: root.hoverFill
                   fontFamily: root.fontFamily
+                  labelWidth: root.labelWidth
+                  unitWidth: root.unitWidth
                   onChangeRequested: function(value) { backend.write(modelData.id, value) }
                   onRowHovered: root.hoverRow("setting", modelData.id)
                   onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
@@ -479,6 +487,17 @@ Panel {
             topPadding: Style.space(4)
             wrapMode: Text.WordWrap
             text: facts
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.rows.length > 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "j/k move  ·  h/l adjust  ·  enter select  ·  r refresh"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
