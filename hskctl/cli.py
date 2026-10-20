@@ -18,9 +18,11 @@ import time
 from typing import Any
 
 from . import __version__
+from . import sweep
 from .device import (
     DeviceBusy,
     DeviceNotFound,
+    _bare_profile,
     detect_profile,
     device_lock,
     open_session,
@@ -161,6 +163,96 @@ def _print_candidate_scores(candidates: list[dict]) -> None:
         for reason in c["reasons"]:
             print(f"    · {reason}")
         print()
+
+
+def cmd_sweep(args) -> int:
+    """Tier 2, step 1: a consented, read-only opcode sweep of the node.
+
+    No transport family is assumed anywhere in this command -- it exists
+    precisely for mice no snapshot covers. The wizard integrates it; the
+    CLI form exists so a contributor (or the panel's terminal) can run
+    the observation step on its own and read the raw evidence.
+    """
+    device_pick = getattr(args, "device", None)
+    target = None
+    if device_pick:
+        target = device_pick if device_pick.startswith("/dev/") else f"/dev/{device_pick}"
+    else:
+        candidates = rank_candidates(_bare_profile())
+        if candidates:
+            target = candidates[0].info.path
+
+    if target is None:
+        sysfs = sysfs_hid_devices()
+        if sysfs:
+            # No openable config-endpoint-shaped node; the sysfs survey is
+            # the last look (its first node may not be a mouse at all --
+            # the consent prompt and the raw output make that kind of
+            # miss legible instead of hiding it).
+            target = sorted(sysfs, key=lambda d: d["node"])[0]["node"]
+
+    if target is None:
+        return _fail("no hidraw node found on this machine", args.json)
+
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if not (interactive or args.yes):
+        return _fail(
+            "the sweep sends vendor-shaped packets to the node and needs "
+            "consent first -- run it interactively, or re-run with --yes",
+            args.json,
+        )
+
+    if not args.yes:
+        attempt_count = (
+            (sweep.READ_OPCODE_HI - sweep.READ_OPCODE_LO + 1)
+            * len(sweep.FLAG_GUESSES)
+        )
+        print(f"sweeping {target} with read-only vendor-shaped packets.")
+        print(f"  at most {attempt_count} packets, one every "
+              f"{sweep.SETTLE_SECONDS * 1000:.0f} ms; nothing is written,")
+        print("  and every opcode carries the read bit -- writes belong to "
+              "the verification round only.")
+        print("  a wedged mouse always recovers with a cable replug.")
+        try:
+            answer = input("sweep this node? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            print("\ncancelled.")
+            return 0
+        if answer.strip().lower() not in ("y", "yes"):
+            print("cancelled.")
+            return 0
+
+    try:
+        payload = sweep.sweep_node(target)
+    except PermissionError:
+        return _fail(
+            f"{target} is not openable -- the udev rules do not reach it yet. "
+            "The guided setup (hskctl create-profile) is the flow that "
+            "names this device in a rule file.",
+            args.json,
+        )
+    except (DeviceBusy, DeviceNotFound, OSError) as exc:
+        return _fail(f"could not sweep {target}: {exc}", args.json)
+
+    def human(p):
+        print(f"node          : {p['node']}")
+        print(f"packets sent  : {p['packetsSent']} (reads only)")
+        if not p["answers"]:
+            print("no opcode answered with data in the swept range.")
+            print(p["hypotheses"].get("note", ""))
+            return
+        print(f"answering opcodes ({len(p['answers'])}):\n")
+        for a in p["answers"]:
+            print(f"  {a['opcode']}  flag {a['flag']}  trueLen {a['trueLength']:2d}"
+                  f"  head: {a['head']}"
+                  + (f"  ({a['wakeNote']})" if a.get("wakeNote") else ""))
+        hyp = p["hypotheses"]
+        notes = hyp.get("_note")
+        if notes:
+            print(f"\nhypotheses (to be confirmed by the diff rounds):")
+            print(f"  · {notes}")
+
+    return _emit(payload, args.json, human)
 
 
 # --- status -----------------------------------------------------------------
@@ -2426,6 +2518,19 @@ def build_parser() -> argparse.ArgumentParser:
              "identity confirmation",
     )
     setup.set_defaults(func=cmd_create_profile)
+    sweep_args = sub.add_parser(
+        "sweep",
+        help="Tier 2 discovery: consented, read-only opcode sweep of a "
+             "config-endpoint node (no profile needed; writes nothing)",
+    )
+    sweep_args.add_argument(
+        "--device", help="hidraw node to sweep (default: the top generic candidate)",
+    )
+    sweep_args.add_argument(
+        "--yes", action="store_true",
+        help="skip the consent prompt (the panel's terminal keeps its TTY)",
+    )
+    sweep_args.set_defaults(func=cmd_sweep)
     sub.add_parser(
         "udev-rule",
         help="print the udev rule file this machine needs "
