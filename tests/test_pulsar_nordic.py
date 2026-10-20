@@ -154,6 +154,9 @@ class PulsarNordicTest(unittest.TestCase):
         four_k = {c.id: c for c in self.driver.capabilities()}
         self.assertIn(4000, four_k["pollingRate"].options)
 
+    def test_profile_covers_cable_and_both_receivers(self):
+        self.assertEqual(PulsarNordic.profile_products(self.fp), (0xF507, 0xF508, 0xF509))
+
     def test_dpi_codec(self):
         for dpi in (50, 400, 3200, 12800, 12850, 26000):
             self.assertEqual(decode_dpi(encode_dpi(dpi)), dpi)

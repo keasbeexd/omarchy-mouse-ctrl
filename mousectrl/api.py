@@ -16,15 +16,39 @@ from typing import Any, Callable
 
 from . import fingerprint, profiles, registry, udev
 from .errors import (
-    DeviceNotFound, InvalidValue, NoAccess, ProtocolFailure, Unsupported, WriteRefused,
+    DeviceNotFound, InvalidValue, MouseCtrlError, NoAccess, ProtocolFailure, Unsupported,
+    WriteRefused,
 )
 from .families import FAMILIES
-from .families.base import Capability, Driver, validate_value
+from .families.base import VERIFIED, Capability, Driver, validate_value
 from .fingerprint import Fingerprint
 from .lock import device_lock
 
 _VIDPID_RE = re.compile(r"^([0-9a-f]{4}):([0-9a-f]{4})$")
 _MAX_EXTRA_PAIRS = 8
+_MAX_PROFILE_CAPS = 64
+
+
+def nearby_value(cap: Capability, current: Any) -> Any:
+    """A value one step from `current`, for a write test that then restores.
+
+    Small on purpose: the test proves the write path, it does not explore.
+    """
+    if cap.kind == "toggle":
+        return not current
+    if cap.kind == "enum":
+        options = list(cap.options)
+        i = options.index(current) if current in options else -1
+        return options[i + 1] if i + 1 < len(options) else options[i - 1]
+    step = cap.step or 1
+    if cap.kind == "duration":
+        return current + step if current + step <= cap.maximum else current - step
+    if cap.kind == "dpiStages":
+        stages = [dict(s) for s in current["stages"]]
+        dpi = stages[0]["dpi"]
+        stages[0]["dpi"] = dpi + step if dpi + step <= cap.maximum else dpi - step
+        return {"active": current["active"], "stages": stages}
+    raise InvalidValue(f"{cap.id}: a {cap.kind} cannot be write-tested")
 
 
 class Api:
@@ -44,6 +68,9 @@ class Api:
         self._lock = lock
         self._drivers: dict[str, Driver] = {}
         self._caps: dict[str, dict[str, Capability]] = {}
+        # Device key -> capability ids whose write test passed in this
+        # process. save_profile accepts "tested" only for these.
+        self._tested: dict[str, set[str]] = {}
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -201,6 +228,94 @@ class Api:
 
         return {"ok": True, "device": fp.key, "capability": capability,
                 "value": self._on_device(fp, do_write)}
+
+    def test_write(self, key: str, capability: str) -> dict:
+        """Write a nearby value, read it back, restore the original.
+
+        Used by the wizard for capabilities the driver marks untested; needs
+        no profile, because it is how a profile's "tested" state is earned.
+        The original is restored even when the test write fails.
+        """
+        fp = self._resolve(key)
+
+        def run(driver: Driver) -> dict:
+            caps = self._capabilities(fp, driver)
+            cap = caps.get(capability)
+            if cap is None:
+                raise InvalidValue(f"{fp.name} has no capability {capability!r}")
+            if not cap.writable_by_driver:
+                raise InvalidValue(f"{capability} is read-only")
+            original = driver.read(capability)
+            probe = validate_value(cap, nearby_value(cap, original))
+            try:
+                seen = driver.write(capability, probe)
+            finally:
+                try:
+                    restored = driver.write(capability, original)
+                except (MouseCtrlError, OSError) as exc:
+                    raise ProtocolFailure(
+                        f"{capability}: could not restore the original value "
+                        f"{original!r} after the test: {exc}"
+                    ) from exc
+            passed = seen == probe and restored == original
+            if passed:
+                self._tested.setdefault(fp.key, set()).add(capability)
+            return {"ok": True, "device": fp.key, "capability": capability, "passed": passed,
+                    "original": original, "wrote": probe, "readBack": seen, "restored": restored}
+
+        return self._on_device(fp, run)
+
+    def save_profile(self, key: str, name: Any, capabilities: Any) -> dict:
+        """Write the wizard's outcome as a profile for this mouse.
+
+        Server-side checks keep the panel honest: "verified" only for what
+        the driver marks verified, "tested" only for what passed a write test
+        in this process. A mouse with an existing profile keeps its id, so a
+        re-run replaces it.
+        """
+        if not isinstance(name, str):
+            raise InvalidValue("name must be a string")
+        if not isinstance(capabilities, dict) or len(capabilities) > _MAX_PROFILE_CAPS:
+            raise InvalidValue(f"capabilities must be an object of at most {_MAX_PROFILE_CAPS}")
+        fp = self._resolve(key)
+        family = registry.driver_for(fp, self._families)
+        states: dict[str, profiles.CapabilityState] = {}
+        if family is None:
+            if capabilities:
+                raise InvalidValue(f"{fp.name} has no capabilities to save")
+        else:
+            available = self._on_device(fp, lambda d: self._capabilities(fp, d))
+            tested = self._tested.get(fp.key, set())
+            for cap_id, entry in capabilities.items():
+                cap = available.get(cap_id)
+                if cap is None or not isinstance(entry, dict):
+                    raise InvalidValue(f"{fp.name} has no capability {cap_id!r}")
+                state, visible = entry.get("state"), entry.get("visible", True)
+                if state not in profiles.STATES or not isinstance(visible, bool):
+                    raise InvalidValue(f"{cap_id}: bad state or visibility")
+                if state == "verified" and cap.verification != VERIFIED:
+                    raise InvalidValue(f"{cap_id} is untested in the driver; it can only be 'tested'")
+                if state == "tested" and cap_id not in tested:
+                    raise InvalidValue(f"{cap_id} has not passed a write test")
+                states[cap_id] = profiles.CapabilityState(state, visible)
+        loaded, _problems = profiles.load_all(self._profile_dir)
+        existing = profiles.find(loaded, fp)
+        products = family.profile_products(fp) if family else (fp.product_id,)
+        profile = profiles.Profile(
+            id=existing.id if existing else profiles.unique_id(name, {p.id for p in loaded}),
+            name=name.strip(),
+            backend=f"family:{family.family}" if family else profiles.GENERIC_BACKEND,
+            vendor_id=f"{fp.vendor_id:04x}",
+            product_ids=tuple(f"{p:04x}" for p in products),
+            capabilities=states,
+        )
+        path = profiles.save(profile, self._profile_dir)
+        return {"ok": True, "device": fp.key, "profile": profile.as_dict(), "path": path}
+
+    def delete_profile(self, profile_id: Any) -> dict:
+        if not isinstance(profile_id, str):
+            raise InvalidValue("profile must be a string id")
+        return {"ok": True, "deleted": profiles.delete(profile_id, self._profile_dir)}
 
     def udev_rule(self, extra: list[str] | None = None) -> dict:
         """The rule file this machine needs; answers without touching any device."""

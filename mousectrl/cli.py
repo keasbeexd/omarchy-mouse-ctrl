@@ -55,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("capability")
     write.add_argument("value", help="JSON value, e.g. true, 4000 or '{\"active\": 1, ...}'")
 
+    test = sub.add_parser("test-write", help="write a nearby value, read it back, restore the original")
+    test.add_argument("device")
+    test.add_argument("capability")
+
     rule = sub.add_parser("udev-rule", help="print the udev rule file this machine needs")
     rule.add_argument("--json", action="store_true")
     rule.add_argument("--extra", action="append", default=[], metavar="VID:PID",
@@ -80,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(api.read(args.device, args.capability))
         elif args.command == "write":
             _print_json(api.write(args.device, args.capability, _parse_value(args.value)))
+        elif args.command == "test-write":
+            _print_json(api.test_write(args.device, args.capability))
         elif args.command == "udev-rule":
             payload = api.udev_rule(args.extra)
             _print_json(payload) if args.json else sys.stdout.write(payload["text"])

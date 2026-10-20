@@ -11,6 +11,9 @@ Commands:
   capabilities  {device}
   read          {device, capability?}
   write         {device, capability, value}
+  test-write    {device, capability}
+  save-profile  {device, name, capabilities: {id: {state, visible}}}
+  delete-profile {profile}
   udev-rule     {extra?: ["vvvv:pppp", ...]}
 
 Requests are handled strictly in arrival order. Stdin closing ends the
@@ -61,6 +64,8 @@ class Server:
             return self._api.devices()
         if cmd == "udev-rule":
             return self._api.udev_rule(req.get("extra"))
+        if cmd == "delete-profile":
+            return self._api.delete_profile(req.get("profile"))
         if not isinstance(device, str):
             return _error("badRequest", f"{cmd!r} needs a device key")
         if cmd == "capabilities":
@@ -75,6 +80,13 @@ class Server:
             if not isinstance(capability, str) or "value" not in req:
                 return _error("badRequest", "write needs capability and value")
             return self._api.write(device, capability, req["value"])
+        if cmd == "test-write":
+            capability = req.get("capability")
+            if not isinstance(capability, str):
+                return _error("badRequest", "test-write needs a capability")
+            return self._api.test_write(device, capability)
+        if cmd == "save-profile":
+            return self._api.save_profile(device, req.get("name"), req.get("capabilities", {}))
         return _error("badRequest", f"unknown command {cmd!r}")
 
     def handle_line(self, line: bytes) -> dict:

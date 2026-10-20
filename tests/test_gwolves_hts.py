@@ -176,6 +176,9 @@ class GWolvesHtsTest(unittest.TestCase):
         with self.assertRaises(ProtocolFailure):
             self.driver.read("pollingRate")
 
+    def test_profile_covers_the_dongle_and_cable_pair(self):
+        self.assertEqual(GWolvesHts.profile_products(self.fp), (0x5807, 0x5808))
+
     def test_curved_battery_products(self):
         self.assertEqual(curved_battery_percent(40), 20)
         self.assertEqual(curved_battery_percent(70), 45)

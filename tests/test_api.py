@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from fakes import FakeDriver, FakeSysfs
 
@@ -163,3 +164,84 @@ class ServerTest(ApiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWriteTest(ApiTestCase):
+    def test_untested_capability_passes_and_is_restored(self):
+        result = self.api.test_write(KEY, "motionSync")
+        self.assertTrue(result["passed"])
+        self.assertIs(result["wrote"], False)
+        self.assertIs(FakeDriver.values["motionSync"], True)
+
+    def test_readback_mismatch_fails_without_recording(self):
+        FakeDriver.readback_override = {"motionSync": True}
+        self.assertFalse(self.api.test_write(KEY, "motionSync")["passed"])
+        with self.assertRaisesRegex(InvalidValue, "not passed a write test"):
+            self.api.save_profile(KEY, "HSK", {"motionSync": {"state": "tested"}})
+
+    def test_failed_restore_names_the_original(self):
+        calls = []
+
+        def write(driver, capability_id, value):
+            calls.append(value)
+            if len(calls) == 2:
+                raise ProtocolFailure("no ack")
+            return value
+
+        with mock.patch.object(FakeDriver, "write", write):
+            with self.assertRaisesRegex(ProtocolFailure, "could not restore the original value True"):
+                self.api.test_write(KEY, "motionSync")
+
+    def test_dpi_stages_nudge_stage_one(self):
+        result = self.api.test_write(KEY, "dpi")
+        self.assertEqual(result["wrote"]["stages"][0]["dpi"], 850)
+        self.assertEqual(FakeDriver.values["dpi"], STAGES)
+
+    def test_read_only_capability_is_refused(self):
+        with self.assertRaisesRegex(InvalidValue, "read-only"):
+            self.api.test_write(KEY, "battery")
+
+
+class SaveProfileTest(ApiTestCase):
+    def test_tested_state_needs_a_passed_test(self):
+        with self.assertRaisesRegex(InvalidValue, "not passed"):
+            self.api.save_profile(KEY, "HSK", {"motionSync": {"state": "tested"}})
+        self.api.test_write(KEY, "motionSync")
+        saved = self.api.save_profile(KEY, "HSK", {"motionSync": {"state": "tested"}})
+        self.assertEqual(saved["profile"]["capabilities"]["motionSync"]["state"], "tested")
+
+    def test_verified_state_needs_a_verified_driver_capability(self):
+        with self.assertRaisesRegex(InvalidValue, "untested in the driver"):
+            self.api.save_profile(KEY, "HSK", {"motionSync": {"state": "verified"}})
+        self.api.save_profile(KEY, "HSK", {"pollingRate": {"state": "verified"}})
+
+    def test_profile_covers_the_drivers_products_and_rerun_keeps_the_id(self):
+        first = self.api.save_profile(KEY, "My HSK", {"pollingRate": {"state": "verified"}})
+        self.assertEqual(first["profile"]["id"], "my-hsk")
+        self.assertEqual(first["profile"]["match"], {"vendorId": "33e4", "productIds": ["5807"]})
+        second = self.api.save_profile(KEY, "Renamed", {})
+        self.assertEqual(second["profile"]["id"], "my-hsk")
+        self.assertEqual(second["profile"]["name"], "Renamed")
+        self.assertEqual(self.api.devices()["devices"][0]["profile"]["name"], "Renamed")
+
+    def test_unknown_mouse_saves_a_generic_profile(self):
+        api = Api(families=(), scan=self.api._scan, profile_dir=self.profile_dir,
+                  lock=contextlib.nullcontext)
+        saved = api.save_profile(KEY, "Mystery", {})
+        self.assertEqual(saved["profile"]["backend"], "generic")
+        with self.assertRaisesRegex(InvalidValue, "no capabilities"):
+            api.save_profile(KEY, "Mystery", {"pollingRate": {"state": "verified"}})
+
+    def test_bad_input_is_refused(self):
+        for name, caps in ((7, {}), ("ok", []), ("ok", {"nope": {"state": "verified"}}),
+                           ("ok", {"pollingRate": {"state": "verified", "visible": "yes"}}),
+                           ("\x1b", {})):
+            with self.subTest(name=name, caps=caps), self.assertRaises((InvalidValue, profiles.ProfileError)):
+                self.api.save_profile(KEY, name, caps)
+
+    def test_delete_profile(self):
+        self.api.save_profile(KEY, "HSK", {})
+        self.assertTrue(self.api.delete_profile("hsk")["deleted"])
+        self.assertFalse(self.api.delete_profile("hsk")["deleted"])
+        with self.assertRaises(profiles.ProfileError):
+            self.api.delete_profile("../etc")

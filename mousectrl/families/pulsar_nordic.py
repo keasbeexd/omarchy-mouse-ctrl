@@ -154,6 +154,14 @@ class PulsarNordic(Driver):
             and config_node(fingerprint) is not None
         )
 
+    @classmethod
+    def profile_products(cls, fingerprint: Fingerprint) -> tuple[int, ...]:
+        """The cable and both receivers reach the same mouse; the Cfg.ini
+        alternate ids (25a7) stay on their own."""
+        if fingerprint.product_id in CONNECTION_BY_PRODUCT:
+            return tuple(sorted(CONNECTION_BY_PRODUCT))
+        return (fingerprint.product_id,)
+
     def close(self) -> None:
         self._device.close()
 

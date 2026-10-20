@@ -156,6 +156,15 @@ class GWolvesHts(Driver):
             and config_node(fingerprint) is not None
         )
 
+    @classmethod
+    def profile_products(cls, fingerprint: Fingerprint) -> tuple[int, ...]:
+        """A model's ids come in dongle/cable pairs, odd then even (5807
+        receiver, 5808 cable -- seen on hardware; the other pairs in
+        hts_init's table follow the same pattern)."""
+        pid = fingerprint.product_id
+        partner = pid + 1 if pid % 2 else pid - 1
+        return tuple(sorted({pid, partner} & PRODUCT_IDS)) or (pid,)
+
     def close(self) -> None:
         self._device.close()
 
