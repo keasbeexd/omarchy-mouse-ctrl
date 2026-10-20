@@ -247,45 +247,110 @@ def cmd_sweep(args) -> int:
                 args.json,
             )
         windows = sweep.payload_windows(p["answers"])
-        print(f"\n{len(p['answers'])} live opcodes to watch. Each round: "
-              "a snapshot first, then you act, then the moving bytes get "
-              "named. Enter alone at the prompt skips the round -- a "
-              "mouse with no buttons for these things still has the "
-              "replug and vendor-app rounds.")
+        survey = {d["node"]: d for d in sysfs_hid_devices()}
+        origin = survey.get(target)
+        vid, pid = (origin["vid"], origin["pid"]) if origin else (None, None)
+
+        def replug_wait() -> str | None:
+            """The node is gone (unplugged); wait for the same VID:PID.
+
+            A replugged receiver can come back under a new number, so
+            identity is the vendor/product pair, not the path. Bounded:
+            ~45 s, then the round reports honestly.
+            """
+            nonlocal target
+            if not vid or not pid:
+                return None
+            print(f"  the node vanished mid-round ({vid}:{pid}); waiting "
+                  "for it to come back", end="", flush=True)
+            for _ in range(90):
+                same = [
+                    d["node"] for d in sysfs_hid_devices()
+                    if d["vid"] == vid and d["pid"] == pid
+                ]
+                if target in same:
+                    print(" -- back.")
+                    return target
+                if same:
+                    found = sorted(same)[0]
+                    print(f" -- back, as {found}; the rounds follow it.")
+                    target = found
+                    return found
+                time.sleep(0.5)
+                print(".", end="", flush=True)
+            print(" -- did not return within 45 s; round ends here.")
+            return None
+
+        def round_read() -> dict[str, bytes] | None:
+            """One read round that survives the device leaving mid-read;
+            every successful pass lands in the packet ledger."""
+            try:
+                out = sweep.read_round(target, p["answers"])
+            except (DeviceNotFound, OSError) as exc:
+                print(f"  node dropped during the round ({exc}).")
+                if replug_wait() is None:
+                    return None
+                try:
+                    out = sweep.read_round(target, p["answers"])
+                except (DeviceNotFound, OSError) as exc2:
+                    print(f"  node still unreachable ({exc2}).")
+                    return None
+            p["packetsSent"] += len(p["answers"])
+            return out
+
+        print(f"\n{len(p['answers'])} live opcodes to watch. Every round: "
+              "snapshot first, then you act, then the moving bytes get "
+              "named. Not every round fits every mouse -- 'skip' opt-out.")
         round_specs = [
             ("dpi-button",
-             "press your mouse's DPI button 3 times -- slowly, while it "
-             "reads -- then press ENTER here"),
+             "plan: press the DPI button 3 times (only if your mouse has one)."),
             ("app-change",
-             "change any setting in whatever configurator you use for this "
-             "mouse (or skip) -- then press ENTER here"),
+             "plan: change any setting in a configurator you use (skip if "
+             "you have none)."),
             ("cable-replug",
-             "unplug and replug the cable -- or the receiver, if the mouse "
-             "is wireless -- then press ENTER here"),
+             "plan: unplug and replug the cable -- or the receiver, if the "
+             "mouse is wireless. Nothing to do until the snapshot line!)"),
         ]
         for label, prompt in round_specs:
             # The ask prints before the baseline read (a full pass over
             # the alive opcodes costs ~len*40 ms): the user finds the
             # button while it snapshots, and the read still predates any
-            # action. Skipping happens after the transport work, so the
-            # packet ledger owns those reads too.
+            # action.
             print(f"\n[{label}] {prompt}")
-            before = sweep.read_round(target, p["answers"])
-            p["packetsSent"] += len(p["answers"])
+            before = round_read()
+            if before is None:
+                rounds.append({"label": label, "changes": None})
+                continue
             try:
-                acted = input(f"[{label}] snapshot taken -- act now if you "
-                              "are doing this round, then press ENTER: ").strip()
-                if not acted:
+                acted = input(
+                    f"[{label}] snapshot taken -- do it now, then press "
+                    "ENTER (bare ENTER counts as done; 'skip' sits "
+                    "rounds out): "
+                ).strip().lower()
+                if acted in ("skip", "s", "n", "no"):
                     print("  skipped.")
                     continue
             except (EOFError, KeyboardInterrupt):
                 print("\nround skipped.")
                 continue
-            after = sweep.read_round(target, p["answers"])
-            p["packetsSent"] += len(p["answers"])
+            after = round_read()
+            if after is None:
+                rounds.append({"label": label, "changes": None})
+                continue
             changes = sweep.diff_maps(before, after, windows)
             trusted = [c for c in changes if c["trusted"]]
             rounds.append({"label": label, "changes": changes})
+            if not changes:
+                print("  this round moved no observed byte.")
+                continue
+            print(f"  {len(trusted)} in-payload byte(s) moved"
+                  + (f", {len(changes) - len(trusted)} beyond the declared "
+                      "length reported untrusted" if len(trusted) != len(changes)
+                      else "") + ":")
+            for c in changes:
+                mark = "  " if c["trusted"] else "?(untrusted)"
+                print(f"    {mark} {c['opcode']} byte {c['index']:2d}: "
+                      f"{c['from']:#04x} -> {c['to']:#04x}")
             if not changes:
                 print("  this round moved no observed byte.")
                 continue
