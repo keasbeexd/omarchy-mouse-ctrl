@@ -173,5 +173,25 @@ def save(profile: Profile, directory: str = PROFILE_DIR) -> str:
     return path
 
 
+def delete(profile_id: str, directory: str = PROFILE_DIR) -> bool:
+    """Remove a profile; False when there was none."""
+    if not _ID_RE.match(profile_id):
+        raise ProfileError(f"{profile_id!r} is not a profile id")
+    try:
+        os.remove(os.path.join(directory, f"{profile_id}.json"))
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def unique_id(name: str, taken: set[str]) -> str:
+    """A file-safe id from a display name, unique among `taken`."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:56] or "mouse"
+    candidate, n = base, 2
+    while candidate in taken:
+        candidate, n = f"{base}-{n}", n + 1
+    return candidate
+
+
 def find(profiles: list[Profile], fingerprint: Fingerprint) -> Profile | None:
     return next((p for p in profiles if p.matches(fingerprint)), None)

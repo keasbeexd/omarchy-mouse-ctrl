@@ -181,6 +181,15 @@ class Driver(ABC):
     def matches(cls, fingerprint: Fingerprint) -> bool:
         """True when this family speaks to this device. Must not touch the device."""
 
+    @classmethod
+    def profile_products(cls, fingerprint: Fingerprint) -> tuple[int, ...]:
+        """Product ids that are this same physical mouse (dongle, cable...).
+
+        A profile saved for the mouse covers all of them, so it applies
+        however the mouse is connected. Default: just the one seen.
+        """
+        return (fingerprint.product_id,)
+
     @abstractmethod
     def capabilities(self) -> list[Capability]:
         """What this mouse supports. May read from the device."""
