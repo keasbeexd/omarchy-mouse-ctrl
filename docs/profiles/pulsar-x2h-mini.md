@@ -53,7 +53,10 @@ reverse-engineering work.
 
 ## Identity, cable and dongle
 
-Cable and dongle were seen as `3554:f507` in v3. On 2026-10-19 the 4K
+In v3 both cable and dongle were recorded as `3554:f507`. On 2026-10-19 the
+X2H on its cable enumerated as `f507` ("Pulsar Mouse IR update") and read
+fully over it, and the driver reports `f507` as wired; v3's dongle-as-f507
+was likely older receiver firmware. On 2026-10-19 the 4K
 receiver enumerated as its own identity, `3554:f509` ("Pulsar 4K Wireless
 Receiver"), and **carried the full config protocol**: every read and write
 in the v4 driver was verified through it.

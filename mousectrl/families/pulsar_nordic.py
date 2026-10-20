@@ -30,6 +30,11 @@ PRODUCT_IDS = frozenset({0xF507, 0xF508, 0xF509, 0xFA7B, 0xFA7C})
 # The 1K receiver (seen 2026-10-19 as "Pulsar 1K dongle update"): same
 # config interface, but rates above 1000 Hz are not reachable through it.
 ONE_K_RECEIVER = 0xF508
+# The identity a mouse is reached through says how it is linked: the
+# receivers enumerate as f508 (1K) and f509 (4K), the X2H on its cable as
+# f507 (all seen 2026-10-19). v3 once recorded a dongle as f507 too, likely
+# older receiver firmware; ids not listed here report no connection.
+CONNECTION_BY_PRODUCT = {0xF507: "wired", 0xF508: "dongle", 0xF509: "dongle"}
 
 REPORT_ID = 0x08
 PACKET_LENGTH = 17
@@ -153,11 +158,14 @@ class PulsarNordic(Driver):
         self._device.close()
 
     def capabilities(self) -> list[Capability]:
-        if self.fingerprint.product_id != ONE_K_RECEIVER:
-            return list(CAPABILITIES)
-        one_k = Capability("pollingRate", "enum", "Polling rate", UNTESTED,
-                           options=(125, 250, 500, 1000), unit="Hz", group="performance")
-        return [one_k if c.id == "pollingRate" else c for c in CAPABILITIES]
+        caps = list(CAPABILITIES)
+        if self.fingerprint.product_id in CONNECTION_BY_PRODUCT:
+            caps.append(Capability("connection", "info", "Connection", VERIFIED))
+        if self.fingerprint.product_id == ONE_K_RECEIVER:
+            one_k = Capability("pollingRate", "enum", "Polling rate", UNTESTED,
+                               options=(125, 250, 500, 1000), unit="Hz", group="performance")
+            caps = [one_k if c.id == "pollingRate" else c for c in caps]
+        return caps
 
     # --- wire -------------------------------------------------------------
 
@@ -229,6 +237,7 @@ class PulsarNordic(Driver):
             "liftOff": lambda: self._read_choice(ADDR_LIFT_OFF, LIFT_OFF_MM),
             "sleepSeconds": lambda: self._get(ADDR_SLEEP)[0] * SLEEP_UNIT,
             "debounce": lambda: self._get(ADDR_DEBOUNCE)[0],
+            "connection": self._read_connection,
         }.get(capability_id)
         if reader is None:
             raise InvalidValue(f"unknown capability {capability_id!r}")
@@ -250,6 +259,12 @@ class PulsarNordic(Driver):
         else:
             raise InvalidValue(f"{capability_id} cannot be written")
         return self.read(capability_id)
+
+    def _read_connection(self) -> str:
+        connection = CONNECTION_BY_PRODUCT.get(self.fingerprint.product_id)
+        if connection is None:
+            raise InvalidValue(f"connection is not known for product {self.fingerprint.product_id:04x}")
+        return connection
 
     def _read_battery(self) -> dict:
         reply = self._exchange(self._packet(bytes([REPORT_ID, OP_BATTERY])))
