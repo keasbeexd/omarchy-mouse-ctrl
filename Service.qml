@@ -276,7 +276,11 @@ Item {
   // queues behind a real read or write -- this cycle is cheap to lose, and
   // the next one is batteryPollSec away.
   function pollBattery() {
-    if (suspended || state !== "ready") return
+    // Deliberately NOT gated on `ready`: a battery success while the panel
+    // believes the mouse unreachable is the cheap proof that the link is
+    // back (the RF link recovers on its own long before a wedged status
+    // read does; see applyBattery) and is what pulls a full refresh.
+    if (suspended) return
     if (_pendingHas("status") || _pendingHas("set") || _pendingHas("battery")) return
     if (Object.keys(_soon).length > 0) return
     _send("battery", { cmd: "battery" })
@@ -379,11 +383,23 @@ Item {
   function applyBattery(obj) {
     var parsed = Model.parseBattery(obj)
     if (!parsed.ok) return
+    var learned = false
+    for (var f in parsed.settings) { learned = true; break }
+    if (!learned) return
     var merged = {}
     for (var key in values) merged[key] = values[key]
     for (var field in parsed.settings) merged[field] = parsed.settings[field]
     values = merged
     changed()
+    // The poll is the panel's cheap probe too: while a full status read is
+    // still failing (e.g. a dongle whose config endpoint wedged across a
+    // suspend), the one-exchange battery read can succeed long before the
+    // whole status does -- the RF link is back. A battery success in a
+    // non-ready state is therefore worth a full refresh right now, rather
+    // than waiting batteryPollSec for the next hint. No ping-pong risk: in
+    // ready state this branch never fires, and a refresh that fails again
+    // does not consume anything the battery timer does not re-arm.
+    if (root.state !== "ready") root.refresh()
   }
 
   // Writes used to be serialized here by starting one hskctl process at a
@@ -529,7 +545,10 @@ Item {
     id: batteryTimer
     interval: root.batteryPollSec * 1000
     repeat: true
-    running: root.ready
+    // Runs whenever the serve process is alive, not only when `ready`: the
+    // poll is also the panel's recovery probe after a failed status (see
+    // pollBattery), and a dead loop must still tick to notice a wake.
+    running: root._serveUp
     triggeredOnStart: true
     onTriggered: root.pollBattery()
   }
