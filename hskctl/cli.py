@@ -168,12 +168,23 @@ def _status_payload(args, profile, session=None) -> dict:
     """
     if not profile.discovered:
         candidates = rank_candidates(profile)
+        detected = bool(candidates)
+        # The sysfs second look: a root-only node is invisible to
+        # describe()-based enumeration, so a plugged-in mouse with no udev
+        # grant yet scores no candidates and the card would say "mouse not
+        # detected" while it sits right there. The survey is
+        # permission-free and sees it; the card's copy stays honest --
+        # something HID-USB-shaped is present -- because the setup flow
+        # (and the wizard's own sysfs fallback) is exactly what handles
+        # it next.
+        if not detected:
+            detected = any(d["bus"] == "0003" for d in sysfs_hid_devices())
         return {
             "ok": False,
             "state": "undiscovered",
             "model": profile.model,
             "error": "Protocol not mapped yet for this device.",
-            "detected": bool(candidates),
+            "detected": detected,
             "candidatePath": candidates[0].info.path if candidates else None,
             "settings": {},
             "version": __version__,
