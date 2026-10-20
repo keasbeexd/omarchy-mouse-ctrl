@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import secrets
+import subprocess
 import sys
 import time
 from typing import Any
@@ -2036,6 +2037,12 @@ def cmd_remove_profile(args) -> int:
     except OSError as exc:
         return _fail(f"could not remove {candidate}: {exc}", args.json)
 
+    # The running serve holds the deleted profile in memory; the watchdog
+    # restarts every killed transport in ~2 s and the restarted ones see
+    # the profile is gone -- the setup card appears, as after a fresh
+    # install. Same mechanism the wizard uses after writing one.
+    _kill_panel_transports()
+
     payload = {
         "ok": True,
         "removed": candidate,
@@ -2051,8 +2058,27 @@ def cmd_remove_profile(args) -> int:
     def human(p):
         print(f"removed {p['removed']}")
         print(f"note: {p['udevNote']}")
+        print("panel: transports restart; the setup card appears unless a "
+              "profile still covers the mouse")
 
     return _emit(payload, args.json, human)
+
+
+# What the panel spawns for live values; removing a profile must end it too
+# (same rationale as the wizard's kill: a serve started under the deleted
+# profile keeps it in memory until it restarts, and the setup card would
+# never appear).
+_SERVE_FILTER = "hskctl serve"
+
+
+def _kill_panel_transports() -> None:
+    """End panel transports so their watchdog restarts them profile-fresh."""
+    subprocess.run(
+        ["pkill", "-f", _SERVE_FILTER],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 # --- udev rule ---------------------------------------------------------------

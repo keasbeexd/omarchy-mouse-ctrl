@@ -5,10 +5,12 @@ but the machinery for speaking a vendor HID protocol is always the same --
 build a packet, checksum it, send it as a Feature or Output report, read a
 reply, slice fields out of it.
 
-So all the device-specific knowledge lives in a JSON profile under profiles/,
-and this module is a generic interpreter for that JSON. When the capture work
-in docs/contributor/PROTOCOL-DISCOVERY.md yields real byte layouts, you edit the profile,
-not this file.
+So all the device-specific knowledge lives in JSON profile data (written by
+the guided setup into the user's config directory, or by contributor work
+under docs/contributor/families/), and this module is a generic interpreter
+for that JSON. When the capture work in
+docs/contributor/PROTOCOL-DISCOVERY.md yields real byte layouts, you edit
+the profile, not this file.
 """
 
 from __future__ import annotations
@@ -50,8 +52,8 @@ class NotDiscovered(ProtocolError):
         self.field = field
         super().__init__(
             f"'{field}' is not mapped yet in this device profile. "
-            f"Run a capture (see docs/contributor/PROTOCOL-DISCOVERY.md) and fill in "
-            f"profiles/*.json, then re-run."
+            f"Re-run the guided setup (hskctl create-profile) to extend the "
+            f"profile, or see docs/contributor/PROTOCOL-DISCOVERY.md to map it by hand."
         )
 
 

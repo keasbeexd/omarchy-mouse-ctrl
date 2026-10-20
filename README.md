@@ -23,7 +23,7 @@ or from existing open-source Linux tooling (for Pulsar).
 | Vendor | Model | Status |
 |---|---|---|
 | G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + color), polling rate, sensor settings, sleep timer. See [G-Wolves HSK Pro 4K](#g-wolves-hsk-pro-4k) below |
-| Pulsar | X2H mini (4K dongle) | Protocol recovered and documented; as of v3.0 the bundled profile is dropped — a profile for your own Pulsar comes from the guided setup (shipped in v3.0). Protocol knowledge lives in [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| Pulsar | X2H mini (4K dongle) | Protocol recovered and documented; since v3.0 the bundled profile is dropped — a profile for your own Pulsar comes from the [guided setup](#other-models). Protocol knowledge lives in [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
@@ -98,12 +98,15 @@ another's.
 
 ## How multiple mice work
 
-Every setting the panel can show or write comes from `profiles/*.json`, one
-file per mouse, interpreted by a generic protocol engine — there is no
-per-mouse code anywhere in this plugin. Plug a mouse in and `hskctl` picks the
-profile whose `match` block (vendor id, product id, HID usage page) fits a
-device actually connected, the same way it decides whether it is safe to
-*write* to that device. Nothing is shown or shared across mice by guesswork:
+Every setting the panel can show or write comes from a JSON profile — one
+per mouse — interpreted by a generic protocol engine. There is no per-mouse
+code anywhere in this plugin, and the plugin ships no profiles: the guided
+setup writes the profile for the user's machine into
+`~/.config/hskctl/profiles/` (see [Other models](#other-models)). `hskctl`
+picks the profile whose `match` block (vendor id, product id, HID usage
+page) fits a device actually connected, the same way it decides whether it
+is safe to *write* to that device. Nothing is shown or shared across mice
+by guesswork:
 
 - A row only appears if the connected mouse's profile reports that field in
   `hskctl status` **and** the profile can write it. A mouse with no lift-off
@@ -113,15 +116,17 @@ device actually connected, the same way it decides whether it is safe to
   the matched profile too (its `values`/`min`/`max`), not from a list baked
   in for one mouse — so a mouse that goes to 8000 Hz offers 8000 Hz, and one
   that tops out at 1000 Hz does not show rates it cannot reach.
-- `hskctl status` (no `--profile`) auto-detects: it asks every profile in
-  `profiles/` whether its `match` block fits a connected device, and uses the
-  first one that does. `hskctl status --profile <name>` or `--device <path>`
-  overrides detection when you are working on a profile that is not
-  matching yet.
-- Profiles are looked up in the plugin's own `profiles/` first, then
-  `/usr/share/hskctl/profiles`, then `~/.config/hskctl/profiles`. A file in
-  your config directory can add a mouse this plugin does not ship, but cannot
-  replace a bundled profile of the same name. Every profile is read through
+- `hskctl status` (no `--profile`) auto-detects: it asks every installed
+  profile — yours, from `~/.config/hskctl/profiles`, plus any the plugin
+  ships (today: none) — whether its `match` block fits a connected device,
+  and uses the first one that does. `hskctl status --profile <name>` or
+  `--device <path>` overrides detection when you are working on a profile
+  that is not matching yet.
+- Profiles are looked up in the plugin's own `profiles/` first (a shelf for
+  developer seeds; empty in releases), then `/usr/share/hskctl/profiles`,
+  then `~/.config/hskctl/profiles`, and the first name match wins. A file in
+  your config directory is the one the guided setup writes. Every profile is
+  read through
   one no-symlink descriptor, capped at 256 KiB, and refused if anyone other
   than you (or root) owns it or can write to it.
 
@@ -365,21 +370,39 @@ above listed where they are.
   have them). Open an issue with what you find on hardware this hasn't been
   tested against.
 
-## Other models
+## Other models: the guided setup, and the contributor path
 
-The protocol for each vendor lives in `profiles/*.json` as data, interpreted
-by a generic engine — there is no per-mouse code. A profile decides what the
-mouse *does*; presentation is part of the same data: each field carries its
-own label, and the panel's `ui.sections` block says which fields render under
-which heading, in what order (`hskctl fields` shows what a profile
-declares). G-Wolves' vendor app matches 14 product IDs across the HSK range,
-so variants other than the Pro 4K very likely speak the same protocol already
-described in `profiles/gwolves-hsk-pro-4k.json`. If you have one, `hskctl
-probe` and `hskctl doctor` will tell you whether it's recognized, and adding
-a new product id (or a whole new profile, for a different protocol) is a data
-change, not a code change. Issues and PRs welcome — for other Pulsar models
-and mice especially, since only the X2H mini's 4K dongle variant is confirmed
-so far; see [Pulsar X2H mini](#pulsar-x2h-mini) above.
+The plugin ships no profiles, and needs none: a profile for the user's
+mouse gets built by the **guided setup** — the panel's card (visible on a
+fresh install) or `hskctl create-profile` in a terminal. The setup runs
+in Omarchy's floating terminal wrapper, asks a few questions, performs
+only read-only exchanges until a consent prompt says otherwise, and
+writes exactly one file: the user's own profile under
+`~/.config/hskctl/profiles/`. That profile is also what brings the
+device's udev grant line into `hskctl udev-rule`'s output, so mice the
+rules never covered get named and installed there by the panel's Fix
+button.
+
+What the guided setup can and cannot *discover* depends on whose
+protocol the mouse speaks; the tiers say so plainly:
+
+| Tier | Mouse | Result |
+|---|---|---|
+| 1 | Speaks a recovered **transport family** (G-Wolves HSK today) | Full panel; writable where the family checks out. Fast path. |
+| 2 | Unknown family, but has a config-endpoint-shaped HID node | Consented read sweeps + user-action diffs derive a read-only panel from observed bytes. |
+| 3 | Tier 2, continuing | Consented one-field write probes (save/rollback, collateral report, observable confirmation) make common settings writable. |
+| 4 | Checksums, commit/mirror packets (power-cycle persistence), LED streams — or no config-shaped node at all | Contributor territory: a USB capture of the vendor app, per [PROTOCOL-DISCOVERY](docs/contributor/PROTOCOL-DISCOVERY.md). The wizard states the limit instead of faking it. |
+
+Tier-2/3 discovery is the wizard automating what this repo once did by
+hand: the engine reads whatever a profile declares, presentation and
+all debug tooling included (`hskctl probe`, `hskctl doctor`, `hskctl
+fields`). A mouse the setup cannot fully map still gets an honest,
+partial result — never a fake one. Family snapshots live under
+`docs/contributor/families/` as the wizard's seed data; recovered
+protocol notes live beside them in `docs/profiles/`. Tier 4 findings
+become a new snapshot — a data change, not a code change. Issues and
+PRs welcome, especially new snapshots: they upgrade the whole family of
+mice that speak the same protocol.
 
 Writing a profile for your own mouse is the same exercise as reading one of
 the shipped ones — `match`, `transport`, `commands`, `fields` and (for the
