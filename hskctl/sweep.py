@@ -138,16 +138,26 @@ def read_round(path: str, alive: list[dict]) -> dict[str, bytes]:
     return out
 
 
-def diff_maps(before: dict[str, bytes], after: dict[str, bytes]) -> list[dict]:
+def diff_maps(before: dict[str, bytes], after: dict[str, bytes],
+              windows: dict[str, tuple[int, int]] | None = None
+              ) -> list[dict]:
     """Which (opcode, byte index) pairs moved between two read rounds.
 
-    Pure function on the round payloads so the diff discipline stays
-    testable without hardware: rounds feed maps in, and the caller gets
-    one record per moved byte, values included.
+    Pure function on the round payloads, so the interpretation discipline
+    is testable without hardware. `windows` restricts judgment to the
+    meaningful payload range per opcode, computed from the sweep's own
+    length oracle: scalar replies trust exactly their declared length
+    (family evidence: a 2-byte battery reports in only those bytes),
+    while the long block replies UNDERCOUNT -- the DPI stage byte sits
+    past the length byte the firmware echoes for short request
+    variants -- so longer replies are watched to the packet edge.
+    Changes outside a window are still reported, flagged `"trusted":
+    False`: observations the draft assembler must not build on.
     """
     changes = []
     for opcode in sorted(before):
         was, now = before[opcode], after.get(opcode, b"")
+        lo, hi = (windows or {}).get(opcode, (5, 65))
         for i in range(min(len(was), len(now))):
             if was[i] != now[i]:
                 changes.append({
@@ -155,8 +165,24 @@ def diff_maps(before: dict[str, bytes], after: dict[str, bytes]) -> list[dict]:
                     "index": i,
                     "from": was[i],
                     "to": now[i],
+                    "trusted": lo <= i < hi,
                 })
     return changes
+
+
+def payload_windows(answers: list[dict]) -> dict[str, tuple[int, int]]:
+    """The trusted window per opcode, from the sweep's length oracle."""
+    windows = {}
+    for a in answers:
+        length = a["trueLength"]
+        # The 8-byte cliff: everything the recovered families' scalar
+        # commands report sits inside their declared length; every block
+        # read that ever mattered (dpi 57, led 5..) starts there and the
+        # echo undercounts. Between 5 and 8 bytes we keep the declared
+        # length; small enough that the tail has no proven semantics.
+        hi = 65 if length > 8 else 5 + length
+        windows[a["opcode"]] = (5, hi)
+    return windows
 
 
 def _assess(path: str, answers: list[dict], packets_sent: int,

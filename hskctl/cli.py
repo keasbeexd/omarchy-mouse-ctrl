@@ -246,37 +246,54 @@ def cmd_sweep(args) -> int:
                 "re-run without --diff for the machine-readable sweep",
                 args.json,
             )
-        print(f"\n{len(p['answers'])} live opcodes to watch. The rounds are "
-              "read-only: snapshot, you act, snapshot again, report.")
+        windows = sweep.payload_windows(p["answers"])
+        print(f"\n{len(p['answers'])} live opcodes to watch. Each round: "
+              "a snapshot first, then you act, then the moving bytes get "
+              "named. Enter alone at the prompt skips the round -- a "
+              "mouse with no buttons for these things still has the "
+              "replug and vendor-app rounds.")
         round_specs = [
             ("dpi-button",
-             "press your mouse's DPI button 3 times, slowly, then press ENTER here"),
-            ("other-button",
-             "press ONE OTHER settings button (polling / LED / profile -- or "
-             "skip) 3 times, then press ENTER here"),
+             "press your mouse's DPI button 3 times -- slowly, while it "
+             "reads -- then press ENTER here"),
+            ("app-change",
+             "change any setting in whatever configurator you use for this "
+             "mouse (or skip) -- then press ENTER here"),
+            ("cable-replug",
+             "unplug and replug the cable -- or the receiver, if the mouse "
+             "is wireless -- then press ENTER here"),
         ]
         for label, prompt in round_specs:
+            # Snapshot BEFORE the prompt references any action: the whole
+            # round lives or dies on the ordering. (First version read
+            # "before" after the user had already acted, and the round
+            # then only caught post-action drift -- the live test caught
+            # it, which is exactly what these rounds are for.)
+            before = sweep.read_round(target, p["answers"])
             try:
-                input(f"\n[{label}] {prompt} ")
+                acted = input(f"\n[{label}] {prompt} ").strip()
+                if not acted:
+                    print("  skipped.")
+                    continue
             except (EOFError, KeyboardInterrupt):
                 print("\nround skipped.")
                 continue
-            before = sweep.read_round(target, p["answers"])
-            try:
-                input("and once more to be sure it settled -- press ENTER again ")
-            except (EOFError, KeyboardInterrupt):
-                pass
             after = sweep.read_round(target, p["answers"])
-            changes = sweep.diff_maps(before, after)
+            changes = sweep.diff_maps(before, after, windows)
+            trusted = [c for c in changes if c["trusted"]]
             rounds.append({"label": label, "changes": changes})
             p["packetsSent"] += 2 * len(p["answers"])
             if not changes:
                 print("  this round moved no observed byte.")
-            else:
-                print(f"  {len(changes)} byte(s) moved:")
-                for c in changes:
-                    print(f"    {c['opcode']} byte {c['index']:2d}: "
-                          f"{c['from']:#04x} -> {c['to']:#04x}")
+                continue
+            print(f"  {len(trusted)} in-payload byte(s) moved"
+                  + (f", {len(changes) - len(trusted)} beyond the declared "
+                      "length reported untrusted" if len(trusted) != len(changes)
+                      else "") + ":")
+            for c in changes:
+                mark = "  " if c["trusted"] else "?(untrusted)"
+                print(f"    {mark} {c['opcode']} byte {c['index']:2d}: "
+                      f"{c['from']:#04x} -> {c['to']:#04x}")
 
     payload = p if not args.diff else {**p, "diffRounds": rounds}
 
