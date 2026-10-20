@@ -11,10 +11,11 @@ that equals what was written.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Callable
 
-from . import fingerprint, generic, profiles, registry, udev
+from . import fingerprint, generic, profiles, ratbag, registry, udev
 from .errors import (
     DeviceNotFound, InvalidValue, MouseCtrlError, NoAccess, ProtocolFailure, Unsupported,
     WriteRefused,
@@ -60,12 +61,14 @@ class Api:
         profile_dir: str = profiles.PROFILE_DIR,
         rule_file: str = udev.RULE_FILE,
         lock=device_lock,
+        ratbagd: ratbag.Ratbag | None = None,
     ):
         self._families = families
         self._scan = scan
         self._profile_dir = profile_dir
         self._rule_file = rule_file
         self._lock = lock
+        self._ratbag = ratbagd if ratbagd is not None else ratbag.Ratbag()
         self._drivers: dict[str, Driver] = {}
         self._caps: dict[str, dict[str, Capability]] = {}
         # Device key -> capability ids whose write test passed in this
@@ -321,16 +324,29 @@ class Api:
         return {"ok": True, "deleted": profiles.delete(profile_id, self._profile_dir)}
 
     def probe(self, key: str) -> dict:
-        """What any mouse shows without its protocol; needs no access."""
+        """What any mouse shows without its protocol; needs no access.
+
+        A mouse no family driver claims is also looked up in ratbagd, read
+        only: its settings stay with Piper.
+        """
         fp = self._resolve(key)
-        return {
+        payload = {
             "ok": True,
             "device": fp.key,
             "connection": generic.connection(fp),
             "buttons": fp.buttons,
             "battery": generic.kernel_battery(fp),
             "report": generic.report(fp),
+            "ratbag": None,
+            "piper": ratbag.piper(),
         }
+        if registry.driver_for(fp, self._families) is None and self._ratbag.available():
+            try:
+                path = self._ratbag.device_path({os.path.basename(n.path) for n in fp.nodes})
+                payload["ratbag"] = self._ratbag.read(path) if path else None
+            except ratbag.RatbagError as exc:
+                payload["ratbagError"] = str(exc)[:200]
+        return payload
 
     def measure(self, key: str) -> dict:
         """Polling rate from the mouse's own reports; the user moves it."""

@@ -566,6 +566,88 @@ Panel {
                 }
               }
 
+              // ratbagd's own readings, read-only; settings belong to Piper.
+              Column {
+                visible: root.genericView && backend.generic.ratbag !== null
+                width: parent.width
+                spacing: 0
+
+                PanelSectionHeader {
+                  topPadding: Style.space(6)
+                  bottomPadding: Style.space(4)
+                  text: "LIBRATBAG"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Repeater {
+                  model: root.genericView && backend.generic.ratbag ? [
+                    { label: "Profile", text: backend.generic.ratbag.profile + " of " + backend.generic.ratbag.profiles },
+                    { label: "Polling rate", text: backend.generic.ratbag.pollingRate !== null ? backend.generic.ratbag.pollingRate + " Hz" : "—" },
+                    { label: "DPI stages", text: Model.ratbagStagesText(backend.generic.ratbag) },
+                    { label: "Firmware", text: backend.generic.ratbag.firmware }
+                  ] : []
+                  Item {
+                    required property var modelData
+                    width: parent.width
+                    implicitHeight: Style.spacing.controlHeight + Style.space(2)
+                    Text {
+                      textFormat: Text.PlainText
+                      x: Style.space(8)
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.label
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.right: parent.right
+                      anchors.rightMargin: Style.space(8)
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.text
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                  }
+                }
+
+                Item {
+                  width: parent.width
+                  implicitHeight: Style.spacing.controlHeight + Style.space(8)
+                  Text {
+                    textFormat: Text.PlainText
+                    x: Style.space(8)
+                    width: root.labelWidth - Style.space(16)
+                    anchors.verticalCenter: parent.verticalCenter
+                    wrapMode: Text.WordWrap
+                    text: backend.generic && backend.generic.piper ? "Change settings" : "Change settings with Piper (not installed)"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                  Button {
+                    visible: backend.generic !== null && backend.generic.piper
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Open Piper"
+                    iconText: "󰏌"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: Quickshell.execDetached(["/usr/bin/piper"])
+                  }
+                }
+
+                PanelSeparator {
+                  foreground: root.foreground
+                }
+              }
+
               Item {
                 width: parent.width
                 implicitHeight: Style.spacing.controlHeight + Style.space(8)

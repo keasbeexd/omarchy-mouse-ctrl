@@ -164,3 +164,12 @@ test("finalStates turns answers into honest profile states", () => {
   assert.equal(out.angleSnap.state, "readOnly")
   assert.equal(out.sleepSeconds.state, "rejected")
 })
+
+test("cleanRatbag validates ratbagd readings and marks the live stage", () => {
+  const r = M.cleanRatbag({ name: "<b>G Pro</b>", firmware: "12.1", profile: 2, profiles: 5, pollingRate: 1000,
+                            stages: [{ dpi: 800, active: false }, { dpi: 1600, active: true }, { dpi: "x" }] })
+  assert.equal(r.name, "bG Pro/b")
+  assert.equal(r.stages.length, 2)
+  assert.equal(M.ratbagStagesText(r), "800  [1600]")
+  assert.equal(M.cleanRatbag(null), null)
+})
