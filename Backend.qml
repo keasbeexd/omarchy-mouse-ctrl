@@ -67,13 +67,21 @@ Item {
 
   // Every write is logged to the journal (`journalctl --user -t omarchy-shell
   // | grep mousectrl`), so "what did the panel send?" has an answer.
+  // Replies arrive after the user may have switched mice; one meant for a
+  // mouse no longer shown must not touch the state of the one that is.
+  function isCurrent(key) {
+    return device !== null && device.key === key
+  }
+
   function write(capId, value) {
     if (!device || pending[capId]) return
+    var key = device.key
     var target = Model.plain(device.profile ? device.profile.name : device.name, 60)
     console.log("mousectrl: write " + capId + " = " + JSON.stringify(value) + " on " + target)
     setPending(capId, true)
-    request({ cmd: "write", device: device.key, capability: capId, value: value }, function(reply) {
+    request({ cmd: "write", device: key, capability: capId, value: value }, function(reply) {
       setPending(capId, false)
+      if (!isCurrent(key)) return
       if (!reply.ok) {
         console.warn("mousectrl: write " + capId + " on " + target + " failed: " + Model.plain(reply.error, 240))
         showAction(reply.error)
@@ -165,7 +173,9 @@ Item {
     if (!device.family) return setStatus("unsupported", device.name + " is not in a supported family yet")
     if (!device.accessible) return setStatus("noAccess", "Mouse CTRL needs the udev rule to talk to " + device.name)
     if (!device.profile) return setStatus("noProfile", device.name + " is not set up yet")
-    request({ cmd: "capabilities", device: device.key }, function(reply) {
+    var key = device.key
+    request({ cmd: "capabilities", device: key }, function(reply) {
+      if (!isCurrent(key)) return
       if (!reply.ok) return fail(reply)
       capabilities = Model.cleanCapabilities(reply)
       readValues(null)
@@ -173,7 +183,9 @@ Item {
   }
 
   function loadGeneric() {
-    request({ cmd: "probe", device: device.key }, function(reply) {
+    var key = device.key
+    request({ cmd: "probe", device: key }, function(reply) {
+      if (!isCurrent(key)) return
       if (!reply.ok) return fail(reply)
       var battery = Model.cleanValue({ kind: "battery" }, reply.battery)
       values = battery !== undefined ? { battery: battery } : ({})
@@ -189,8 +201,10 @@ Item {
   function measure() {
     if (!device || measuring) return
     measuring = true
-    request({ cmd: "measure", device: device.key }, function(reply) {
+    var key = device.key
+    request({ cmd: "measure", device: key }, function(reply) {
       measuring = false
+      if (!isCurrent(key)) return
       if (!reply.ok) return showAction(reply.error)
       measuredHz = Model.isInt(reply.hz) ? reply.hz : 0
     })
@@ -199,9 +213,11 @@ Item {
   // One capability, or all of them when capId is null.
   function readValues(capId) {
     if (!device) return
-    var req = { cmd: "read", device: device.key }
+    var key = device.key
+    var req = { cmd: "read", device: key }
     if (capId) req.capability = capId
     request(req, function(reply) {
+      if (!isCurrent(key)) return
       if (!reply.ok) return fail(reply)
       var next = Object.assign({}, values)
       for (var i = 0; i < capabilities.length; i++) {

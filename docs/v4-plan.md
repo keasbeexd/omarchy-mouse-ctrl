@@ -237,9 +237,11 @@ save) and re-saved the owner's HSK profile correctly. Backend:
 `test-write`, `save-profile`, `delete-profile`, `probe`, `measure`, and a
 polkit rule install (rule text on stdin, re-validated, fixed script).
 `measure` read 983 Hz from the HSK at a 1000 Hz setting (2457 reports in
-2.5 s). Not yet exercised on hardware: the access step's password prompt
-(both mice already had access) and the "Run test" button (both mice are
-fully verified). "Add support" links to docs/contributing-a-family.md,
+2.5 s). The access step was tested by removing the rule and replugging the X2H:
+one password prompt installed a clean three-line rule and access arrived
+without a replug (`udevadm trigger` suffices). Not yet exercised on
+hardware: the "Run test" button (both mice are fully verified) and the
+unknown-mouse view (no driverless mouse at hand). "Add support" links to docs/contributing-a-family.md,
 written in phase 7.
 
 ## Settled after the session
