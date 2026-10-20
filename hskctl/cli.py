@@ -2256,6 +2256,13 @@ def _udev_payload() -> dict:
         if os.path.dirname(profile.path) != _USER_PROFILE_DIR:
             continue
         for vendor, product in _profile_vendor_products(profile):
+            # A vendor that already has a vendor-wide grant leaves nothing
+            # for a pair line to add -- listing every product id a
+            # family-wide profile claims would only fatten the file the
+            # user is asked to review. Unlisted vendors (the ungranted
+            # mouse case) still get their tight pair line here.
+            if vendor in vendor_grants:
+                continue
             if product is None:
                 line = _vendor_rule_line(vendor)
             else:

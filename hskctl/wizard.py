@@ -5,9 +5,10 @@ which *transport family* it speaks from the contributor snapshots under
 `docs/contributor/families/`, prove with one read-only exchange that the
 device answers, then assemble the draft into the user's own config.
 Rounds 1 and 2 of the plan (guided diff rounds, consented write
-verification) arrive later; a profile this wizard produces today is the
-family snapshot retargeted to the user's exact VID:PID, with the
-snapshot's own verification state carried over untouched.
+verification) arrive later; a profile this wizard produces today carries
+the family snapshot's identity scope and verification state untouched
+(observed pair recorded in provenance; only extension pairs and
+unreachable devices get narrowed to their exact VID:PID).
 
 Everything it does to hardware is a read. The only file it writes is the
 user's own profile, in their own config directory, after a confirmation.
@@ -423,18 +424,37 @@ def create_profile(args, emit, fail) -> int:
 
     data = copy.deepcopy(family.data)
     family_match = family.data.get("match") or {}
-    data["match"] = {
-        "vendorIds": [vid],
-        "productIds": [pid],
-    }
-    for key in ("interface", "usagePage", "requireFeatureReport"):
-        if family_match.get(key) is not None:
-            data["match"][key] = family_match[key]
+    if extension or read_blocked:
+        # Identity beyond what the family vouches for (or unreachable for
+        # the live check): the tight pair is all that is known, so the
+        # profile claims exactly that.
+        data["match"] = {
+            "vendorIds": [vid],
+            "productIds": [pid],
+        }
+        for key in ("interface", "usagePage", "requireFeatureReport"):
+            if family_match.get(key) is not None:
+                data["match"][key] = family_match[key]
+    else:
+        # The family's identity scope IS the trusted knowledge. A receiver
+        # mouse changes product id between cable and wireless -- the HSK
+        # Pro 4K is 5808 on the cable, 5807 behind the dongle -- and this
+        # setup ran at whichever pair happened to be live. The profile
+        # therefore matches every identity the family declares, under the
+        # same usage-page/feature-report shape, and the pair observed at
+        # setup time rides along in provenance (the udev grant line, the
+        # thing that must be tight, is generated from the rule engine's
+        # own survey either way).
+        data["match"] = copy.deepcopy(family_match) or {
+            "vendorIds": [vid],
+            "productIds": [pid],
+        }
     data["provenance"] = {
         "createdBy": f"hskctl {__version__} create-profile",
         "created": datetime.date.today().isoformat(),
         "family": os.path.splitext(os.path.basename(family.path))[0],
         "extension": extension,
+        "observedAtSetup": f"{vid}:{pid}",
     }
     if extension:
         data["status"] = "partial"
