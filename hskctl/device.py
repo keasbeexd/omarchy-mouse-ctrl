@@ -126,6 +126,19 @@ def rank_candidates(profile: Profile | None = None) -> list[Candidate]:
     return results
 
 
+def _bare_profile() -> Profile:
+    """A placeholder standing for "no profile has been created yet".
+
+    Shipping with zero bundled profiles is the normal state now: a profile
+    is something the guided setup writes into the user's own config, so an
+    empty profile list is a brand-new install, not a missing directory. The
+    placeholder lets every command fall through to the same honest
+    `undiscovered` shape the panel already renders, with no model name,
+    because none is known until the user creates one.
+    """
+    return Profile({"fields": {}}, "<uncreated>")
+
+
 def detect_profile(explicit: str | None = None) -> Profile:
     """Pick the profile that matches whatever mouse is actually plugged in.
 
@@ -135,13 +148,17 @@ def detect_profile(explicit: str | None = None) -> Profile:
     conjunction `open_session` uses before it will write to a device -- so
     "detected" here means the same thing it means everywhere else in hskctl.
     An explicit --profile always wins and skips this entirely.
+
+    With no profiles at all there is nothing to ask: the bare placeholder
+    profile is returned so callers report `undiscovered` rather than
+    crashing on the absence of a default.
     """
     if explicit:
         return load_profile(explicit)
 
     names = list_profiles()
     if not names:
-        raise ProtocolError("no profiles found -- is profiles/ missing?")
+        return _bare_profile()
 
     fallback: Profile | None = None
     for name in names:
@@ -157,7 +174,7 @@ def detect_profile(explicit: str | None = None) -> Profile:
     # Nothing plugged in matched anything. Report against whichever profile
     # sorts first, purely so `status`/`doctor` have a model name to talk
     # about -- the "not detected" message does not depend on which one.
-    return fallback
+    return fallback if fallback is not None else _bare_profile()
 
 
 class DeviceNotFound(ProtocolError):

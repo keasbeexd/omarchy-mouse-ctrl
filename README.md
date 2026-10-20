@@ -23,12 +23,12 @@ or from existing open-source Linux tooling (for Pulsar).
 | Vendor | Model | Status |
 |---|---|---|
 | G-Wolves | HSK Pro 4K | Confirmed on hardware — battery, DPI (stage 1 + color), polling rate, sensor settings, sleep timer. See [G-Wolves HSK Pro 4K](#g-wolves-hsk-pro-4k) below |
-| Pulsar | X2H mini (4K dongle) | Confirmed on hardware — battery, DPI (stage 1 + color), polling rate up to 4K, sensor settings, sleep timer. 1K dongle variant unconfirmed. See [Pulsar X2H mini](#pulsar-x2h-mini) below |
+| Pulsar | X2H mini (4K dongle) | Protocol recovered and documented; as of v3.0 the bundled profile is dropped — a profile for your own Pulsar comes from the guided setup (shipped in v3.0). Protocol knowledge lives in [Pulsar X2H mini](#pulsar-x2h-mini) below |
 
 The panel only ever shows the settings the connected mouse's profile actually
 reports and can write — see [How multiple mice work](#how-multiple-mice-work).
-Adding another mouse is a new file under `profiles/`, not a code change; see
-[Other models](#other-models).
+Adding another mouse is the guided setup (shipped in v3.0), which writes the
+profile for that mouse into your own config — see [Other models](#other-models).
 
 ## Install
 

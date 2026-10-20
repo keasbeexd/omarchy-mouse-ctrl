@@ -764,8 +764,12 @@ def _valid_profile_name(name: str) -> bool:
     return bool(_PROFILE_NAME_RE.fullmatch(name)) and ".." not in name
 
 
-def load_profile(name: str | None = None) -> Profile:
-    name = name or "gwolves-hsk-pro-4k"
+def load_profile(name: str | None) -> Profile:
+    if name is None:
+        raise ProtocolError(
+            "no profile selected -- pass --profile, or install one "
+            "(profiles come from the guided setup, in the user's own config)"
+        )
     if not _valid_profile_name(name):
         raise ProtocolError(f"{name!r} is not a profile name (letters, digits, . _ -)")
     filename = f"{name}.json"

@@ -373,7 +373,7 @@ function connectionLabel(connection) {
 // The hero's second line: battery and link, or an honest explanation of why
 // there is nothing to show.
 function summaryLine(status, settings) {
-  if (status === "undiscovered") return "Protocol not mapped yet"
+  if (status === "undiscovered") return "No profile yet"
   if (status === "error") return "Not connected"
   var parts = []
   if (has(settings, "batteryPercent")) {
