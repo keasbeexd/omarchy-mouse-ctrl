@@ -101,6 +101,7 @@ class PulsarNordicTest(unittest.TestCase):
         self.assertIs(self.driver.read("rippleControl"), False)
         self.assertEqual(self.driver.read("sleepSeconds"), 30)
         self.assertEqual(self.driver.read("debounce"), 3)
+        self.assertEqual(self.driver.read("connection"), "dongle")
         self.assertEqual(self.driver.read("dpiStages"), {"active": 0, "stages": [
             {"dpi": 400, "color": "#aa0000"}, {"dpi": 800, "color": "#0000ff"},
             {"dpi": 1600, "color": "#ff00ff"}, {"dpi": 3200, "color": "#ffffff"}]})
@@ -136,6 +137,14 @@ class PulsarNordicTest(unittest.TestCase):
         with self.assertRaisesRegex(InvalidValue, "number of stages"):
             self.driver.write("dpiStages", {**value, "stages": value["stages"][:3]})
         self.assertEqual(self.mouse.writes, [])
+
+    def test_connection_comes_from_the_identity(self):
+        for product, expected in ((0xF507, "wired"), (0xF508, "dongle"), (0xF509, "dongle")):
+            driver = mock.Mock(fingerprint=mock.Mock(product_id=product))
+            self.assertIn("connection", [c.id for c in PulsarNordic.capabilities(driver)])
+            self.assertEqual(PulsarNordic._read_connection(driver), expected)
+        unknown = mock.Mock(fingerprint=mock.Mock(product_id=0xFA7B))
+        self.assertNotIn("connection", [c.id for c in PulsarNordic.capabilities(unknown)])
 
     def test_one_k_receiver_offers_no_high_rates(self):
         one_k = mock.Mock(product_id=0xF508)

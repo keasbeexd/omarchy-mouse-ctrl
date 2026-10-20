@@ -103,7 +103,8 @@ CAPABILITIES = (
     Capability("angleSnap", "toggle", "Angle snapping", VERIFIED, group="sensor"),
     Capability("sleepSeconds", "duration", "Sleep after", VERIFIED,
                minimum=30, maximum=3600, step=30, unit="s", group="power"),
-    Capability("debounce", "info", "Debounce", VERIFIED),
+    # Read-only (see COMMANDS), but shown with the settings it belongs to.
+    Capability("debounce", "info", "Debounce", VERIFIED, group="performance"),
 )
 
 
