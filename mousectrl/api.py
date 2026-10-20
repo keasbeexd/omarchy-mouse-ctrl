@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
-from . import fingerprint, profiles, registry, udev
+from . import fingerprint, generic, profiles, registry, udev
 from .errors import (
     DeviceNotFound, InvalidValue, MouseCtrlError, NoAccess, ProtocolFailure, Unsupported,
     WriteRefused,
@@ -319,6 +319,23 @@ class Api:
         if not isinstance(profile_id, str):
             raise InvalidValue("profile must be a string id")
         return {"ok": True, "deleted": profiles.delete(profile_id, self._profile_dir)}
+
+    def probe(self, key: str) -> dict:
+        """What any mouse shows without its protocol; needs no access."""
+        fp = self._resolve(key)
+        return {
+            "ok": True,
+            "device": fp.key,
+            "connection": generic.connection(fp),
+            "buttons": fp.buttons,
+            "battery": generic.kernel_battery(fp),
+            "report": generic.report(fp),
+        }
+
+    def measure(self, key: str) -> dict:
+        """Polling rate from the mouse's own reports; the user moves it."""
+        fp = self._resolve(key)
+        return {"ok": True, "device": fp.key, **generic.measure_polling(fp)}
 
     def udev_rule(self, extra: list[str] | None = None) -> dict:
         """The rule file this machine needs; answers without touching any device."""

@@ -55,6 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("capability")
     write.add_argument("value", help="JSON value, e.g. true, 4000 or '{\"active\": 1, ...}'")
 
+    probe = sub.add_parser("probe", help="what any mouse shows without its protocol, plus a report")
+    probe.add_argument("device")
+    probe.add_argument("--report", action="store_true", help="print only the plain-text report")
+
+    measure = sub.add_parser("measure", help="measure the polling rate; move the mouse while it runs")
+    measure.add_argument("device")
+
     test = sub.add_parser("test-write", help="write a nearby value, read it back, restore the original")
     test.add_argument("device")
     test.add_argument("capability")
@@ -84,6 +91,11 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(api.read(args.device, args.capability))
         elif args.command == "write":
             _print_json(api.write(args.device, args.capability, _parse_value(args.value)))
+        elif args.command == "probe":
+            payload = api.probe(args.device)
+            sys.stdout.write(payload["report"]) if args.report else _print_json(payload)
+        elif args.command == "measure":
+            _print_json(api.measure(args.device))
         elif args.command == "test-write":
             _print_json(api.test_write(args.device, args.capability))
         elif args.command == "udev-rule":

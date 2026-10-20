@@ -47,11 +47,17 @@ class Collection:
     usage: int
 
 
+USAGE_PAGE_BUTTON = 0x09
+
+
 @dataclass(frozen=True)
 class Descriptor:
     collections: tuple[Collection, ...]
     feature_report_ids: tuple[int, ...]
     output_report_ids: tuple[int, ...]
+    # Buttons an Input item declares (Usage Minimum..Maximum on the Button
+    # page). What the descriptor promises, which can exceed the switches.
+    buttons: int = 0
 
     @property
     def is_vendor(self) -> bool:
@@ -78,6 +84,9 @@ def parse_descriptor(desc: bytes) -> Descriptor:
     page = 0
     report_id = 0
     local_usage: Collection | None = None
+    usage_min: int | None = None
+    usage_max: int | None = None
+    buttons = 0
     depth = 0
     collections: list[Collection] = []
     feature: set[int] = set()
@@ -107,6 +116,10 @@ def parse_descriptor(desc: bytes) -> Descriptor:
             local_usage = (
                 Collection(value >> 16, value & 0xFFFF) if size == 4 else Collection(page, value)
             )
+        elif typ == 2 and tag == 0x1:
+            usage_min = value
+        elif typ == 2 and tag == 0x2:
+            usage_max = value
         elif typ == 0:  # Main
             if tag == 0xA:
                 if depth == 0 and local_usage is not None:
@@ -118,9 +131,11 @@ def parse_descriptor(desc: bytes) -> Descriptor:
                 feature.add(report_id)
             elif tag == 0x9:
                 output.add(report_id)
-            local_usage = None
+            elif tag == 0x8 and page == USAGE_PAGE_BUTTON and usage_min is not None and usage_max is not None:
+                buttons = max(buttons, usage_max - usage_min + 1)
+            local_usage = usage_min = usage_max = None
 
-    return Descriptor(tuple(collections), tuple(sorted(feature)), tuple(sorted(output)))
+    return Descriptor(tuple(collections), tuple(sorted(feature)), tuple(sorted(output)), buttons)
 
 
 @dataclass(frozen=True)
@@ -153,6 +168,22 @@ class Fingerprint:
     def key(self) -> str:
         suffix = f"#{self.uniq}" if self.bus == BUS_BLUETOOTH and self.uniq else ""
         return f"{self.vidpid}@{self.phys}{suffix}"
+
+    @property
+    def buttons(self) -> int:
+        return max((n.descriptor.buttons for n in self.nodes if n.descriptor.has_mouse), default=0)
+
+    @property
+    def pointer_node(self) -> Node | None:
+        """The interface carrying pointer reports: boot mouse first, then a
+        mouse-only collection, then any collection holding a mouse."""
+        for test in (lambda n: n.boot_protocol == BOOT_PROTOCOL_MOUSE,
+                     lambda n: n.descriptor.is_only_mouse,
+                     lambda n: n.descriptor.has_mouse):
+            for node in self.nodes:
+                if test(node):
+                    return node
+        return None
 
     @property
     def is_mouse(self) -> bool:

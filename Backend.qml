@@ -18,7 +18,7 @@ Item {
   property bool panelOpen: false
 
   // "starting" | "noDevice" | "noAccess" | "unsupported" | "noProfile"
-  // | "asleep" | "ready" | "error"
+  // | "asleep" | "ready" | "generic" | "error"
   property string status: "starting"
   property string statusMessage: ""
   property var devices: []
@@ -31,6 +31,10 @@ Item {
   // Last write failure, shown under the settings for a few seconds.
   property string actionMessage: ""
   property var profileProblems: []
+  // For a mouse with a generic profile: what `probe` and `measure` found.
+  property var generic: null
+  property int measuredHz: 0
+  property bool measuring: false
 
   readonly property var battery: values.battery !== undefined ? values.battery : null
   readonly property int batteryPollMs: 1000 * Math.max(30, Math.min(3600, Number(setting("batteryPollSec", 300)) || 300))
@@ -52,6 +56,8 @@ Item {
     selectedKey = key
     capabilities = []
     values = ({})
+    generic = null
+    measuredHz = 0
     applySelection()
   }
 
@@ -155,6 +161,7 @@ Item {
   function applySelection() {
     device = Model.pickDevice(devices, selectedKey)
     if (!device) return setStatus("noDevice", "No mouse connected")
+    if (!device.family && device.profile) return loadGeneric()
     if (!device.family) return setStatus("unsupported", device.name + " is not in a supported family yet")
     if (!device.accessible) return setStatus("noAccess", "Mouse CTRL needs the udev rule to talk to " + device.name)
     if (!device.profile) return setStatus("noProfile", device.name + " is not set up yet")
@@ -162,6 +169,30 @@ Item {
       if (!reply.ok) return fail(reply)
       capabilities = Model.cleanCapabilities(reply)
       readValues(null)
+    })
+  }
+
+  function loadGeneric() {
+    request({ cmd: "probe", device: device.key }, function(reply) {
+      if (!reply.ok) return fail(reply)
+      var battery = Model.cleanValue({ kind: "battery" }, reply.battery)
+      values = battery !== undefined ? { battery: battery } : ({})
+      generic = {
+        connection: Model.plain(reply.connection, 20),
+        buttons: Model.isInt(reply.buttons) ? reply.buttons : 0,
+        report: typeof reply.report === "string" ? reply.report.substring(0, 65536) : ""
+      }
+      setStatus("generic", "")
+    })
+  }
+
+  function measure() {
+    if (!device || measuring) return
+    measuring = true
+    request({ cmd: "measure", device: device.key }, function(reply) {
+      measuring = false
+      if (!reply.ok) return showAction(reply.error)
+      measuredHz = Model.isInt(reply.hz) ? reply.hz : 0
     })
   }
 

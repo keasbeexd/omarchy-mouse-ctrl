@@ -11,6 +11,8 @@ Commands:
   capabilities  {device}
   read          {device, capability?}
   write         {device, capability, value}
+  probe         {device}
+  measure       {device}
   test-write    {device, capability}
   save-profile  {device, name, capabilities: {id: {state, visible}}}
   delete-profile {profile}
@@ -70,6 +72,10 @@ class Server:
             return _error("badRequest", f"{cmd!r} needs a device key")
         if cmd == "capabilities":
             return self._api.capabilities(device)
+        if cmd == "probe":
+            return self._api.probe(device)
+        if cmd == "measure":
+            return self._api.measure(device)
         if cmd == "read":
             capability = req.get("capability")
             if capability is not None and not isinstance(capability, str):
