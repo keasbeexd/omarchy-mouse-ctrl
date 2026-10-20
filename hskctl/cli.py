@@ -1948,6 +1948,12 @@ def cmd_profiles(args) -> int:
     return _emit(payload, args.json, lambda p: print("\n".join(p["profiles"]) or "(none)"))
 
 
+def cmd_create_profile(args) -> int:
+    from .wizard import create_profile as run_wizard
+
+    return run_wizard(args, _emit, _fail)
+
+
 def cmd_remove_profile(args) -> int:
     """Delete a user-authored profile from ~/.config/hskctl/profiles.
 
@@ -2346,6 +2352,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="do not ask for confirmation"
     )
     remove.set_defaults(func=cmd_remove_profile)
+    setup = sub.add_parser(
+        "create-profile",
+        help="guided setup: build a profile for the connected mouse from a "
+             "transport family snapshot (reads freely; writes only the "
+             "user's own profile file)",
+    )
+    setup.add_argument(
+        "--name",
+        help="profile file name (default: derived from the device's model)",
+    )
+    setup.add_argument(
+        "--yes", action="store_true",
+        help="take the flow without prompts (e.g. the panel's terminal)",
+    )
+    setup.set_defaults(func=cmd_create_profile)
     sub.add_parser(
         "udev-rule",
         help="print the udev rule file this machine needs "

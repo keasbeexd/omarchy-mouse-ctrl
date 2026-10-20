@@ -360,25 +360,24 @@ Panel {
     fixRuleProcess.running = true
   }
 
-  // The probe is read-only, so handing it a terminal button costs the panel
-  // nothing in the no-root rule. The terminal launcher is resolved inside the
-  // child, not here: $TERMINAL wins, then the spec launcher, then the usual
-  // suspects, each one asked via `command -v` where stat calls would need IO
-  // plumbing. execDetached keeps the terminal alive after the panel closes.
-  function runProbeInTerminal() {
-    var inner =
-      "HK=$(command -v hskctl 2>/dev/null) || HK=$HOME/.local/bin/hskctl; "
-      + "\"$HK\" probe; echo; "
-      + "echo \"Read-only: probe writes nothing to the mouse.\"; "
-      + "printf \"Press Enter to close: \"; read _"
-    var launch =
-      "for t in \"$TERMINAL\" xdg-terminal-exec foot kitty alacritty ghostty; do "
-      + "case \"$t\" in \"\"|xdg-terminal-exec) continue ;; esac; "
-      + "if command -v \"$t\" >/dev/null 2>&1; then exec \"$t\" -e /bin/sh -c "
-      + Util.shellQuote(inner) + "; fi; done; "
-      + "if command -v xdg-terminal-exec >/dev/null 2>&1; then exec xdg-terminal-exec "
-      + "/bin/sh -c " + Util.shellQuote(inner) + "; fi; " + inner
-    Util.execDetached(launch)
+  // The setup card's buttons ride Omarchy's canonical wrapper:
+  // omarchy-launch-floating-terminal-with-presentation floats the window
+  // (org.omarchy.terminal rule), styles it, and ends with a press-key
+  // Done so output is actually read. The wizard's prompts ask inside
+  // that terminal -- the panel never writes, so this is where
+  // interaction happens, not in a dialog of our own.
+  function launchSetupTerminal() {
+    Quickshell.execDetached([
+      "/usr/bin/omarchy-launch-floating-terminal-with-presentation",
+      "hskctl create-profile"
+    ])
+  }
+
+  function launchProbeTerminal() {
+    Quickshell.execDetached([
+      "/usr/bin/omarchy-launch-floating-terminal-with-presentation",
+      "hskctl probe"
+    ])
   }
 
   // Opening the panel used to force a refresh too, on top of startup, the
@@ -775,8 +774,9 @@ Panel {
                   if (root.hasError) return Model.plain(hsk.lastError, 400)
                   if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
                   return "hskctl can see the device but has no profile for it yet. "
-                       + "Run the guided setup -- a few read-only rounds answer what "
-                       + "your mouse speaks, then it writes a profile of your own."
+                       + "The guided setup below asks its questions in your own "
+                       + "terminal, runs read-only checks against the mouse, then "
+                       + "writes a profile of your own."
                 }
                 color: root.dim
                 font.family: root.fontFamily
@@ -797,19 +797,28 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
-              // Probe from the card instead of retyping it: opens the
-              // machine's terminal on a read-only probe and holds the window
-              // until the user has read the result.
+              // Act from the card instead of retyping: the setup button is
+              // the guided flow's entry point (two prompts ask inside the
+              // terminal, nothing writes until they pass); probe is the
+              // read-only diagnostic it is worth keeping next to it.
               Row {
                 visible: root.needsSetup
                 spacing: Style.space(8)
 
                 Button {
-                  text: "Probe in a terminal"
+                  text: "Set up this mouse..."
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
-                  onClicked: root.runProbeInTerminal()
+                  onClicked: root.launchSetupTerminal()
+                }
+
+                Button {
+                  text: "Probe"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.launchProbeTerminal()
                 }
               }
 
