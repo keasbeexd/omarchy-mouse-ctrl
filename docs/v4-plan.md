@@ -252,6 +252,15 @@ firmware show in the generic view, with an Open Piper button for changes.
 Tested against a fake daemon only: ratbagd is not installed here and no
 libratbag mouse is at hand.
 
+**Phase 7 (docs, contributor tooling, security review) — done.**
+docs/contributing-a-family.md replaces PROTOCOL-DISCOVERY; a driver
+template and scripts/analyze-driver.py are back; the README is rewritten.
+The omarchy-plugin-security checklist found and fixed six issues (profile
+directory and writes, busctl output bounds, terminal-safe device strings,
+root-side rule validation, analyzer extraction); details in commit
+e590c67. Open before release: a v4 preview.png, the version bump, the
+marketplace baseline scan, merging to master and the [Verify] update.
+
 ## Settled after the session
 
 - Plugin id stays `keasbeexd.mousectrl`; v4 replaces v3 in place.
