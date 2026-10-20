@@ -121,9 +121,11 @@ vendor:product line for each set-up mouse outside them:
 KERNEL=="hidraw*", ATTRS{idVendor}=="33e4", MODE="0660", TAG+="uaccess"
 ```
 
-From the panel, the rule text comes from `mousectrl udev-rule`, every line is
-checked against that exact shape, and it is installed through `pkexec` by a
-fixed script that runs only `/usr/bin/install` and `/usr/bin/udevadm`. From a
+From the panel, the rule text comes from `mousectrl udev-rule` and is shown
+before anything happens. It reaches root on stdin (no file in between) and is
+checked twice against that exact shape: by the panel, and again as root by the
+fixed script `pkexec` runs, which refuses anything over 64 KiB or any line in
+another shape before calling `/usr/bin/install` and `/usr/bin/udevadm`. From a
 terminal, `./install.sh --udev` shows the text and asks before using `sudo`.
 
 ## Safety

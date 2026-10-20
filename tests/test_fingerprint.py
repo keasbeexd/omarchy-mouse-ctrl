@@ -78,9 +78,9 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(fingerprint.scan(self.fs.sysfs, self.fs.dev), [])
 
     def test_control_characters_are_stripped_from_names(self):
-        self.fs.add(vid=1, pid=1, name="Evil\x1b[2JMouse", phys="usb-1/input0",
+        self.fs.add(vid=1, pid=1, name="Evil\x1b[2J\u009b31m\u202eMouse", phys="usb-1/input0",
                     desc=MOUSE_DESC, boot_protocol=2)
-        self.assertEqual(self.mice()[0].name, "Evil[2JMouse")
+        self.assertEqual(self.mice()[0].name, "Evil[2J31mMouse")
 
     def test_missing_sysfs_is_an_empty_machine(self):
         self.assertEqual(fingerprint.scan("/nonexistent/hidraw", self.fs.dev), [])

@@ -79,10 +79,46 @@ class RatbagTest(unittest.TestCase):
         with self.assertRaisesRegex(RatbagError, "no active profile"):
             self.ratbag.read(DEVICE)
 
+    def test_device_strings_are_cleaned(self):
+        self.daemon.props[(DEVICE, "Device")]["Name"] = v("s", "G Pro\x1b]52;c;evil\x07\u202e")
+        self.assertEqual(self.ratbag.read(DEVICE)["name"], "G Pro]52;c;evil")
+
     def test_short_output_is_an_error(self):
         ratbag = Ratbag(lambda args: '{"type":"s","data":"x"}\n', self.service_file)
         with self.assertRaisesRegex(RatbagError, "expected 3 values"):
             ratbag.read(DEVICE)
+
+
+
+class BusctlTest(unittest.TestCase):
+    """The real runner against stand-in programs: caps and deadlines hold."""
+
+    def run_with(self, script):
+        from unittest import mock
+        from mousectrl import ratbag
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fake = os.path.join(tmp.name, "busctl")
+        with open(fake, "w") as fh:
+            fh.write("#!/usr/bin/bash\n" + script)
+        os.chmod(fake, 0o700)
+        with mock.patch.object(ratbag, "BUSCTL", fake), mock.patch.object(ratbag, "_TIMEOUT", 1.0):
+            return ratbag._busctl(["get-property"])
+
+    def test_normal_output(self):
+        self.assertEqual(self.run_with('echo \'{"type":"i","data":2}\''), '{"type":"i","data":2}\n')
+
+    def test_oversized_output_is_refused(self):
+        with self.assertRaisesRegex(RatbagError, "exceeded"):
+            self.run_with("head -c 200000 /dev/zero")
+
+    def test_hanging_busctl_is_killed(self):
+        with self.assertRaisesRegex(RatbagError, "in time"):
+            self.run_with("sleep 30")
+
+    def test_failure_exit_is_an_error(self):
+        with self.assertRaisesRegex(RatbagError, "exited 1"):
+            self.run_with("exit 1")
 
 
 if __name__ == "__main__":

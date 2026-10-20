@@ -15,8 +15,13 @@ from __future__ import annotations
 
 import json
 import os
+import select
+import signal
 import subprocess
+import time
 from typing import Any, Callable
+
+from .fingerprint import clean_text
 
 BUSCTL = "/usr/bin/busctl"
 SERVICE = "org.freedesktop.ratbag1"
@@ -26,6 +31,7 @@ API_VERSION = 2
 PIPER = "/usr/bin/piper"
 _IFACE = "org.freedesktop.ratbag1."
 _TIMEOUT = 3.0
+_MAX_OUTPUT = 65536
 _MAX_PROFILES = 16
 _MAX_RESOLUTIONS = 16
 
@@ -39,17 +45,45 @@ class RatbagError(Exception):
 
 
 def _busctl(args: list[str]) -> str:
+    """busctl's stdout, capped while it is read and bounded in time.
+
+    Run in its own session so a deadline or an overflow kills the whole
+    group; stderr is discarded rather than collected unbounded.
+    """
     try:
-        done = subprocess.run(
+        proc = subprocess.Popen(
             [BUSCTL, "--system", "--json=short", *args],
-            capture_output=True, text=True, timeout=_TIMEOUT, check=False,
-            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         raise RatbagError(f"busctl failed: {exc}") from exc
-    if done.returncode != 0:
-        raise RatbagError(done.stderr.strip()[:200] or f"busctl exited {done.returncode}")
-    return done.stdout
+    deadline = time.monotonic() + _TIMEOUT
+    out = b""
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise RatbagError("busctl did not finish in time")
+            if not select.select([proc.stdout], [], [], left)[0]:
+                continue
+            chunk = os.read(proc.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            out += chunk
+            if len(out) > _MAX_OUTPUT:
+                raise RatbagError(f"busctl output exceeded {_MAX_OUTPUT} bytes")
+        code = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired as exc:
+        raise RatbagError("busctl did not exit in time") from exc
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+        proc.stdout.close()
+    if code != 0:
+        raise RatbagError(f"busctl exited {code}")
+    return out.decode("utf-8", "replace")
 
 
 def _unwrap(node: Any) -> Any:
@@ -109,8 +143,8 @@ class Ratbag:
             if active is True and disabled is not True:
                 rate, resolutions = self._get(profile, "Profile", "ReportRate", "Resolutions")
                 return {
-                    "name": str(name)[:80],
-                    "firmware": str(firmware)[:40],
+                    "name": clean_text(str(name), 80),
+                    "firmware": clean_text(str(firmware), 40),
                     "profile": index + 1,
                     "profiles": len(profiles),
                     "pollingRate": rate if isinstance(rate, int) else None,

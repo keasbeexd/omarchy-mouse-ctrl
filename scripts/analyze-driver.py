@@ -24,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -89,6 +90,40 @@ class Finding:
 # --- extraction -------------------------------------------------------------
 
 
+# Vendor archives are untrusted: bound what they may unpack to.
+MAX_MEMBERS = 20000
+MAX_UNPACKED = 2 * 1024 ** 3
+# Absolute paths: a tool found on PATH could be anything.
+EXTRACTORS = (("/usr/bin/7z", ["x", "-y", "-snl-"]), ("/usr/bin/unrar", ["x", "-y", "-ol-"]))
+
+
+def check_zip(zf: zipfile.ZipFile) -> None:
+    """Refuse traversal, absolute paths, symlinks and zip bombs before extracting."""
+    members = zf.infolist()
+    if len(members) > MAX_MEMBERS:
+        raise SystemExit(f"archive has {len(members)} entries; refusing more than {MAX_MEMBERS}")
+    total = 0
+    for info in members:
+        name = info.filename
+        if name.startswith(("/", "\\")) or ".." in name.replace("\\", "/").split("/"):
+            raise SystemExit(f"archive member {name!r} escapes the extraction directory")
+        if (info.external_attr >> 16) & 0o170000 == 0o120000:
+            raise SystemExit(f"archive member {name!r} is a symlink")
+        total += info.file_size
+        if total > MAX_UNPACKED:
+            raise SystemExit(f"archive unpacks to more than {MAX_UNPACKED} bytes")
+
+
+def check_tree(root: str) -> None:
+    """After an external extractor: only regular files and directories."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in dirnames + filenames:
+            path = os.path.join(dirpath, name)
+            st = os.lstat(path)
+            if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+                raise SystemExit(f"extracted {path} is not a regular file; refusing the archive")
+
+
 def extract(archive: str, dest: str) -> str:
     lower = archive.lower()
     if os.path.isdir(archive):
@@ -96,20 +131,23 @@ def extract(archive: str, dest: str) -> str:
     os.makedirs(dest, exist_ok=True)
     if lower.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
+            check_zip(zf)
             zf.extractall(dest)
         return dest
-    for tool, args in (("7z", ["x", "-y", f"-o{dest}"]), ("unrar", ["x", "-y"])):
-        if shutil.which(tool):
-            cmd = [tool] + args + [os.path.abspath(archive)]
+    for tool, args in EXTRACTORS:
+        if os.access(tool, os.X_OK):
+            cmd = [tool] + args + ([f"-o{dest}"] if tool.endswith("7z") else []) + ["--", os.path.abspath(archive)]
             result = subprocess.run(
-                cmd, cwd=dest if tool == "unrar" else None,
-                capture_output=True, text=True
+                cmd, cwd=dest if tool.endswith("unrar") else None,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=600,
             )
             if result.returncode == 0:
+                check_tree(dest)
                 return dest
     raise SystemExit(
-        f"could not extract {archive}. Install p7zip-full (for .rar/.exe) "
-        f"or unzip, or extract it yourself and point me at the folder."
+        f"could not extract {archive}. Install p7zip (for .rar/.exe) "
+        f"or unrar, or extract it yourself and point me at the folder."
     )
 
 
@@ -439,7 +477,7 @@ def main(argv=None) -> int:
     ap.add_argument("--limit", type=int, default=12, help="how many files to detail")
     args = ap.parse_args(argv)
 
-    tmp = tempfile.mkdtemp(prefix="hsk-driver-")
+    tmp = tempfile.mkdtemp(prefix="mousectrl-driver-")
     try:
         root = extract(args.archive, tmp)
         findings = [classify(p) for p in walk_files(root)]
@@ -504,8 +542,8 @@ def main(argv=None) -> int:
             print("Re-run with --json report.json to keep the full detail.")
         return 0
     finally:
-        if root != args.archive:
-            shutil.rmtree(tmp, ignore_errors=True)
+        # Ours alone (mkdtemp); empty when the input was a folder.
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
