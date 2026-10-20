@@ -362,7 +362,45 @@ def cmd_sweep(args) -> int:
                       "moving in an action round is NOT attributed to "
                       "that action.")
 
-    payload = p if not args.diff else {**p, "diffRounds": rounds}
+    matched = []
+    if args.seek:
+        if not p["answers"]:
+            print("\nno alive opcodes -- nothing to seek in.")
+        else:
+            try:
+                values = [int(v) for v in args.seek.split(",") if v.strip()]
+            except ValueError:
+                return _fail(
+                    f"--seek takes comma-separated integers, got {args.seek!r}",
+                    args.json,
+                )
+            if not values:
+                return _fail("--seek needs at least one integer value", args.json)
+            print(f"\nseeking your declared values {values} across the "
+                  "trusted windows (candidates only -- 16-bit numbers "
+                  "occur by chance; block coverage is what separates a "
+                  "stage table from a coincidence):")
+            result = sweep.seek_values(target, p["answers"], values)
+            p["packetsSent"] += len(p["answers"])
+            if not result["hits"]:
+                print("  no encoding of any declared value appears in any "
+                      "trusted window. The encoding may be exotic (scaled, "
+                      "bit-packed, in a block this sweep keeps silent) -- "
+                      "or the declared value wrong for the current state.")
+            else:
+                for block in result["blocksByCoverage"]:
+                    print(f"  {block['opcode']}: holds {block['distinct']} "
+                          f"of {block['of']} declared values.")
+                for h in result["hits"]:
+                    print(f"    {h['opcode']} byte {h['index']:2d} "
+                          f"{h['encoding']:5s} == {h['value']}")
+            matched = result
+
+    payload = p
+    if args.diff:
+        payload = {**payload, "diffRounds": rounds}
+    if args.seek:
+        payload = {**payload, "seek": matched}
 
     def human(p):
         print(f"node          : {p['node']}")
@@ -2664,6 +2702,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--diff", action="store_true",
         help="after the sweep, run the interactive diff rounds: snapshot, "
              "you act at the mouse, snapshot, report which bytes moved",
+    )
+    sweep_args.add_argument(
+        "--seek",
+        help="declared-truth search: comma-separated values (e.g. your DPI "
+             "stage values) matched against every trusted byte window as "
+             "u8/u16le/u16be candidates",
     )
     sweep_args.set_defaults(func=cmd_sweep)
     sub.add_parser(

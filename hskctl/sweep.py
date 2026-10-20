@@ -138,6 +138,75 @@ def read_round(path: str, alive: list[dict]) -> dict[str, bytes]:
     return out
 
 
+def seek_values(path: str, answers: list[dict], values: list[int]) -> dict:
+    """Find where the user's OWN declared values live on the wire.
+
+    The user is the sensor: they know their DPI stage values, polling
+    rate, whatever their mouse shipped declaring. This reads every alive
+    opcode once and reports every (opcode, offset, encoding) position
+    where one of the declared values appears inside the trusted window.
+
+    Interpreted encodings are deliberately small: u8, u16 little-endian,
+    u16 big-endian. Anything more exotic is the verification round's
+    business, not the search's.
+
+    Honest framing, which the caller must keep: hits are CANDIDATES.
+    A 16-bit number band hits by chance in sixty bytes; the report
+    counts how many declared values occur in the SAME opcode (a stage
+    table holding 3 declared values in one block is a very different
+    kind of candidate than a single distant match), and every hit rides
+    into the draft profile unverified, with its provenance, or not at
+    all.
+    """
+    replies = read_round(path, answers)
+    hits: list[dict] = []
+    per_opcode: dict[str, list[int]] = {}
+    windows = payload_windows(answers)
+    for opcode, reply in replies.items():
+        lo, hi = windows.get(opcode, (5, 5))
+        for value in values:
+            # u8
+            for i in range(lo, hi):
+                if reply[i] == (value & 0xFF) and 0 <= value <= 0xFF:
+                    hits.append({"value": value, "opcode": opcode,
+                                 "index": i, "encoding": "u8"})
+                    per_opcode.setdefault(opcode, []).append(value)
+            # u16 le / be -- aligned to whole bytes inside the window
+            if 0 <= value <= 0xFFFF and hi - lo >= 2:
+                for i in range(lo, hi - 1):
+                    pair = reply[i] | (reply[i + 1] << 8)
+                    swapped = (reply[i] << 8) | reply[i + 1]
+                    if pair == value and value > 0xFF:
+                        hits.append({"value": value, "opcode": opcode,
+                                     "index": i, "encoding": "u16le"})
+                        per_opcode.setdefault(opcode, []).append(value)
+                    elif swapped == value and value > 0xFF:
+                        hits.append({"value": value, "opcode": opcode,
+                                     "index": i, "encoding": "u16be"})
+                        per_opcode.setdefault(opcode, []).append(value)
+    # Deduplicate identical (value, opcode, index, encoding) sightings and
+    # rank opcodes by how many DISTINCT declared values they contain.
+    seen = set()
+    unique = []
+    for hit in hits:
+        key = (hit["value"], hit["opcode"], hit["index"], hit["encoding"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(hit)
+    ranked = sorted(
+        per_opcode.items(),
+        key=lambda kv: (-len(set(kv[1])), kv[0]),
+    )
+    return {
+        "values": values,
+        "hits": unique,
+        "blocksByCoverage": [
+            {"opcode": opcode, "distinct": len(set(vals)), "of": len(values)}
+            for opcode, vals in ranked
+        ],
+    }
+
+
 def diff_maps(before: dict[str, bytes], after: dict[str, bytes],
               windows: dict[str, tuple[int, int]] | None = None
               ) -> list[dict]:
@@ -171,17 +240,18 @@ def diff_maps(before: dict[str, bytes], after: dict[str, bytes],
 
 
 def payload_windows(answers: list[dict]) -> dict[str, tuple[int, int]]:
-    """The trusted window per opcode, from the sweep's length oracle."""
+    """The trusted window per opcode, from the sweep's length oracle.
+
+    The boundary is the firmware's own declared length, period. The
+    ambient-round evidence settled this the hard way: bytes past
+    5 + declaredLength are driver tails that move on their own (the
+    earlier "long blocks undercount" rule would have trusted them), and
+    every observed tail byte -- 0x82@6, 0x88@11, 0x83@56 with len 51 --
+    violated exactly that boundary.
+    """
     windows = {}
     for a in answers:
-        length = a["trueLength"]
-        # The 8-byte cliff: everything the recovered families' scalar
-        # commands report sits inside their declared length; every block
-        # read that ever mattered (dpi 57, led 5..) starts there and the
-        # echo undercounts. Between 5 and 8 bytes we keep the declared
-        # length; small enough that the tail has no proven semantics.
-        hi = 65 if length > 8 else 5 + length
-        windows[a["opcode"]] = (5, hi)
+        windows[a["opcode"]] = (5, 5 + a["trueLength"])
     return windows
 
 
