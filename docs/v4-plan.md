@@ -211,6 +211,21 @@ report of the stage, and count writes store without effect. Open: whether
 receiver (no community code; needs a Pulsar Fusion capture). Details in
 docs/profiles/pulsar-x2h-mini.md.
 
+**Phase 4 (panel) — done.** The QML is rewritten (`Panel.qml`,
+`Backend.qml`, `DpiStages.qml`, `SettingRow.qml`, `Model.js`) and v3's
+`hskctl/`, `Service.qml` and `profiles/` are deleted. The panel draws from
+capabilities alone, grouped into sections the drivers tag (`group`:
+dpi, performance, sensor, power, device). Lessons:
+
+- The shell's hot reload does not reach a symlinked plugin (its
+  `inotifywait -r` does not follow the link, and `Qt.clearComponentCache`
+  is not available, so `rescanPlugins` reuses the compiled component).
+  Developing through `install.sh --dev` needs `omarchy-restart-shell`.
+- The HSK has no DPI button, so its stage count is not offered.
+- Every write is logged: `journalctl --user -t omarchy-shell | grep mousectrl`.
+- Tests: `python3 -I -m unittest discover -s tests -t tests` and
+  `node --test tests/`.
+
 ## Settled after the session
 
 - Plugin id stays `keasbeexd.mousectrl`; v4 replaces v3 in place.

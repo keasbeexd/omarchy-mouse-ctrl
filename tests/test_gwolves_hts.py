@@ -164,13 +164,8 @@ class GWolvesHtsTest(unittest.TestCase):
     def test_stage_count_mismatch_is_refused(self):
         value = self.driver.read("dpiStages")
         value["stages"] = value["stages"][:3]
-        with self.assertRaisesRegex(InvalidValue, "dpiStageCount"):
+        with self.assertRaisesRegex(InvalidValue, "cannot change"):
             self.driver.write("dpiStages", value)
-
-    def test_stage_count_write_clamps_active(self):
-        self.mouse.active = 5
-        self.assertEqual(self.driver.write("dpiStageCount", 3), 3)
-        self.assertEqual(self.mouse.active, 3)
 
     def test_polling_uses_the_measured_map(self):
         self.assertEqual(self.driver.write("pollingRate", 4000), 4000)

@@ -25,6 +25,10 @@ from ..errors import InvalidValue
 from ..fingerprint import Fingerprint
 
 KINDS = ("battery", "dpiStages", "enum", "toggle", "duration", "info")
+# Panel sections, in display order. "device" holds read-only facts shown in
+# the footer.
+GROUPS = ("dpi", "performance", "sensor", "power", "device")
+_DEFAULT_GROUP = {"battery": "device", "info": "device", "dpiStages": "dpi"}
 READ_ONLY_KINDS = ("battery", "info")
 
 # Proven on hardware by whoever wrote the driver, or not yet.
@@ -48,7 +52,12 @@ class Capability:
     step: int | None = None
     max_stages: int | None = None
     has_colors: bool = False
+    # dpiStages only: whether a write may change the active stage. The panel
+    # uses it to decide if clicking a stage switches to it or only selects it.
+    switchable: bool = True
     unit: str = ""
+    # Panel section; defaults by kind where the kind decides it.
+    group: str = ""
 
     def __post_init__(self) -> None:
         if not _ID_RE.match(self.id):
@@ -63,6 +72,12 @@ class Capability:
             raise ValueError(f"capability {self.id}: dpiStages needs minimum, maximum and max_stages")
         if self.kind == "duration" and (self.minimum is None or self.maximum is None):
             raise ValueError(f"capability {self.id}: a duration needs minimum and maximum")
+        if not self.group:
+            if self.kind not in _DEFAULT_GROUP:
+                raise ValueError(f"capability {self.id}: a {self.kind} needs a group")
+            object.__setattr__(self, "group", _DEFAULT_GROUP[self.kind])
+        if self.group not in GROUPS:
+            raise ValueError(f"capability {self.id}: unknown group {self.group!r}")
 
     @property
     def writable_by_driver(self) -> bool:
@@ -81,7 +96,9 @@ class Capability:
             "step": self.step,
             "maxStages": self.max_stages,
             "hasColors": self.has_colors,
+            "switchable": self.switchable,
             "unit": self.unit,
+            "group": self.group,
         }
 
 

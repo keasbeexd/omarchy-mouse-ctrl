@@ -1,5 +1,10 @@
 # Mouse CTRL - Utility for HSK and Pulsar Mice
 
+> **v4 rewrite in progress on this branch.** The CLI is now `mousectrl`
+> (`mousectrl devices`, `mousectrl read <vid:pid>`); `hskctl` and the
+> commands documented below are gone. This README is rewritten in phase 7 of
+> [docs/v4-plan.md](docs/v4-plan.md).
+
 Battery, DPI, polling rate and sensor settings for supported **G-Wolves** and
 **Pulsar** mice, in the Omarchy bar. The widget and panel take every color
 from your active Omarchy theme.

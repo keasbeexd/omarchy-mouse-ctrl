@@ -83,8 +83,9 @@ class FakeDriver(Driver):
     def capabilities(self) -> list[Capability]:
         return [
             Capability("battery", "battery", "Battery", VERIFIED),
-            Capability("pollingRate", "enum", "Polling rate", VERIFIED, options=(1000, 2000, 4000)),
-            Capability("motionSync", "toggle", "Motion sync", UNTESTED),
+            Capability("pollingRate", "enum", "Polling rate", VERIFIED, options=(1000, 2000, 4000),
+                       group="performance"),
+            Capability("motionSync", "toggle", "Motion sync", UNTESTED, group="sensor"),
             Capability("dpi", "dpiStages", "DPI", VERIFIED, minimum=100, maximum=26000,
                        step=50, max_stages=7, has_colors=True),
         ]

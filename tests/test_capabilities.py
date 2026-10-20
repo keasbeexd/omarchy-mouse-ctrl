@@ -18,11 +18,19 @@ class CapabilityTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Capability("x", "slider", "X", VERIFIED)
         with self.assertRaises(ValueError):
-            Capability("x", "toggle", "X", "probably")
+            Capability("x", "toggle", "X", "probably", group="sensor")
 
     def test_enum_needs_options(self):
         with self.assertRaises(ValueError):
-            Capability("x", "enum", "X", VERIFIED)
+            Capability("x", "enum", "X", VERIFIED, group="performance")
+
+    def test_group_defaults_by_kind_and_is_required_otherwise(self):
+        self.assertEqual(Capability("b", "battery", "B", VERIFIED).group, "device")
+        self.assertEqual(DPI.group, "dpi")
+        with self.assertRaisesRegex(ValueError, "needs a group"):
+            Capability("x", "toggle", "X", VERIFIED)
+        with self.assertRaisesRegex(ValueError, "unknown group"):
+            Capability("x", "toggle", "X", VERIFIED, group="misc")
 
     def test_battery_is_never_writable(self):
         cap = Capability("battery", "battery", "Battery", VERIFIED)
@@ -33,19 +41,20 @@ class CapabilityTest(unittest.TestCase):
 
 class ValidateValueTest(unittest.TestCase):
     def test_enum_does_not_accept_bool_for_int(self):
-        cap = Capability("rate", "enum", "Rate", VERIFIED, options=(1, 2))
+        cap = Capability("rate", "enum", "Rate", VERIFIED, options=(1, 2), group="performance")
         self.assertEqual(validate_value(cap, 1), 1)
         with self.assertRaises(InvalidValue):
             validate_value(cap, True)
 
     def test_toggle_needs_a_real_bool(self):
-        cap = Capability("snap", "toggle", "Snap", UNTESTED)
+        cap = Capability("snap", "toggle", "Snap", UNTESTED, group="sensor")
         self.assertIs(validate_value(cap, False), False)
         with self.assertRaises(InvalidValue):
             validate_value(cap, 0)
 
     def test_duration_bounds_and_step(self):
-        cap = Capability("sleep", "duration", "Sleep", VERIFIED, minimum=10, maximum=600, step=10)
+        cap = Capability("sleep", "duration", "Sleep", VERIFIED, minimum=10, maximum=600, step=10,
+                         group="power")
         self.assertEqual(validate_value(cap, 60), 60)
         for bad in (5, 601, 65, "60"):
             with self.assertRaises(InvalidValue):

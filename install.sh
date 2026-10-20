@@ -2,8 +2,8 @@
 # Setup for the Mouse CTRL plugin.
 #
 #   --udev       grant your user access to the mouse            (REQUIRED)
-               (append --yes to skip the confirm; the rule text is still shown)
-#   --link       put `hskctl` on your PATH for use in a terminal
+#                (append --yes to skip the confirm; the rule text is still shown)
+#   --link       put `mousectrl` on your PATH for use in a terminal
 #   --plugin     copy the plugin into place by hand, if you cloned it yourself
 #   --dev        symlink this checkout into the plugins dir, for hacking on it
 #   --uninstall  undo --link and --dev (a --plugin copy is removed with
@@ -15,14 +15,11 @@
 # feature report, and the hidraw ioctls that carry those need the node opened
 # read-write -- so without the rule the plugin cannot even read the battery.
 #
-# This script was once deliberately self-contained: the rule was a heredoc
-# below, because a plugin is distributed by cloning a repository and a file
-# that must be present is a file that can go missing. In v3 the rule text has
-# one source of truth -- the engine, which additionally knows the connected
-# hardware and the per VID:PID lines user-authored profiles claim -- and the
-# heredoc stays only as a fallback for a machine where the engine will not
-# run. Either way, every line is validated against one narrow pattern before
-# root installs it.
+# The rule text has one source of truth, `mousectrl udev-rule`, which knows
+# every family driver's vendor ids and the per VID:PID lines profiles claim.
+# The heredoc below stays only as a fallback for a machine where mousectrl
+# will not run. Either way, every line is validated against one narrow
+# pattern before root installs it.
 
 set -euo pipefail
 
@@ -30,7 +27,7 @@ set -euo pipefail
 # is resolved through a fixed PATH, not the caller's. `udev_rule_text` builds
 # the text that `sudo install` writes into /etc, so a `cat` or `sed` shadowed
 # earlier on PATH would otherwise get to choose what root installs. The
-# caller's PATH is kept only to say whether hskctl will be found on it.
+# caller's PATH is kept only to say whether mousectrl will be found on it.
 USER_PATH="${PATH:-}"
 PATH=/usr/bin:/bin
 export PATH
@@ -61,13 +58,12 @@ OLD_UDEV_RULES=(
   "/etc/udev/rules.d/60-gwolves-hsk.rules"
   "/etc/udev/rules.d/60-mousectl.rules"
 )
-# One vendor id per supported mouse family. Every id here gets the same
-# uaccess rule -- broadening this list is how a new mouse's udev access is
-# added, the same way profiles/*.json is how its protocol is added.
+# Fallback only: the vendor ids the family drivers in mousectrl/families/
+# claim, for a machine where `mousectrl udev-rule` will not run.
 VENDOR_IDS=(
-  "33e4:G-Wolves (HSK Pro 4K and siblings)"
-  "3710:Pulsar (wired models, and the X2A/Feinmann wireless dongles)"
-  "3554:Pulsar (Nordic wireless dongle -- X2A/X2 V2 Mini family, X2H mini until confirmed)"
+  "25a7:Pulsar (Cfg.ini alternate id)"
+  "33e4:G-Wolves (G-Wolves HTS)"
+  "3554:Pulsar (Pulsar Nordic)"
 )
 
 info() { printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -82,11 +78,11 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # `-I -S` is Python's isolated mode with no site-packages -- no PYTHONPATH, no
 # user site dir -- so a same-user process cannot shadow the json module by
 # dropping a file in it. The manifest is read through the same bundled
-# no-symlink, size-capped reader hskctl uses for every file it did not create.
+# no-symlink, size-capped reader mousectrl uses for every file it did not create.
 # sed (on at most 64 KiB) is the fallback for a system without python so
 # `install.sh --help` still works.
 PLUGIN_ID="$(
-  "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.safeio import read_bounded_json; print(read_bounded_json(sys.argv[2], 65536).get("id", ""))' \
+  "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from mousectrl.safeio import read_bounded_json; print(read_bounded_json(sys.argv[2], 65536).get("id", ""))' \
     "$REPO_DIR" "$REPO_DIR/manifest.json" 2>/dev/null \
   || head -c 65536 -- "$REPO_DIR/manifest.json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 )"
@@ -121,7 +117,7 @@ bundled_rule_text() {
 # Configuring the mouse means sending HID *feature* reports, and the hidraw
 # ioctls for those (HIDIOCSFEATURE / HIDIOCGFEATURE) require the device node to
 # be opened read-write. The default mode on /dev/hidraw* is root-only, so
-# without this rule hskctl and the Omarchy panel cannot talk to the mouse at
+# without this rule mousectrl and the Omarchy panel cannot talk to the mouse at
 # all -- not even to read the battery.
 #
 # uaccess hands read-write to whoever is logged in at the seat, which is the
@@ -155,20 +151,17 @@ validate_rule_text() {
 }
 
 rule_file_text() {
-  # Primary source: the engine, which adds per VID:PID lines for
-  # user-authored profiles and for the hidraw nodes actually on this machine
-  # (read from world-readable /sys, so it works before the rule exists).
+  # Primary source: mousectrl, which adds per VID:PID lines for profiled
+  # mice outside the supported families.
   local text=""
-  if [[ -x "$REPO_DIR/bin/hskctl" && -x "$PYTHON" ]]; then
-    text="$(
-      "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.cli import _udev_payload; print(_udev_payload()["text"], end="")' "$REPO_DIR" 2>/dev/null || true
-    )"
+  if [[ -x "$REPO_DIR/bin/mousectrl" && -x "$PYTHON" ]]; then
+    text="$("$REPO_DIR/bin/mousectrl" udev-rule 2>/dev/null || true)"
   fi
-  if validate_rule_text <<<"$text"; then
+  if validate_rule_text <<<"$text" >/dev/null; then
     printf '%s\n' "$text"
     return 0
   fi
-  warn "engine-generated rule text missing or not validated -- using the bundled whole-vendor rule only"
+  warn "mousectrl's rule text missing or not validated -- using the bundled whole-vendor rule only"
   bundled_rule_text
 }
 
@@ -228,17 +221,36 @@ install_udev() {
   info "the device next appears, not to one that is already plugged in."
 }
 
-link_cli() {
-  info "Linking hskctl into $BIN_DIR"
-  public_dir "$BIN_DIR"
-  # -f replaces an existing symlink; refuse to replace a real file. The
-  # previous version replaced whichever was there, which is fine for a symlink
-  # this script previously installed but silently overwrites a real binary the
-  # user happens to have named `hskctl`.
-  if [[ -e "$BIN_DIR/hskctl" && ! -L "$BIN_DIR/hskctl" ]]; then
-    die "$BIN_DIR/hskctl exists and is not a symlink; move it aside first"
+# Remove $BIN_DIR/<name> only if it is a symlink this script made, pointing
+# into this checkout. `hskctl` is v3's name for the CLI; its link dangles
+# once v3 is gone.
+remove_own_link() {
+  local name="$1" link_target
+  if [[ -L "$BIN_DIR/$name" ]]; then
+    link_target=$(readlink -- "$BIN_DIR/$name" || true)
+    if [[ "$link_target" == "$REPO_DIR/bin/$name" ]]; then
+      "$RM" -f -- "$BIN_DIR/$name"
+      info "Removed $BIN_DIR/$name"
+    else
+      warn "$BIN_DIR/$name points elsewhere ($link_target); leaving it in place"
+    fi
+  elif [[ -e "$BIN_DIR/$name" ]]; then
+    warn "$BIN_DIR/$name is not a symlink; leaving it in place"
   fi
-  "$LN" -sfn "$REPO_DIR/bin/hskctl" "$BIN_DIR/hskctl"
+}
+
+link_cli() {
+  info "Linking mousectrl into $BIN_DIR"
+  public_dir "$BIN_DIR"
+  # -f replaces an existing symlink; refuse to replace a real file the user
+  # happens to have named `mousectrl`.
+  if [[ -e "$BIN_DIR/mousectrl" && ! -L "$BIN_DIR/mousectrl" ]]; then
+    die "$BIN_DIR/mousectrl exists and is not a symlink; move it aside first"
+  fi
+  "$LN" -sfn "$REPO_DIR/bin/mousectrl" "$BIN_DIR/mousectrl"
+  if [[ -L "$BIN_DIR/hskctl" ]]; then
+    remove_own_link hskctl
+  fi
   case ":$USER_PATH:" in
     *":$BIN_DIR:"*) ;;
     *) warn "$BIN_DIR is not on your PATH" ;;
@@ -295,17 +307,8 @@ uninstall() {
   # directory (from --plugin, or from `omarchy plugin add`) belongs to
   # Omarchy's own plugin manager, which removes it.
   local link_target
-  if [[ -L "$BIN_DIR/hskctl" ]]; then
-    link_target=$(readlink -- "$BIN_DIR/hskctl" || true)
-    if [[ "$link_target" == "$REPO_DIR/bin/hskctl" ]]; then
-      "$RM" -f -- "$BIN_DIR/hskctl"
-      info "Removed $BIN_DIR/hskctl"
-    else
-      warn "$BIN_DIR/hskctl points elsewhere ($link_target); leaving it in place"
-    fi
-  elif [[ -e "$BIN_DIR/hskctl" ]]; then
-    warn "$BIN_DIR/hskctl is not a symlink; leaving it in place"
-  fi
+  remove_own_link mousectrl
+  remove_own_link hskctl
 
   if [[ -L "$PLUGIN_DIR" ]]; then
     link_target=$(readlink -- "$PLUGIN_DIR" || true)
@@ -336,9 +339,8 @@ case "${1:-}" in
     link_cli
     echo
     info "Done. Check it sees the mouse:"
-    echo "     hskctl probe      # finds the config endpoint"
-    echo "     hskctl status     # reads every setting"
-    echo "     hskctl doctor     # if either of those looks wrong"
+    echo "     mousectrl devices           # lists mice and their family"
+    echo "     mousectrl read <vid:pid>    # reads every setting"
     ;;
   *) die "unknown option: $1 (try --help)" ;;
 esac

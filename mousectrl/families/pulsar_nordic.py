@@ -78,20 +78,24 @@ TOGGLES = {
 CAPABILITIES = (
     Capability("battery", "battery", "Battery", VERIFIED),
     Capability("firmware", "info", "Firmware", VERIFIED),
+    # 0x04 only reports the live stage; switching needs a command not yet known.
     Capability("dpiStages", "dpiStages", "DPI stages", VERIFIED, minimum=DPI_MIN,
-               maximum=DPI_MAX, step=DPI_STEP, max_stages=MAX_STAGES, has_colors=True),
+               maximum=DPI_MAX, step=DPI_STEP, max_stages=MAX_STAGES, has_colors=True,
+               switchable=False),
     # 8000 is in the register map (a Nordic sibling) but untested on a 4K
     # dongle, so it is not offered.
     Capability("pollingRate", "enum", "Polling rate", VERIFIED,
-               options=(125, 250, 500, 1000, 2000, 4000), unit="Hz"),
-    Capability("liftOff", "enum", "Lift-off distance", VERIFIED, options=LIFT_OFF_MM, unit="mm"),
-    Capability("motionSync", "toggle", "Motion sync", VERIFIED),
-    Capability("angleSnap", "toggle", "Angle snapping", VERIFIED),
-    Capability("rippleControl", "toggle", "Ripple control", VERIFIED),
-    Capability("turboMode", "toggle", "Turbo mode", VERIFIED),
+               options=(125, 250, 500, 1000, 2000, 4000), unit="Hz", group="performance"),
+    Capability("liftOff", "enum", "Lift-off distance", VERIFIED, options=LIFT_OFF_MM, unit="mm",
+               group="performance"),
+    Capability("motionSync", "toggle", "Motion sync", VERIFIED, group="sensor"),
+    Capability("angleSnap", "toggle", "Angle snapping", VERIFIED, group="sensor"),
+    Capability("rippleControl", "toggle", "Ripple control", VERIFIED, group="sensor"),
+    Capability("turboMode", "toggle", "Turbo mode", VERIFIED, group="sensor"),
     Capability("sleepSeconds", "duration", "Sleep after", VERIFIED,
-               minimum=30, maximum=2550, step=30, unit="s"),
-    Capability("debounce", "duration", "Debounce", VERIFIED, minimum=0, maximum=30, unit="ms"),
+               minimum=30, maximum=2550, step=30, unit="s", group="power"),
+    Capability("debounce", "duration", "Debounce", VERIFIED, minimum=0, maximum=30, unit="ms",
+               group="performance"),
 )
 
 
@@ -152,7 +156,7 @@ class PulsarNordic(Driver):
         if self.fingerprint.product_id != ONE_K_RECEIVER:
             return list(CAPABILITIES)
         one_k = Capability("pollingRate", "enum", "Polling rate", UNTESTED,
-                           options=(125, 250, 500, 1000), unit="Hz")
+                           options=(125, 250, 500, 1000), unit="Hz", group="performance")
         return [one_k if c.id == "pollingRate" else c for c in CAPABILITIES]
 
     # --- wire -------------------------------------------------------------
