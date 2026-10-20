@@ -156,6 +156,14 @@ Write what you find into a new family snapshot under
 who own the same transport family get a guided, verified setup from it) and
 let the engine interpret it. Resist putting any of it in Python.
 
+The first step of this procedure now runs itself: `hskctl sweep`
+consented, read-only, bounded -- sweeps a config-endpoint node with
+read-shaped packets and reports which opcodes answer, the raw reply
+heads, and the reply conventions (opcode echo position, ack byte, the
+firmware's length oracle). Run it before the manual capture; the diff
+rounds of the guided setup automate the pointer-action part above for
+mice that have no snapshot at all (plan Tier 2).
+
 ## Step 4 — verify before trusting
 
 Set `"status": "partial"` in the profile — that unlocks `hskctl`. Then:
