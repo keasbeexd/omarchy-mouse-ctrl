@@ -4,5 +4,6 @@ from __future__ import annotations
 
 from .base import Driver
 from .gwolves_hts import GWolvesHts
+from .pulsar_nordic import PulsarNordic
 
-FAMILIES: tuple[type[Driver], ...] = (GWolvesHts,)
+FAMILIES: tuple[type[Driver], ...] = (GWolvesHts, PulsarNordic)

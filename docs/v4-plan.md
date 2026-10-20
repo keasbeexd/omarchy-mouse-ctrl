@@ -198,12 +198,18 @@ What phase 2 established:
 - `serve` commands: `devices`, `capabilities`, `read`, `write`, `udev-rule`;
   events: `devices` (hotplug or permission change), `watcherFailed`.
 
-**Phase 3 (families) — HSK done, Pulsar next.** `gwolves_hts` is
+**Phase 3 (families) — HSK and Pulsar done.** `gwolves_hts` is
 rebuilt from the v2/v3 protocol and verified on the owner's HSK: every
 capability read correctly and every writable one round-tripped, stage count
 included (it was the one capability never tested before). Findings are in
-docs/profiles/gwolves-hsk-pro-4k.md. Pulsar was never finished in v3, so its
-driver starts from that doc's protocol notes and needs the X2H mini.
+docs/profiles/gwolves-hsk-pro-4k.md. `pulsar_nordic` is verified on the
+owner's X2H mini through the 4K receiver: every setting reads, and every
+writable one round-trips, including stage values beyond stage 1. Stage
+switching and the stage count stay refused: `0x04` turned out to be a live
+report of the stage, and count writes store without effect. Open: whether
+`ACTIVE_PROFILE_SET` or a reconnect makes them apply, and pairing the 1K
+receiver (no community code; needs a Pulsar Fusion capture). Details in
+docs/profiles/pulsar-x2h-mini.md.
 
 ## Settled after the session
 

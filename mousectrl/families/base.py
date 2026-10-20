@@ -10,7 +10,7 @@ Value shapes by capability kind (all JSON-safe):
 - dpiStages: {"active": int (0-based), "stages": [{"dpi": int, "color": "#rrggbb" | None}]}
 - enum:      one of Capability.options
 - toggle:    bool
-- duration:  int seconds, minimum..maximum
+- duration:  int in Capability.unit (s, ms), minimum..maximum
 - info:      str (firmware version, connection type)
 """
 
