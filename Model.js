@@ -1,433 +1,392 @@
-// Pure functions shared by Service.qml and Panel.qml. Keeping the parsing and
-// formatting out of QML makes the failure modes testable and keeps the panel
-// free of string surgery.
+// Pure helpers for Panel.qml and Backend.qml: validation of what `mousectrl
+// serve` reports, formatting, and the keyboard cursor's row list. No QML
+// objects in here, so every function can be exercised in plain JavaScript.
 
-// Neutralise a string for shared host components that render text with
-// Qt.AutoText and cannot be pinned to PlainText from a plugin -- BarIconButton
-// tooltips, PanelHero titles, section headers, ConfirmDialog messages. On
-// AutoText, Qt sniffs the string and enters rich-text mode if it looks like
-// markup; a rich-text `<img src="...">` in a device or setting name is then a
-// real fetch from the shell process to whatever the string's author picks.
-// So strip the three characters Qt keys on (& before < > because escaping <
-// as &lt; would turn it back on when Qt sees &), plus C0 and C1 controls and
-// bidi overrides, and cap the length so a runaway string cannot fill the bar.
-//
-// Every value from the device is a candidate: an HSK's product string is set
-// by the mouse's own firmware, an error message can carry any bytes hskctl
-// wants to include, and a model name in a future profile is free text.
+// Neutralise a string for host components that render with Qt.AutoText and
+// cannot be pinned to PlainText from a plugin (BarIconButton tooltips). On
+// AutoText, Qt enters rich-text mode for anything that looks like markup, and
+// a rich-text <img src="..."> is a real fetch from the shell process. Device
+// names come from the mouse's own firmware, so they are untrusted: strip the
+// characters Qt keys on, C0/C1 controls and bidi overrides, and cap length.
 function plain(text, limit) {
   var s = String(text == null ? "" : text)
-  var out = ""
   var cap = (typeof limit === "number" && limit > 0) ? limit : 200
+  var out = ""
   for (var i = 0; i < s.length && out.length < cap; i++) {
     var c = s.charCodeAt(i)
-    if (c < 0x20 || c === 0x7f) continue                        // C0 + DEL
-    if (c >= 0x80 && c <= 0x9f) continue                        // C1
-    if (c === 0x202a || c === 0x202b || c === 0x202c            // bidi
-        || c === 0x202d || c === 0x202e
-        || c === 0x2066 || c === 0x2067 || c === 0x2068 || c === 0x2069) continue
-    if (c === 0x26 /* & */ || c === 0x3c /* < */ || c === 0x3e /* > */) continue
+    if (c < 0x20 || c === 0x7f || (c >= 0x80 && c <= 0x9f)) continue
+    if ((c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) continue
+    if (c === 0x26 || c === 0x3c || c === 0x3e) continue
     out += s[i]
   }
   return out
 }
 
-// Fallback only, for a profile that reports no `allowed` list of its own (an
-// older hskctl, or a field with no `values`/min-max in the profile). Every one
-// of these was measured by timing the G-Wolves mouse's own reports -- a
-// different mouse's real rates come from its profile via `allowedRatesFor`
-// below, since a fixed list here cannot know about an 8000 Hz Pulsar.
-var POLLING_RATES = [250, 500, 1000, 2000, 4000]
-
-// The polling rates this specific mouse actually offers, from the `allowed`
-// map hskctl derives from the profile's `values` table. Falls back to the
-// G-Wolves list so an older hskctl (no `allowed` in its JSON) still works.
-function allowedRatesFor(allowed) {
-  var rates = allowed && allowed.pollingRate
-  if (!Array.isArray(rates)) return POLLING_RATES
-  var clean = []
-  for (var i = 0; i < rates.length && clean.length < MAX_ALLOWED_VALUES; i++) {
-    var r = rates[i]
-    if (typeof r === "number" && isFinite(r) && r === Math.floor(r) && r > 0 && r <= 100000
-        && clean.indexOf(r) === -1) clean.push(r)
-  }
-  if (clean.length === 0) return POLLING_RATES
-  return clean.sort(function(a, b) { return a - b })
-}
-
-// --- the shape of hskctl's JSON ---------------------------------------------
+// --- validating serve payloads ----------------------------------------------
 //
-// hskctl is our own CLI, but what it reports comes from the mouse's firmware
-// and from profiles, one of which can live in the user's ~/.config. So its
-// output is validated like any other input before anything is installed as a
-// model: field names are short identifiers, values are finite numbers,
-// booleans or short strings, and every collection is capped. Anything else
-// is dropped rather than coerced into shape.
+// serve is our own process, but what it relays comes from mice and from
+// profile files in the user's config. Anything off-shape is dropped, never
+// coerced, and every collection is capped.
 
-var MAX_FIELDS = 64
-var MAX_ALLOWED_VALUES = 32
-var MAX_VALUE_CHARS = 64
-var FIELD_NAME = /^[A-Za-z][A-Za-z0-9]{0,39}$/
-var STATES = ["loading", "ready", "undiscovered", "error"]
+var KINDS = ["battery", "dpiStages", "enum", "toggle", "duration", "info"]
+// Panel sections in display order; "device" is the footer.
+var GROUPS = ["dpi", "performance", "sensor", "power", "device"]
+var GROUP_TITLES = { dpi: "DPI", performance: "PERFORMANCE", sensor: "SENSOR", power: "POWER", device: "" }
+var CAP_ID = /^[a-z][a-zA-Z0-9]{0,31}$/
+var COLOR = /^#[0-9a-f]{6}$/
+var MAX_DEVICES = 16
+var MAX_CAPS = 64
+var MAX_OPTIONS = 32
+var MAX_STAGES = 16
 
-function isFieldName(key) {
-  return typeof key === "string" && FIELD_NAME.test(key)
-      && key !== "constructor" && key !== "prototype"
-}
-
-function isPlainObject(v) {
+function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v)
 }
 
-// A single reading: a finite number, a boolean, or a short plain string.
-// Returns undefined for anything else so callers can drop the field.
-function cleanValue(v) {
-  if (typeof v === "boolean") return v
-  if (typeof v === "number") return isFinite(v) ? v : undefined
-  if (typeof v === "string") return plain(v, MAX_VALUE_CHARS)
-  if (v === null) return null
+function isInt(v) {
+  return typeof v === "number" && isFinite(v) && Math.floor(v) === v
+}
+
+function cleanDevices(payload) {
+  if (!isObject(payload) || !Array.isArray(payload.devices)) return []
+  var out = []
+  for (var i = 0; i < payload.devices.length && out.length < MAX_DEVICES; i++) {
+    var d = payload.devices[i]
+    if (!isObject(d) || typeof d.key !== "string" || d.key.length > 200) continue
+    out.push({
+      key: d.key,
+      name: plain(d.name, 80),
+      vidpid: plain(d.vidpid, 9),
+      accessible: d.accessible === true,
+      family: isObject(d.family) ? { id: plain(d.family.id, 32), title: plain(d.family.title, 40) } : null,
+      profile: isObject(d.profile) ? { id: plain(d.profile.id, 64), name: plain(d.profile.name, 64) } : null
+    })
+  }
+  return out
+}
+
+function cleanCapability(c) {
+  if (!isObject(c) || typeof c.id !== "string" || !CAP_ID.test(c.id)) return null
+  if (KINDS.indexOf(c.kind) < 0 || GROUPS.indexOf(c.group) < 0) return null
+  var options = []
+  if (Array.isArray(c.options))
+    for (var i = 0; i < c.options.length && options.length < MAX_OPTIONS; i++) {
+      var o = c.options[i]
+      if (isInt(o) || (typeof o === "string" && o.length <= 32)) options.push(o)
+    }
+  if (c.kind === "enum" && options.length === 0) return null
+  return {
+    id: c.id,
+    kind: c.kind,
+    label: plain(c.label, 40),
+    unit: plain(c.unit, 8),
+    options: options,
+    minimum: isInt(c.minimum) ? c.minimum : null,
+    maximum: isInt(c.maximum) ? c.maximum : null,
+    step: isInt(c.step) && c.step > 0 ? c.step : 1,
+    maxStages: isInt(c.maxStages) ? Math.min(c.maxStages, MAX_STAGES) : null,
+    group: c.group,
+    verification: c.verification === "verified" ? "verified" : "untested",
+    readOnly: c.readOnly === true,
+    hasColors: c.hasColors === true,
+    switchable: c.switchable === true,
+    writable: c.writable === true,
+    visible: c.visible !== false,
+    state: typeof c.state === "string" ? c.state : null
+  }
+}
+
+// Valid capabilities in section order, driver order within a section.
+function cleanCapabilities(payload) {
+  if (!isObject(payload) || !Array.isArray(payload.capabilities)) return []
+  var out = []
+  for (var i = 0; i < payload.capabilities.length && out.length < MAX_CAPS; i++) {
+    var c = cleanCapability(payload.capabilities[i])
+    if (c !== null && c.state !== "rejected") out.push(c)
+  }
+  for (var j = 0; j < out.length; j++) out[j].order = GROUPS.indexOf(out[j].group) * MAX_CAPS + j
+  out.sort(function(a, b) { return a.order - b.order })
+  return out
+}
+
+function cleanStages(v) {
+  if (!isObject(v) || !Array.isArray(v.stages) || v.stages.length > MAX_STAGES) return null
+  var stages = []
+  for (var i = 0; i < v.stages.length; i++) {
+    var s = v.stages[i]
+    if (!isObject(s) || !isInt(s.dpi)) return null
+    stages.push({ dpi: s.dpi, color: typeof s.color === "string" && COLOR.test(s.color) ? s.color : null })
+  }
+  if (!isInt(v.active) || v.active < 0 || v.active >= stages.length) return null
+  return { active: v.active, stages: stages }
+}
+
+// A value is kept only if it has the shape its capability's kind defines.
+function cleanValue(cap, v) {
+  if (cap.kind === "battery") {
+    if (!isObject(v) || !isInt(v.percent) || v.percent < 0 || v.percent > 100) return undefined
+    return { percent: v.percent, charging: v.charging === true }
+  }
+  if (cap.kind === "dpiStages") {
+    var stages = cleanStages(v)
+    return stages === null ? undefined : stages
+  }
+  if (cap.kind === "toggle") return typeof v === "boolean" ? v : undefined
+  if (cap.kind === "duration") return isInt(v) ? v : undefined
+  if (cap.kind === "enum") return (isInt(v) || typeof v === "string") ? v : undefined
+  if (cap.kind === "info") return typeof v === "string" ? plain(v, 60) : undefined
   return undefined
 }
 
-function cleanSettings(raw) {
-  var out = {}
-  if (!isPlainObject(raw)) return out
-  var n = 0
-  for (var key in raw) {
-    if (n >= MAX_FIELDS) break
-    if (!Object.prototype.hasOwnProperty.call(raw, key) || !isFieldName(key)) continue
-    var v = cleanValue(raw[key])
-    if (v === undefined) continue
-    out[key] = v
-    n++
-  }
-  return out
+// --- lookups ----------------------------------------------------------------
+
+function findCap(caps, id) {
+  for (var i = 0; i < caps.length; i++) if (caps[i].id === id) return caps[i]
+  return null
 }
 
-function cleanWritable(raw) {
+function firstOfKind(caps, kind) {
+  for (var i = 0; i < caps.length; i++) if (caps[i].kind === kind && caps[i].visible) return caps[i]
+  return null
+}
+
+// The device to show: the one asked for if still connected, else the first
+// with a profile, else the first at all.
+function pickDevice(devices, preferredKey) {
+  for (var i = 0; i < devices.length; i++) if (devices[i].key === preferredKey) return devices[i]
+  for (var j = 0; j < devices.length; j++) if (devices[j].profile) return devices[j]
+  return devices.length > 0 ? devices[0] : null
+}
+
+function nextDeviceKey(devices, currentKey) {
+  if (devices.length === 0) return ""
+  for (var i = 0; i < devices.length; i++)
+    if (devices[i].key === currentKey) return devices[(i + 1) % devices.length].key
+  return devices[0].key
+}
+
+// The settings of one section, as drawn under its header: everything visible
+// except the stage list and battery, which have their own places.
+function sectionCaps(caps, group) {
+  return caps.filter(function(c) {
+    return c.group === group && c.visible && c.kind !== "dpiStages" && c.kind !== "battery"
+  })
+}
+
+// Non-empty sections after DPI, for the settings area.
+function settingSections(caps) {
   var out = []
-  if (!Array.isArray(raw)) return out
-  for (var i = 0; i < raw.length && out.length < MAX_FIELDS; i++) {
-    if (isFieldName(raw[i]) && out.indexOf(raw[i]) === -1) out.push(raw[i])
+  for (var i = 1; i < GROUPS.length - 1; i++) {
+    var list = sectionCaps(caps, GROUPS[i])
+    if (list.length > 0) out.push({ id: GROUPS[i], title: GROUP_TITLES[GROUPS[i]], caps: list })
   }
   return out
 }
 
-function cleanAllowed(raw) {
-  var out = {}
-  if (!isPlainObject(raw)) return out
-  var n = 0
-  for (var key in raw) {
-    if (n >= MAX_FIELDS) break
-    if (!Object.prototype.hasOwnProperty.call(raw, key) || !isFieldName(key)) continue
-    var list = raw[key]
-    if (!Array.isArray(list)) continue
-    var clean = []
-    for (var i = 0; i < list.length && clean.length < MAX_ALLOWED_VALUES; i++) {
-      var v = cleanValue(list[i])
-      if (v !== undefined && v !== null) clean.push(v)
-    }
-    out[key] = clean
-    n++
-  }
-  return out
+function footerText(caps, values) {
+  var parts = []
+  var device = sectionCaps(caps, "device")
+  for (var i = 0; i < device.length; i++)
+    if (values[device[i].id] !== undefined) parts.push(device[i].label + " " + valueText(device[i], values[device[i].id]))
+  return parts.join("  ·  ")
 }
 
-function parseStatus(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") {
-    return {
-      ok: false,
-      state: "error",
-      model: "",
-      settings: {},
-      error: "hskctl produced no output"
-    }
-  }
-  var parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch (e) {
-    return {
-      ok: false,
-      state: "error",
-      model: "",
-      settings: {},
-      // hskctl always emits JSON, so non-JSON here means the wrapper itself
-      // failed -- a missing interpreter, a stale PATH, a partial install.
-      error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200)
-    }
-  }
-  if (!isPlainObject(parsed)) {
-    return { ok: false, state: "error", model: "", settings: {}, error: "hskctl output is not an object" }
-  }
-  var state = typeof parsed.state === "string" ? parsed.state : (parsed.ok === true ? "ready" : "error")
-  if (STATES.indexOf(state) === -1) state = "error"
-  return {
-    ok: parsed.ok === true,
-    state: state,
-    model: typeof parsed.model === "string" ? plain(parsed.model, 120) : "",
-    device: typeof parsed.device === "string" ? plain(parsed.device, 120) : "",
-    detected: parsed.detected === true,
-    settings: cleanSettings(parsed.settings),
-    writable: cleanWritable(parsed.writable),
-    allowed: cleanAllowed(parsed.allowed),
-    version: typeof parsed.version === "string" ? plain(parsed.version, 32) : "",
-    error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
-  }
+// --- formatting -------------------------------------------------------------
+
+// Chip labels stay short so a row of them fits: rates read 125 … 1K 2K 4K,
+// other units are kept (1 mm).
+function optionLabel(cap, option) {
+  if (cap.unit === "Hz" && isInt(option)) return option >= 1000 ? (option / 1000) + "K" : String(option)
+  return cap.unit && isInt(option) ? option + " " + cap.unit : String(option)
 }
 
-// Same shape of parsing as parseStatus, for `hskctl battery`'s much smaller
-// payload -- just ok/settings, no model/writable/allowed to carry.
-function parseBattery(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return { ok: false, settings: {} }
-  try {
-    var parsed = JSON.parse(text)
-    if (!isPlainObject(parsed)) return { ok: false, settings: {} }
-    return { ok: parsed.ok === true, settings: cleanSettings(parsed.settings) }
-  } catch (e) {
-    return { ok: false, settings: {} }
-  }
+function valueText(cap, value) {
+  if (value === undefined || value === null) return "—"
+  if (cap.kind === "toggle") return value ? "On" : "Off"
+  if (cap.kind === "enum") return cap.unit && isInt(value) ? value + " " + cap.unit : String(value)
+  if (cap.kind === "duration") return value + (cap.unit ? " " + cap.unit : "")
+  return String(value)
 }
 
-// hskctl's `set` payload: {ok, field, requested, value, link, error}. `value`
-// is the mouse's own readback of what it just wrote -- the authoritative
-// number to show, no separate re-read needed.
-function parseSet(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return { ok: false, field: "", value: undefined, error: "hskctl produced no output" }
-  try {
-    var parsed = JSON.parse(text)
-    if (!isPlainObject(parsed)) return { ok: false, field: "", value: undefined, error: "hskctl output is not an object" }
-    var field = isFieldName(parsed.field) ? parsed.field : ""
-    var value = cleanValue(parsed.value)
-    return {
-      // A readback the panel cannot represent is not a success.
-      ok: parsed.ok === true && field !== "" && value !== undefined,
-      field: field,
-      value: value,
-      error: typeof parsed.error === "string" ? plain(parsed.error, 400) : ""
-    }
-  } catch (e) {
-    return { ok: false, field: "", value: undefined, error: "could not parse hskctl output: " + plain(text.split("\n")[0], 200) }
-  }
-}
-
-// hskctl's `watch-link` payload: one line per event, {ok, event, connected}.
-function parseLinkEvent(raw) {
-  var text = String(raw || "").trim()
-  if (text === "") return null
-  try {
-    var parsed = JSON.parse(text)
-    if (!isPlainObject(parsed) || parsed.ok !== true) return null
-    return { event: String(parsed.event || ""), connected: parsed.connected === true }
-  } catch (e) {
-    return null
-  }
-}
-
-function has(settings, key) {
-  return settings && settings[key] !== undefined && settings[key] !== null
-}
-
-function batteryGlyph(percent, charging) {
-  if (charging) return "󰂄"
-  if (percent === null || percent === undefined) return "󰍽"
-  if (percent >= 90) return "󰁹"
-  if (percent >= 70) return "󰂀"
-  if (percent >= 50) return "󰁿"
-  if (percent >= 30) return "󰁽"
-  if (percent >= 10) return "󰁻"
+function batteryGlyph(battery) {
+  if (!battery) return "󰍽"
+  if (battery.charging) return "󰂄"
+  var p = battery.percent
+  if (p >= 90) return "󰁹"
+  if (p >= 70) return "󰂀"
+  if (p >= 50) return "󰁿"
+  if (p >= 30) return "󰁽"
+  if (p >= 10) return "󰁻"
   return "󰁺"
 }
 
-function connectionGlyph(connection) {
-  if (connection === "wired") return "󰌘"
-  if (connection === "bluetooth") return "󰂯"
-  if (connection === "dongle") return "󰖩"
-  return "󰍽"
+// --- DPI stages -------------------------------------------------------------
+
+// Eight presets cycled with one click; the plugin's own set, not a palette
+// read from any firmware.
+var STAGE_COLORS = ["#ff0000", "#ffa500", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#800080", "#ffffff"]
+
+function colorIndex(color) {
+  return STAGE_COLORS.indexOf(String(color || ""))
 }
 
-function connectionLabel(connection) {
-  if (connection === "wired") return "Wired"
-  if (connection === "bluetooth") return "Bluetooth"
-  if (connection === "dongle") return "2.4 GHz"
-  return ""
+function cycleColor(current, delta) {
+  var i = STAGE_COLORS.indexOf(String(current || ""))
+  var n = STAGE_COLORS.length
+  return STAGE_COLORS[((i < 0 ? -1 : i) + delta + n) % n]
 }
 
-// The hero's second line: battery and link, or an honest explanation of why
-// there is nothing to show.
-function summaryLine(status, settings) {
-  if (status === "undiscovered") return "Protocol not mapped yet"
-  if (status === "error") return "Not connected"
-  var parts = []
-  if (has(settings, "batteryPercent")) {
-    var battery = settings.batteryPercent + "%"
-    if (settings.charging) battery += " charging"
-    parts.push(battery)
+function withStage(value, index, change) {
+  var stages = []
+  for (var i = 0; i < value.stages.length; i++) {
+    var s = value.stages[i]
+    stages.push(i === index
+      ? { dpi: change.dpi !== undefined ? change.dpi : s.dpi, color: change.color !== undefined ? change.color : s.color }
+      : { dpi: s.dpi, color: s.color })
   }
-  if (has(settings, "connection")) {
-    var label = connectionLabel(settings.connection)
-    if (label !== "") parts.push(label)
-  }
-  // Only stage 1 is ever mapped -- see the profiles' own notes on why DPI
-  // stage switching is not exposed.
-  if (has(settings, "dpiStage1")) {
-    parts.push(settings.dpiStage1 + " DPI")
-  }
-  if (has(settings, "pollingRate")) parts.push(settings.pollingRate + " Hz")
-  return parts.length > 0 ? parts.join(" · ") : "No readings yet"
+  return { active: value.active, stages: stages }
 }
 
-function barLabel(settings, showBattery) {
-  if (!showBattery || !has(settings, "batteryPercent")) return ""
-  return settings.batteryPercent + "%"
+function withActive(value, index) {
+  return { active: index, stages: value.stages }
 }
 
-// The mouse's one and only editable DPI stage. Every profile this plugin
-// ships only ever maps `dpiStage1` -- see the profiles' own `_note`/`_source`
-// blocks for why: switching which stage is live does not work on the
-// hardware this was built against, so the UI never offers a stage picker.
-// Returns null when the profile has no DPI reading at all.
-function dpiStage1Info(settings) {
-  if (!has(settings, "dpiStage1")) return null
-  return {
-    dpi: settings.dpiStage1,
-    y: has(settings, "dpiStage1Y") ? settings.dpiStage1Y : settings.dpiStage1,
-    color: has(settings, "dpiStage1Color") ? settings.dpiStage1Color : "",
-    // The axes should track together; surface it when they do not so a
-    // split stage is visible rather than silently odd.
-    split: has(settings, "dpiStage1Y") && settings.dpiStage1Y !== settings.dpiStage1
-  }
+function clampDpi(cap, dpi) {
+  var step = cap.step || 1
+  var lo = cap.minimum !== null ? cap.minimum : step
+  var hi = cap.maximum !== null ? cap.maximum : dpi
+  var snapped = lo + Math.round((dpi - lo) / step) * step
+  return Math.max(lo, Math.min(hi, snapped))
 }
 
-// The DPI range and step this mouse actually offers, from the `allowed` map
-// hskctl derives from the profile's own `min`/`max`, so a mouse with a
-// different sensor range gets its own slider bounds instead of this plugin's.
-// Falls back to the range both shipped profiles use (50-26000, 50-unit steps)
-// when a profile carries no bounds of its own.
-var DPI_MIN = 50
-var DPI_MAX = 26000
-var DPI_STEP = 50
+// --- keyboard cursor --------------------------------------------------------
+//
+// One flat list of focusable rows, top to bottom as drawn: the device
+// switcher (only with more than one mouse), the stage chips and the selected
+// stage's value and color, then every visible setting. Info and battery are
+// not focusable.
 
-function dpiBounds(allowed) {
-  var pair = allowed ? allowed.dpiStage1 : undefined
-  if (Array.isArray(pair) && pair.length === 2) {
-    var lo = pair[0], hi = pair[1]
-    if (typeof lo === "number" && typeof hi === "number"
-        && isFinite(lo) && isFinite(hi)
-        && lo > 0 && hi > lo && hi - lo <= 100000) {
-      return { min: lo, max: hi, step: DPI_STEP }
+function buildRows(caps, deviceCount) {
+  var rows = []
+  if (deviceCount > 1) rows.push({ type: "device", capId: "" })
+  var stages = firstOfKind(caps, "dpiStages")
+  if (stages) {
+    rows.push({ type: "stages", capId: stages.id })
+    if (stages.writable) {
+      rows.push({ type: "stageDpi", capId: stages.id })
+      if (stages.hasColors) rows.push({ type: "stageColor", capId: stages.id })
     }
   }
-  return { min: DPI_MIN, max: DPI_MAX, step: DPI_STEP }
-}
-
-function clampDpi(value, min, max, step) {
-  var lo = typeof min === "number" ? min : DPI_MIN
-  var hi = typeof max === "number" ? max : DPI_MAX
-  var st = (typeof step === "number" && step > 0) ? step : DPI_STEP
-  var v = Math.round(value / st) * st
-  return Math.max(lo, Math.min(hi, v))
-}
-
-// Eight preset colors the panel cycles through with one click, so a color can
-// be changed without opening a full picker. This is the plugin's own set, not
-// a palette read back from the firmware; the hex field below accepts any
-// #rrggbb color the LED supports.
-var STAGE_COLORS = [
-  "#aa0000", "#ffa500", "#ffff00", "#00ff00",
-  "#00ffff", "#0000ff", "#800080", "#ffffff"
-]
-
-function nextStageColor(current) {
-  var i = STAGE_COLORS.indexOf(String(current || "").toLowerCase())
-  return STAGE_COLORS[(i + 1) % STAGE_COLORS.length]
-}
-
-// One-click presets shown beside the current-color swatch. Three, not the
-// full STAGE_COLORS cycle -- the panel already has a "click to cycle" swatch
-// for reaching the rest of the palette; these are just the fastest path to
-// the colors people actually reach for.
-var DPI_PRESET_COLORS = ["#ff0000", "#00ff00", "#0000ff"]
-
-function isValidHexColor(text) {
-  return /^#[0-9a-fA-F]{6}$/.test(String(text || ""))
-}
-
-function pollingOptions(current, allowed) {
-  var rates = allowedRatesFor(allowed)
-  var options = []
-  for (var i = 0; i < rates.length; i++) {
-    var rate = rates[i]
-    options.push({
-      value: String(rate),
-      label: rate >= 1000 ? (rate / 1000) + "K" : String(rate)
-    })
+  for (var i = 0; i < caps.length; i++) {
+    var c = caps[i]
+    if (c.visible && c.writable && (c.kind === "enum" || c.kind === "toggle" || c.kind === "duration"))
+      rows.push({ type: "setting", capId: c.id })
   }
-  return options
-}
-
-function isLow(settings, threshold) {
-  if (!has(settings, "batteryPercent")) return false
-  if (settings.charging) return false
-  return settings.batteryPercent <= threshold
-}
-
-// Build the flat list of keyboard-navigable rows for the panel. Keeping this
-// as data rather than QML structure means the cursor logic is one index into
-// one array, instead of a section/row state machine.
-function canWrite(writable, field) {
-  if (!writable) return false
-  return writable.indexOf(field) !== -1
-}
-
-function buildRows(state, settings, writable) {
-  var rows = []
-  if (state !== "ready") return rows
-
-  // Only writable settings become cursor stops. Only stage 1 is ever mapped
-  // (see dpiStage1Info), so there is at most one DPI row.
-  var dpi = dpiStage1Info(settings)
-  if (dpi && canWrite(writable, "dpiStage1")) {
-    rows.push({ kind: "dpiStage", dpi: dpi.dpi, color: dpi.color })
-  }
-  if (canWrite(writable, "pollingRate")) rows.push({ kind: "pollingRate" })
-  if (canWrite(writable, "liftOffDistance")) rows.push({ kind: "liftOffDistance" })
-  if (canWrite(writable, "motionSync")) rows.push({ kind: "toggle", field: "motionSync" })
-  if (canWrite(writable, "angleSnap")) rows.push({ kind: "toggle", field: "angleSnap" })
-  if (canWrite(writable, "rippleControl")) rows.push({ kind: "toggle", field: "rippleControl" })
-  if (canWrite(writable, "turboMode")) rows.push({ kind: "toggle", field: "turboMode" })
   return rows
 }
 
-function toggleLabel(field) {
-  if (field === "motionSync") return "Motion Sync"
-  if (field === "angleSnap") return "Angle snapping"
-  if (field === "rippleControl") return "Ripple control"
-  if (field === "turboMode") return "Turbo mode"
-  return field
+function rowIndex(rows, type, capId) {
+  for (var i = 0; i < rows.length; i++)
+    if (rows[i].type === type && (capId === undefined || rows[i].capId === capId)) return i
+  return -1
 }
 
-function toggleDescription(field) {
-  if (field === "motionSync") return "Align sensor reads to the polling clock"
-  if (field === "angleSnap") return "Straighten near-horizontal movement"
-  if (field === "rippleControl") return "Smooth jitter at high DPI"
-  if (field === "turboMode") return "Report clicks faster than the switch debounces"
-  return ""
+// The value an h/l press moves a setting to, or undefined at either end.
+function steppedValue(cap, value, delta) {
+  if (cap.kind === "toggle") return !value
+  if (cap.kind === "enum") {
+    var i = cap.options.indexOf(value)
+    var j = i < 0 ? 0 : i + delta
+    return j >= 0 && j < cap.options.length ? cap.options[j] : undefined
+  }
+  if (cap.kind === "duration") {
+    var next = (isInt(value) ? value : cap.minimum) + delta * cap.step
+    if (cap.minimum !== null && next < cap.minimum) return undefined
+    if (cap.maximum !== null && next > cap.maximum) return undefined
+    return next
+  }
+  return undefined
 }
 
-// Does this hskctl error mean "you lack permission" rather than "no mouse"?
-// Matched on the message because the failure surfaces from several layers --
-// open(2) returning EACCES, an ioctl refusing, or hskctl's own doctor advice --
-// and they do not share an exit code.
-function isPermissionError(message) {
-  var text = String(message || "").toLowerCase()
-  if (text === "") return false
-  return text.indexOf("permission denied") >= 0
-      || text.indexOf("errno 13") >= 0
-      || text.indexOf("eacces") >= 0
-      || text.indexOf("not permitted") >= 0
-      || (text.indexOf("udev") >= 0 && text.indexOf("hidraw") >= 0)
+// --- setup wizard -------------------------------------------------------------
+
+// The only shape a udev rule line may take before it is handed to root: the
+// same pattern install.sh enforces. A rule grants device access, so text
+// that does not match is refused whole rather than edited into shape.
+var RULE_LINE = /^KERNEL=="hidraw\*", ATTRS\{idVendor\}=="[0-9a-f]{4}"(, ATTRS\{idProduct\}=="[0-9a-f]{4}")?, MODE="0660", TAG\+="uaccess"$/
+var RULE_FILE = "/etc/udev/rules.d/60-mousectrl.rules"
+
+function isValidRuleText(text) {
+  if (typeof text !== "string" || text.length === 0 || text.length > 65536) return false
+  var lines = text.split("\n")
+  var rules = 0
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (line === "" || line.charAt(0) === "#") continue
+    if (!RULE_LINE.test(line)) return false
+    rules++
+  }
+  return rules > 0
+}
+
+// What the confirm step asks about, one group at a time: the readings of
+// each section, with the battery and device facts first.
+function confirmGroups(caps, values) {
+  var order = ["device"].concat(GROUPS.slice(0, GROUPS.length - 1))
+  var out = []
+  for (var g = 0; g < order.length; g++) {
+    var rows = []
+    for (var i = 0; i < caps.length; i++) {
+      var c = caps[i]
+      if (c.group !== order[g] || c.kind === "dpiStages") continue
+      var v = values[c.id]
+      rows.push({ label: c.label, text: c.kind === "battery" && v ? v.percent + "%" + (v.charging ? " charging" : "") : valueText(c, v) })
+    }
+    var stages = order[g] === "dpi" ? firstOfKind(caps, "dpiStages") : null
+    if (rows.length === 0 && !stages) continue
+    out.push({ id: order[g], title: order[g] === "device" ? "BASICS" : GROUP_TITLES[order[g]], rows: rows, stagesId: stages ? stages.id : "" })
+  }
+  return out
+}
+
+// The state each capability is saved with, from the wizard's answers:
+// a group the user said was wrong is rejected; a read-only reading is
+// verified when the driver vouches for it; a writable setting is verified
+// (driver-proven), tested (passed its test here) or left read-only.
+function finalStates(caps, rejectedGroups, testResults, hiddenGroups) {
+  var out = {}
+  for (var i = 0; i < caps.length; i++) {
+    var c = caps[i]
+    var state
+    if (rejectedGroups[c.group] === true) state = "rejected"
+    else if (c.readOnly || c.verification === "verified") state = c.verification === "verified" ? "verified" : "readOnly"
+    else state = testResults[c.id] === "passed" ? "tested" : "readOnly"
+    out[c.id] = { state: state, visible: hiddenGroups[c.group] !== true }
+  }
+  return out
+}
+
+// --- libratbag ----------------------------------------------------------------
+
+// ratbagd's readings for a mouse it manages, as probe relays them; shown
+// read-only, its settings belong to Piper.
+function cleanRatbag(r) {
+  if (!isObject(r)) return null
+  var stages = []
+  if (Array.isArray(r.stages))
+    for (var i = 0; i < r.stages.length && stages.length < MAX_STAGES; i++)
+      if (isObject(r.stages[i]) && isInt(r.stages[i].dpi))
+        stages.push({ dpi: r.stages[i].dpi, active: r.stages[i].active === true })
+  return {
+    name: plain(r.name, 80),
+    firmware: plain(r.firmware, 40),
+    profile: isInt(r.profile) ? r.profile : 0,
+    profiles: isInt(r.profiles) ? r.profiles : 0,
+    pollingRate: isInt(r.pollingRate) ? r.pollingRate : null,
+    stages: stages
+  }
+}
+
+function ratbagStagesText(r) {
+  return r.stages.map(function(s) { return s.active ? "[" + s.dpi + "]" : String(s.dpi) }).join("  ")
 }

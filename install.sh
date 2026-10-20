@@ -2,7 +2,8 @@
 # Setup for the Mouse CTRL plugin.
 #
 #   --udev       grant your user access to the mouse            (REQUIRED)
-#   --link       put `hskctl` on your PATH for use in a terminal
+#                (append --yes to skip the confirm; the rule text is still shown)
+#   --link       put `mousectrl` on your PATH for use in a terminal
 #   --plugin     copy the plugin into place by hand, if you cloned it yourself
 #   --dev        symlink this checkout into the plugins dir, for hacking on it
 #   --uninstall  undo --link and --dev (a --plugin copy is removed with
@@ -14,9 +15,11 @@
 # feature report, and the hidraw ioctls that carry those need the node opened
 # read-write -- so without the rule the plugin cannot even read the battery.
 #
-# This script is deliberately self-contained: the rule is a heredoc below
-# rather than a separate file, because a plugin is distributed by cloning a
-# repository and a file that must be present is a file that can go missing.
+# The rule text has one source of truth, `mousectrl udev-rule`, which knows
+# every family driver's vendor ids and the per VID:PID lines profiles claim.
+# The heredoc below stays only as a fallback for a machine where mousectrl
+# will not run. Either way, every line is validated against one narrow
+# pattern before root installs it.
 
 set -euo pipefail
 
@@ -24,7 +27,7 @@ set -euo pipefail
 # is resolved through a fixed PATH, not the caller's. `udev_rule_text` builds
 # the text that `sudo install` writes into /etc, so a `cat` or `sed` shadowed
 # earlier on PATH would otherwise get to choose what root installs. The
-# caller's PATH is kept only to say whether hskctl will be found on it.
+# caller's PATH is kept only to say whether mousectrl will be found on it.
 USER_PATH="${PATH:-}"
 PATH=/usr/bin:/bin
 export PATH
@@ -46,22 +49,12 @@ RM="/usr/bin/rm"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 UDEV_RULE="/etc/udev/rules.d/60-mousectrl.rules"
-# Superseded by UDEV_RULE above, across two renames: the original G-Wolves-only
-# plugin, then a short-lived id (keasbeexd.mousectl, dropped before its first
-# release) that used this same filename pattern with the id's spelling at the
-# time. Both are checked for and offered for removal below, so upgrading never
-# leaves a stale rule with a name nothing current reads.
-OLD_UDEV_RULES=(
-  "/etc/udev/rules.d/60-gwolves-hsk.rules"
-  "/etc/udev/rules.d/60-mousectl.rules"
-)
-# One vendor id per supported mouse family. Every id here gets the same
-# uaccess rule -- broadening this list is how a new mouse's udev access is
-# added, the same way profiles/*.json is how its protocol is added.
+# Fallback only: the vendor ids the family drivers in mousectrl/families/
+# claim, for a machine where `mousectrl udev-rule` will not run.
 VENDOR_IDS=(
-  "33e4:G-Wolves (HSK Pro 4K and siblings)"
-  "3710:Pulsar (wired models, and the X2A/Feinmann wireless dongles)"
-  "3554:Pulsar (Nordic wireless dongle -- X2A/X2 V2 Mini family, X2H mini until confirmed)"
+  "25a7:Pulsar (Cfg.ini alternate id)"
+  "33e4:G-Wolves (G-Wolves HTS)"
+  "3554:Pulsar (Pulsar Nordic)"
 )
 
 info() { printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -76,11 +69,11 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # `-I -S` is Python's isolated mode with no site-packages -- no PYTHONPATH, no
 # user site dir -- so a same-user process cannot shadow the json module by
 # dropping a file in it. The manifest is read through the same bundled
-# no-symlink, size-capped reader hskctl uses for every file it did not create.
+# no-symlink, size-capped reader mousectrl uses for every file it did not create.
 # sed (on at most 64 KiB) is the fallback for a system without python so
 # `install.sh --help` still works.
 PLUGIN_ID="$(
-  "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from hskctl.safeio import read_bounded_json; print(read_bounded_json(sys.argv[2], 65536).get("id", ""))' \
+  "$PYTHON" -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from mousectrl.safeio import read_bounded_json; print(read_bounded_json(sys.argv[2], 65536).get("id", ""))' \
     "$REPO_DIR" "$REPO_DIR/manifest.json" 2>/dev/null \
   || head -c 65536 -- "$REPO_DIR/manifest.json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 )"
@@ -106,14 +99,16 @@ public_dir() {
   [[ "$owner" == "$(id -u)" ]] || die "$dir is not owned by you"
 }
 
-udev_rule_text() {
+bundled_rule_text() {
+  # Fallback for a machine where the engine will not run -- the same
+  # whole-vendor text this script installed before the engine absorbed it.
   cat <<HEADER
 # Mouse CTRL plugin -- hidraw access for every supported mouse vendor.
 #
 # Configuring the mouse means sending HID *feature* reports, and the hidraw
 # ioctls for those (HIDIOCSFEATURE / HIDIOCGFEATURE) require the device node to
 # be opened read-write. The default mode on /dev/hidraw* is root-only, so
-# without this rule hskctl and the Omarchy panel cannot talk to the mouse at
+# without this rule mousectrl and the Omarchy panel cannot talk to the mouse at
 # all -- not even to read the battery.
 #
 # uaccess hands read-write to whoever is logged in at the seat, which is the
@@ -130,30 +125,50 @@ HEADER
   done
 }
 
-migrate_old_udev_rules() {
-  local old
-  for old in "${OLD_UDEV_RULES[@]}"; do
-    [[ -e "$old" ]] || continue
-    warn "Found $old from an older install of this plugin (it used to be"
-    warn "named differently). Every vendor id it granted is also in the rule"
-    warn "just installed, so it is now redundant."
-    read -r -p "Remove $old (needs sudo)? [y/N] " reply
-    if [[ "$reply" =~ ^[Yy] ]]; then
-      "$SUDO" "$RM" -f "$old"
-      info "Removed $old"
-    else
-      warn "Left in place. It does no harm alongside the new rule -- remove it"
-      warn "yourself later with: sudo rm $old"
-    fi
-  done
+# The one pattern every rule line may take, and the only thing that gets past
+# this script into a root-owned file. A rule grants device access to whoever
+# sits at the seat, so a tampered or buggy generator gets rejected wholesale
+# rather than line-edited into shape.
+RULE_LINE_OK='^KERNEL=="hidraw\*", ATTRS\{idVendor\}=="[0-9a-f]{4}"(, ATTRS\{idProduct\}=="[0-9a-f]{4}")?, MODE="0660", TAG\+="uaccess"$'
+
+validate_rule_text() {
+  local text
+  text="$(cat)"
+  [[ -n "$text" ]] || return 1
+  if grep -vE '^(#|$)' <<<"$text" | grep -qvE "$RULE_LINE_OK"; then
+    return 1
+  fi
+  printf '%s\n' "$text"
+}
+
+rule_file_text() {
+  # Primary source: mousectrl, which adds per VID:PID lines for profiled
+  # mice outside the supported families.
+  local text=""
+  if [[ -x "$REPO_DIR/bin/mousectrl" && -x "$PYTHON" ]]; then
+    text="$("$REPO_DIR/bin/mousectrl" udev-rule 2>/dev/null || true)"
+  fi
+  if validate_rule_text <<<"$text" >/dev/null; then
+    printf '%s\n' "$text"
+    return 0
+  fi
+  warn "mousectrl's rule text missing or not validated -- using the bundled whole-vendor rule only"
+  bundled_rule_text
 }
 
 install_udev() {
+  local assume_yes="${1:-}"
   info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
   echo
-  udev_rule_text | sed 's/^/    /'
+  rule_file_text | sed 's/^/    /'
   echo
-  read -r -p "Write this to $UDEV_RULE (needs sudo)? [y/N] " reply
+  local reply="n"
+  if [[ "$assume_yes" == "--yes" ]]; then
+    info "The text above was shown before this ask; running non-interactively (--yes)."
+    reply="y"
+  else
+    read -r -p "Write this to $UDEV_RULE (needs sudo)? [y/N] " reply
+  fi
   if [[ ! "$reply" =~ ^[Yy] ]]; then
     warn "Skipped. The plugin will not be able to reach the mouse until this"
     warn "rule exists -- rerun './install.sh --udev' when you are ready."
@@ -164,32 +179,43 @@ install_udev() {
   # version wrote to a mktemp file first and passed the path to install(1),
   # which is a second pathname resolution the plugin does not need. stdin is
   # one fewer resolution and one fewer file to clean up on error.
-  udev_rule_text \
+  rule_file_text \
     | "$SUDO" "$INSTALL_BIN" -o root -g root -m 0644 /dev/stdin "$UDEV_RULE"
   "$SUDO" "$UDEVADM" control --reload-rules
   # Only hidraw nodes -- re-triggering every device on the system is not
   # this plugin's business.
   "$SUDO" "$UDEVADM" trigger --subsystem-match=hidraw --action=change
   info "Installed $UDEV_RULE"
-  # Only now that the replacement rule is on disk is it safe to offer removing
-  # the old ones: a user who declines the new rule must not be left with
-  # neither, which is what removing first would do.
-  migrate_old_udev_rules
   info "Now unplug and replug the mouse or its dongle -- the rule applies when"
   info "the device next appears, not to one that is already plugged in."
 }
 
-link_cli() {
-  info "Linking hskctl into $BIN_DIR"
-  public_dir "$BIN_DIR"
-  # -f replaces an existing symlink; refuse to replace a real file. The
-  # previous version replaced whichever was there, which is fine for a symlink
-  # this script previously installed but silently overwrites a real binary the
-  # user happens to have named `hskctl`.
-  if [[ -e "$BIN_DIR/hskctl" && ! -L "$BIN_DIR/hskctl" ]]; then
-    die "$BIN_DIR/hskctl exists and is not a symlink; move it aside first"
+# Remove $BIN_DIR/<name> only if it is a symlink this script made, pointing
+# into this checkout.
+remove_own_link() {
+  local name="$1" link_target
+  if [[ -L "$BIN_DIR/$name" ]]; then
+    link_target=$(readlink -- "$BIN_DIR/$name" || true)
+    if [[ "$link_target" == "$REPO_DIR/bin/$name" ]]; then
+      "$RM" -f -- "$BIN_DIR/$name"
+      info "Removed $BIN_DIR/$name"
+    else
+      warn "$BIN_DIR/$name points elsewhere ($link_target); leaving it in place"
+    fi
+  elif [[ -e "$BIN_DIR/$name" ]]; then
+    warn "$BIN_DIR/$name is not a symlink; leaving it in place"
   fi
-  "$LN" -sfn "$REPO_DIR/bin/hskctl" "$BIN_DIR/hskctl"
+}
+
+link_cli() {
+  info "Linking mousectrl into $BIN_DIR"
+  public_dir "$BIN_DIR"
+  # -f replaces an existing symlink; refuse to replace a real file the user
+  # happens to have named `mousectrl`.
+  if [[ -e "$BIN_DIR/mousectrl" && ! -L "$BIN_DIR/mousectrl" ]]; then
+    die "$BIN_DIR/mousectrl exists and is not a symlink; move it aside first"
+  fi
+  "$LN" -sfn "$REPO_DIR/bin/mousectrl" "$BIN_DIR/mousectrl"
   case ":$USER_PATH:" in
     *":$BIN_DIR:"*) ;;
     *) warn "$BIN_DIR is not on your PATH" ;;
@@ -246,17 +272,7 @@ uninstall() {
   # directory (from --plugin, or from `omarchy plugin add`) belongs to
   # Omarchy's own plugin manager, which removes it.
   local link_target
-  if [[ -L "$BIN_DIR/hskctl" ]]; then
-    link_target=$(readlink -- "$BIN_DIR/hskctl" || true)
-    if [[ "$link_target" == "$REPO_DIR/bin/hskctl" ]]; then
-      "$RM" -f -- "$BIN_DIR/hskctl"
-      info "Removed $BIN_DIR/hskctl"
-    else
-      warn "$BIN_DIR/hskctl points elsewhere ($link_target); leaving it in place"
-    fi
-  elif [[ -e "$BIN_DIR/hskctl" ]]; then
-    warn "$BIN_DIR/hskctl is not a symlink; leaving it in place"
-  fi
+  remove_own_link mousectrl
 
   if [[ -L "$PLUGIN_DIR" ]]; then
     link_target=$(readlink -- "$PLUGIN_DIR" || true)
@@ -275,7 +291,7 @@ uninstall() {
 }
 
 case "${1:-}" in
-  --udev)      install_udev ;;
+  --udev)      install_udev "${2:-}" ;;
   --link)      link_cli ;;
   --plugin)    copy_plugin ;;
   --dev)       link_plugin ;;
@@ -287,9 +303,8 @@ case "${1:-}" in
     link_cli
     echo
     info "Done. Check it sees the mouse:"
-    echo "     hskctl probe      # finds the config endpoint"
-    echo "     hskctl status     # reads every setting"
-    echo "     hskctl doctor     # if either of those looks wrong"
+    echo "     mousectrl devices           # lists mice and their family"
+    echo "     mousectrl read <vid:pid>    # reads every setting"
     ;;
   *) die "unknown option: $1 (try --help)" ;;
 esac

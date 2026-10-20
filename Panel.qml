@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -8,228 +7,18 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
+// Mouse CTRL: battery in the bar; in the panel, the selected mouse's DPI
+// stages and settings, drawn from whatever capabilities its driver reports.
+// No mouse model or setting name appears in this file.
 Panel {
   id: root
   moduleName: "keasbeexd.mousectrl"
   ipcTarget: "keasbeexd.mousectrl"
+  // This panel owns the one IpcHandler the target allows, to add `setup`.
   manageIpc: false
 
-  property int cursorIndex: 0
-  property bool cursorActive: false
-
-  // Every color in this panel is one of these, and every one of these comes
-  // from the active Omarchy theme -- nothing below names a color of its own.
-  // The only literal colors in the tree are the DPI LED presets in Model.js,
-  // which are values written to the mouse's LED, not panel styling.
-  //
-  // Secondary text is the foreground at reduced alpha rather than
-  // Qt.darker(foreground): on a light theme the foreground is already dark,
-  // and darkening it makes "dim" text *more* prominent, not less.
-  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
-  readonly property color accent: Commons.Color.accent
-  readonly property color dim: root.withAlpha(foreground, 0.6)
-  readonly property color faint: root.withAlpha(foreground, 0.18)
-  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, accent) : "transparent"
-  readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, accent) : "transparent"
-
-  // Qt.lighter(c, 1.0) is an identity that also turns a color *string* into
-  // a color value, so this works whichever form the host hands over.
-  function withAlpha(c, a) {
-    var q = Qt.lighter(c, 1.0)
-    return Qt.rgba(q.r, q.g, q.b, a)
-  }
-
-  readonly property var rows: hsk.rows
-  // Only stage 1 is ever mapped (see Model.dpiStage1Info) -- both profiles
-  // this plugin ships deliberately expose no stage picker. The row appears
-  // only when that one stage can actually be written, the same rule every
-  // other control follows, so the panel never shows a control the mouse would
-  // refuse (a reported-but-read-only stage stays in the summary line above).
-  readonly property bool hasDpi: hsk.canWrite("dpiStage1")
-  readonly property bool needsSetup: hsk.state === "undiscovered"
-  readonly property bool hasError: hsk.state === "error"
-
-  // Missing permissions is by far the most common first-run failure, and the
-  // rawest form of it -- EACCES opening /dev/hidraw* -- is unreadable to
-  // anyone who has not just read the udev docs. Every exchange needs the node
-  // opened read-write, so this is not a degraded mode: nothing works at all,
-  // including the battery. Say so, and say what to run.
-  readonly property bool looksLikePermissions: root.hasError
-    && Model.isPermissionError(hsk.lastError)
-
-  // The mouse glyph stays filled at every state -- an outlined mouse when the
-  // reading is stale reads as a different device, not as "waiting". Low battery
-  // still shouts (urgent), a stale reading still dims, and everything else is
-  // the bar's own foreground.
-  readonly property color barIconColor: hsk.lowBattery
-    ? root.urgent
-    : (hsk.ready ? barForeground : root.withAlpha(barForeground, 0.6))
-
-  // When the mouse is plugged in, the percentage recolors to the theme's
-  // accent so "charging" is visible at a glance -- the accent tracks whatever
-  // omarchy theme is active, so it always sits with the rest of the bar.
-  readonly property color barLabelColor: hsk.lowBattery
-    ? root.urgent
-    : (hsk.ready && hsk.value("charging") === true
-       ? root.accent
-       : (hsk.ready ? barForeground : root.withAlpha(barForeground, 0.6)))
-
-  // The battery percentage drawn beside the glyph -- see the BarIconButton
-  // below for why the label has to live inside the icon. Blank in a vertical
-  // bar, which is one icon wide and has nowhere to put it.
-  readonly property string barLabelText: (bar && bar.vertical) ? "" : hsk.barText
-
-  // The slot is a fixed width, so it has to be told how much text it is about
-  // to hold or the label renders outside the button and overlaps its neighbour.
-  // Both metrics feed the slot width below -- sizing to actual content instead
-  // of the full icon slot removes the padding that made the widget look loose
-  // against its neighbours.
-  TextMetrics {
-    id: barLabelMetrics
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.bodySmall
-    text: root.barLabelText
-  }
-
-  TextMetrics {
-    id: barIconMetrics
-    font.family: root.fontFamily
-    font.pixelSize: Style.bar.iconFont
-    text: "󰍽"
-  }
-
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
-
-  // NOT `id: mouse`. MouseArea.onClicked carries an implicit `mouse`
-  // parameter (the MouseEvent), which silently shadows an id of that name --
-  // so `mouse.toggle(...)` inside a click handler resolved to the event, not
-  // the service, and did nothing. Handlers for parameterless signals
-  // (Toggle.clicked, PanelActionButton.clicked) were unaffected, which is why
-  // the toggles worked and this one did not.
-  Service {
-    id: hsk
-    settings: root.settings
-  }
-
-  // --- cursor -------------------------------------------------------------
-
-  function clampCursor() {
-    if (rows.length === 0) {
-      cursorIndex = 0
-      return
-    }
-    cursorIndex = Math.max(0, Math.min(cursorIndex, rows.length - 1))
-  }
-
-  function currentRow() {
-    if (cursorIndex < 0 || cursorIndex >= rows.length) return null
-    return rows[cursorIndex]
-  }
-
-  function moveCursor(dx, dy) {
-    cursorActive = true
-    if (dy !== 0) {
-      cursorIndex = cursorIndex + (dy > 0 ? 1 : -1)
-      clampCursor()
-      scrollCursorIntoView()
-      return
-    }
-    if (dx !== 0) adjustCurrent(dx > 0 ? 1 : -1)
-  }
-
-  // Left/right nudges the value of whatever row the cursor is on, so a polling
-  // rate or lift-off distance can be changed without reaching for the mouse
-  // that is currently being reconfigured.
-  function adjustCurrent(direction) {
-    var row = currentRow()
-    if (!row) return
-    if (row.kind === "dpiStage") {
-      // One step per press, matching the sensor's 50 DPI granularity; hold
-      // shift-free repeat and it walks smoothly.
-      var wanted = Model.clampDpi(row.dpi + direction * Model.DPI_STEP)
-      // Coalesced, like the slider -- holding an arrow key is one write.
-      if (wanted !== row.dpi) hsk.setSoon("dpiStage1", wanted)
-    } else if (row.kind === "pollingRate") {
-      var options = Model.allowedRatesFor(hsk.allowed)
-      var current = hsk.value("pollingRate")
-      var index = options.indexOf(current)
-      if (index < 0) index = 0
-      var next = Math.max(0, Math.min(options.length - 1, index + direction))
-      if (options[next] !== current) hsk.set("pollingRate", options[next])
-    } else if (row.kind === "liftOffDistance") {
-      hsk.set("liftOffDistance", hsk.value("liftOffDistance") === "1mm" ? "2mm" : "1mm")
-    } else if (row.kind === "toggle") {
-      hsk.toggle(row.field)
-    }
-  }
-
-  function activateCursor() {
-    var row = currentRow()
-    if (!row) return
-    if (row.kind === "toggle") {
-      hsk.toggle(row.field)
-    } else {
-      adjustCurrent(1)
-    }
-  }
-
-  function scrollItemIntoView(item) {
-    if (!panelFlick || !item) return
-    Qt.callLater(function() {
-      if (!item) return
-      var margin = Style.space(6)
-      var point = item.mapToItem(panelFlick.contentItem, 0, 0)
-      var top = point.y
-      var bottom = top + item.height
-      var viewTop = panelFlick.contentY
-      var viewBottom = viewTop + panelFlick.height
-      var maxY = Math.max(0, panelFlick.contentHeight - panelFlick.height)
-      if (top < viewTop + margin) panelFlick.contentY = Math.max(0, top - margin)
-      else if (bottom > viewBottom - margin) panelFlick.contentY = Math.min(maxY, bottom + margin - panelFlick.height)
-    })
-  }
-
-  function scrollCursorIntoView() {
-    var row = currentRow()
-    if (!row || row.kind !== "dpiStage" || !dpiRow) return
-    scrollItemIntoView(dpiRow)
-  }
-
-  function setCursor(index) {
-    cursorActive = true
-    cursorIndex = index
-    clampCursor()
-  }
-
-  function rowIndexOf(kind, key) {
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i].kind !== kind) continue
-      if (kind === "toggle" && rows[i].field !== key) continue
-      return i
-    }
-    return -1
-  }
-
-  // Opening the panel used to force a refresh too, on top of startup, the
-  // link watcher and the explicit triggers below (this button, middle-click,
-  // 'r'). Read/write is otherwise more than enough to keep `values` correct,
-  // so opening the panel just shows whatever it already knows.
-  onOpenedChanged: if (opened) {
-    cursorActive = false
-    if (panelFlick) panelFlick.contentY = 0
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  Connections {
-    // `hsk`, not `mouse` -- this one survived the rename and has been pointing
-    // at nothing ever since, so the cursor was never re-clamped on a refresh.
-    target: hsk
-    function onChanged() { root.clampCursor() }
-  }
-
+  // Parameterless only: opening the panel or its setup changes nothing.
+  // `omarchy-shell keasbeexd.mousectrl setup` can sit behind a keybinding.
   IpcHandler {
     target: root.ipcTarget
     function open(): void { root.open() }
@@ -237,88 +26,206 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    function refresh(): string { hsk.refresh(); return "ok" }
-    function status(): string { return hsk.summary }
-    // Deliberately nothing that writes to the mouse. Every setting change
-    // lands in the mouse's own storage, and an IPC method is reachable by any
-    // process running as this user with nobody at the panel -- so changing
-    // DPI or polling rate needs the panel (or `hskctl set` in a terminal).
+    function setup(): void {
+      root.open()
+      root.openWizard(backend.selectedKey)
+    }
   }
 
-  // --- bar item -----------------------------------------------------------
+  // Every color comes from the active Omarchy theme. Secondary text is
+  // Qt.darker(foreground), matching the first-party panels.
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property color accent: Commons.Color.accent
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  readonly property color dim: Qt.darker(foreground, 1.4)
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, accent) : "transparent"
+  readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, accent) : "transparent"
+
+  readonly property var caps: backend.capabilities
+  readonly property var stagesCap: Model.firstOfKind(caps, "dpiStages")
+  readonly property bool ready: backend.status === "ready"
+  readonly property bool genericView: backend.status === "generic" && backend.generic !== null
+  readonly property string contributeUrl: "https://github.com/keasbeexd/omarchy-mouse-ctrl/blob/master/docs/contributing-a-family.md"
+  // The settings grid every row shares: label column, then controls, with a
+  // fixed slot for units at the right edge.
+  readonly property real labelWidth: column.width * 0.4
+  readonly property real unitWidth: Style.space(28)
+
+  // --- keyboard cursor -----------------------------------------------------
+
+  property bool cursorActive: false
+  property int cursorIndex: 0
+  property int selectedStage: 0
+  readonly property var rows: ready ? Model.buildRows(caps, backend.devices.length)
+                                    : (backend.devices.length > 1 ? [{ type: "device", capId: "" }] : [])
+  readonly property var cursorRow: cursorActive && cursorIndex < rows.length ? rows[cursorIndex] : null
+
+  function rowHasCursor(type, capId) {
+    return cursorRow !== null && cursorRow.type === type && cursorRow.capId === capId
+  }
+
+  function hoverRow(type, capId) {
+    var i = Model.rowIndex(rows, type, capId)
+    if (i < 0) return
+    cursorActive = true
+    cursorIndex = i
+  }
+
+  // Scroll the panel so a row the keyboard cursor lands on is on screen.
+  function ensureVisible(item) {
+    var top = item.mapToItem(column, 0, 0).y
+    var bottom = top + item.height
+    if (top < flick.contentY) flick.contentY = top
+    else if (bottom > flick.contentY + flick.height) flick.contentY = bottom - flick.height
+  }
+
+  function moveCursor(delta) {
+    if (rows.length === 0) return
+    cursorIndex = Math.max(0, Math.min(rows.length - 1, cursorIndex + delta))
+  }
+
+  function adjust(delta) {
+    var row = cursorRow
+    if (!row) return
+    if (row.type === "device") return backend.cycleDevice()
+    if (row.type === "stages") return selectStage(selectedStage + delta)
+    if (row.type === "stageDpi") return stagesView.setDpi(stagesView.selectedStage.dpi + delta * stagesCap.step)
+    if (row.type === "stageColor") return stagesView.cycleColor(delta)
+    var cap = Model.findCap(caps, row.capId)
+    var next = cap ? Model.steppedValue(cap, backend.values[cap.id], delta) : undefined
+    if (next !== undefined) backend.write(cap.id, next)
+  }
+
+  function activate() {
+    var row = cursorRow
+    if (!row) return
+    if (row.type === "device") return backend.cycleDevice()
+    if (row.type === "stages") return stagesView.pick(selectedStage)
+    if (row.type === "stageColor") return stagesView.cycleColor(1)
+    var cap = Model.findCap(caps, row.capId)
+    if (cap && cap.kind === "toggle") backend.write(cap.id, !backend.values[cap.id])
+  }
+
+  function selectStage(index) {
+    var value = stagesCap ? backend.values[stagesCap.id] : null
+    if (!value) return
+    selectedStage = Math.max(0, Math.min(value.stages.length - 1, index))
+  }
+
+  onRowsChanged: if (cursorIndex >= rows.length) cursorIndex = Math.max(0, rows.length - 1)
+
+  // The setup wizard replaces the panel's content while open; it is loaded
+  // fresh each time, so a cancelled run leaves nothing behind.
+  property bool wizardOpen: false
+  property string wizardKey: ""
+  // Handed to the wizard by this name: inside `Wizard { backend: backend }`
+  // the right-hand side would resolve to the wizard's own property.
+  readonly property var mouseBackend: backend
+
+  function openWizard(key) {
+    wizardKey = key || ""
+    cursorActive = false
+    wizardOpen = true
+    flick.contentY = 0
+  }
+
+  onOpenedChanged: {
+    if (!opened) { wizardOpen = false; return }
+    cursorActive = false
+    cursorIndex = 0
+    backend.refresh()
+  }
+
+  Connections {
+    target: backend
+    // Start editing on the live stage whenever a mouse is (re)selected.
+    function onSelectedKeyChanged() { root.selectedStage = -1 }
+    function onValuesChanged() {
+      var value = root.stagesCap ? backend.values[root.stagesCap.id] : null
+      if (!value) return
+      if (root.selectedStage < 0 || root.selectedStage >= value.stages.length) root.selectedStage = value.active
+    }
+  }
+
+  Backend {
+    id: backend
+    settings: root.settings
+    panelOpen: root.opened
+  }
+
+  // --- bar -----------------------------------------------------------------
+
+  readonly property string barLabel: (bar && bar.vertical) || !backend.setting("showBatteryLabel", true) || !backend.battery
+                                     ? "" : backend.battery.percent + "%"
+  readonly property color barColor: backend.lowBattery ? urgent
+                                  : (backend.battery && backend.battery.charging ? accent
+                                  : (ready ? barForeground : Qt.darker(barForeground, 1.6)))
+
+  TextMetrics {
+    id: glyphMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.bar.iconFont
+    text: "󰍽"
+  }
+
+  TextMetrics {
+    id: labelMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    text: root.barLabel
+  }
+
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // Deliberately no `text:`. BarIconButton renders its `text` through an
-    // OpticalGlyph that is `visible: iconComponent === null`, and it forces
-    // `labelVisible: false` on the WidgetButton underneath -- so a widget with
-    // a custom icon has no route to a text label at all. Setting `text` here
-    // is not an error and not ignored-with-a-warning; it simply draws nothing,
-    // which is why `showBatteryLabel` appeared to do nothing in either
-    // position. The percentage is drawn inside the icon instead.
-    // Content width plus a two-pixel breathing room on each side, instead of
-    // Style.bar.iconSlot -- which is padded to a square that fits any single
-    // glyph, and left the widget visibly loose next to its neighbours.
-    slotSize: Math.ceil(barIconMetrics.width)
-      + (root.barLabelText !== "" ? Style.space(3) + Math.ceil(barLabelMetrics.width) : 0)
+    // BarIconButton draws no `text` once it has an iconComponent, so the
+    // percentage lives inside the icon and the slot is sized to hold both.
+    slotSize: Math.ceil(glyphMetrics.width)
+      + (root.barLabel !== "" ? Style.space(3) + Math.ceil(labelMetrics.width) : 0)
       + Style.space(2)
-    active: hsk.lowBattery
-    // BarIconButton renders its tooltip through a shared host component we
-    // cannot pin to PlainText from here, so strip < > & and controls and cap
-    // the length before handoff. hsk.model is set by the mouse's own firmware
-    // and hsk.summary quotes it, so the values are attacker-supplyable in the
-    // reviewer's threat model (a USB device sets its own product string).
-    tooltipText: Model.plain(hsk.model, 60) + " — " + Model.plain(hsk.summary, 120)
+    active: backend.lowBattery
+    // Rendered by a host component in AutoText mode; the device name comes
+    // from the mouse's firmware, so it goes through Model.plain.
+    tooltipText: backend.device ? Model.plain(backend.device.name, 60) : "Mouse CTRL"
     iconComponent: Component {
       Item {
-        // Centred on the button, not on the 16px optical canvas this Loader
-        // fills -- the canvas is itself centred, so overflowing it is
-        // symmetrical, and the slot above was widened to hold the result.
         Row {
           anchors.centerIn: parent
-          spacing: root.barLabelText !== "" ? Style.space(3) : 0
+          spacing: root.barLabel !== "" ? Style.space(3) : 0
 
           Text {
-            // textFormat is set on every Text in this tree without exception,
-            // literal-only ones included. On Qt's default AutoText a string
-            // that looks like markup renders as rich text and `<img src=...>`
-            // becomes a real fetch from the shell process -- and every value
-            // that ends up in a Text here comes ultimately from the mouse or
-            // an hskctl error message, so the invariant has to hold end to end.
             textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
-            // Always the filled mouse glyph -- charging state and battery level
-            // are carried by the percentage's color beside it, not by swapping
-            // the icon out from under the reader.
             text: "󰍽"
-            color: root.barIconColor
+            color: root.barColor
             font.family: root.fontFamily
             font.pixelSize: Style.bar.iconFont
-            opacity: hsk.ready ? 1.0 : 0.55
           }
 
           Text {
             textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
-            visible: root.barLabelText !== ""
-            text: root.barLabelText
-            color: root.barLabelColor
+            visible: root.barLabel !== ""
+            text: root.barLabel
+            color: root.barColor
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
-            renderType: Text.NativeRendering
           }
         }
       }
     }
-    onPressed: function(buttonCode) {
-      if (buttonCode === Qt.MiddleButton) hsk.refresh()
+    onPressed: function(b) {
+      if (b === Qt.MiddleButton) backend.refresh()
       else root.toggle()
     }
   }
 
-  // --- panel --------------------------------------------------------------
+  // --- panel ---------------------------------------------------------------
 
   KeyboardPanel {
     id: panel
@@ -327,25 +234,29 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(360))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(560))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
+    // Fitted to the screen; anything taller scrolls.
+    contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
+        if (root.wizardOpen) return
         if (!root.cursorActive) { root.cursorActive = true; return }
-        root.moveCursor(dx, dy)
+        if (dy !== 0) root.moveCursor(dy)
+        else if (dx !== 0) root.adjust(dx)
       }
-      onActivateRequested: if (root.cursorActive) root.activateCursor()
-      onCloseRequested: root.close()
+      onActivateRequested: {
+        if (root.wizardOpen) wizardLoader.item.primary()
+        else if (root.cursorActive) root.activate()
+      }
+      onCloseRequested: root.wizardOpen ? root.wizardOpen = false : root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(t) {
-        if (t === "r" || t === "R") hsk.refresh()
-      }
+      onTextKey: function(t) { if (!root.wizardOpen && (t === "r" || t === "R")) backend.refresh() }
 
       Flickable {
-        id: panelFlick
+        id: flick
         anchors.fill: parent
         contentWidth: width
         contentHeight: column.implicitHeight
@@ -353,685 +264,577 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
-        // A thin, square-ended rule in the theme's foreground, sitting in a
-        // fixed gutter to the right of the content (see `column` below) so it
-        // never draws over a control. The stock Controls style would paint
-        // its own grey on top of the rows instead.
-        ScrollBar.vertical: ScrollBar {
-          id: panelScroll
-          policy: ScrollBar.AsNeeded
-          padding: 0
-          contentItem: Rectangle {
-            implicitWidth: Style.space(3)
-            implicitHeight: Style.space(24)
-            visible: panelScroll.size < 1.0
-            color: panelScroll.pressed || panelScroll.hovered
-              ? root.dim
-              : root.withAlpha(root.foreground, 0.3)
-          }
-        }
+
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
         Column {
           id: column
-          // The gutter is always reserved, scrollable or not: making it
-          // conditional would change the width, re-wrap the text, change the
-          // height, and so change whether it scrolls.
-          width: panelFlick.width - Style.space(22)
-          spacing: Style.space(12)
+          width: flick.width
+          spacing: Style.space(10)
 
-          PanelHero {
-            id: hero
+          Loader {
+            id: wizardLoader
+            active: root.wizardOpen
+            visible: active
             width: parent.width
-            // PanelHero.title and .meta land in a shared host Text with the
-            // default AutoText format we cannot override from a plugin, so
-            // strip < > & (and controls) and cap before assignment -- the
-            // model name comes from the mouse's own product string.
-            title: Model.plain(hsk.model, 60)
-            meta: Model.plain(hsk.summary, 160)
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            iconOpacity: hsk.ready ? 1.0 : 0.5
-            iconComponent: Component {
-              Text {
-                textFormat: Text.PlainText
-                text: hsk.ready
-                  ? Model.batteryGlyph(hsk.value("batteryPercent"), hsk.value("charging") === true)
-                  : "󰍽"
-                color: hsk.lowBattery ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
-              }
-            }
-            trailingControl: Component {
-              PanelActionButton {
-                iconText: "󰑐"
-                tooltipText: "Refresh"
+            sourceComponent: Component {
+              Wizard {
+                width: column.width
+                backend: root.mouseBackend
+                startKey: root.wizardKey
                 foreground: root.foreground
+                accent: root.accent
+                urgent: root.urgent
+                hoverFill: root.hoverFill
+                selectedFill: root.selectedFill
                 fontFamily: root.fontFamily
-                onClicked: hsk.refresh()
+                labelWidth: root.labelWidth
+                onClosed: root.wizardOpen = false
               }
             }
           }
 
-          // Says out loud that the mouse is being written to. Without it, the
-          // 200-odd milliseconds an exchange takes read as "my click did
-          // nothing", and the natural response -- click again -- is the one
-          // thing that makes it worse.
-          Rectangle {
-            visible: hsk.working
+          Column {
+            id: mainView
+            visible: !root.wizardOpen
             width: parent.width
-            implicitHeight: writingLabel.implicitHeight + Style.space(10)
-            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-            color: root.hoverFill
+            spacing: Style.space(10)
+
+            // ---------- hero: which mouse, and its battery ----------
+            Column {
+              visible: backend.device !== null
+              width: parent.width
+              spacing: Style.space(10)
+
+              Item {
+                width: parent.width
+                implicitHeight: Math.max(names.implicitHeight, switcher.implicitHeight)
+
+                Column {
+                  id: names
+                  anchors.left: parent.left
+                  anchors.right: setupButton.left
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(2)
+
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    text: backend.device ? (backend.device.profile ? backend.device.profile.name : backend.device.name) : ""
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    text: backend.device ? (backend.device.family ? backend.device.family.title : backend.device.vidpid).toUpperCase() : ""
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    font.letterSpacing: 1.2
+                    elide: Text.ElideRight
+                  }
+                }
+
+                PanelActionButton {
+                  id: setupButton
+                  anchors.right: switcher.visible ? switcher.left : parent.right
+                  anchors.rightMargin: switcher.visible ? Style.space(6) : 0
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "󰐕"
+                  tooltipText: "Set up a mouse"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.openWizard(backend.selectedKey)
+                }
+
+                // Cycles through connected mice; only there when there is a choice.
+                CursorSurface {
+                  id: switcher
+                  visible: backend.devices.length > 1
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: switcherText.implicitWidth + Style.space(20)
+                  implicitHeight: switcherText.implicitHeight + Style.space(12)
+                  bordered: true
+                  hasCursor: root.rowHasCursor("device", "")
+                  foreground: root.foreground
+                  fill: root.hoverFill
+
+                  Text {
+                    id: switcherText
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: {
+                      for (var i = 0; i < backend.devices.length; i++)
+                        if (backend.devices[i].key === backend.selectedKey) return (i + 1) + "/" + backend.devices.length + "  󰅀"
+                      return backend.devices.length + "  󰅀"
+                    }
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  MouseArea {
+                    id: switcherMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: if (containsMouse) root.hoverRow("device", "")
+                    onClicked: backend.cycleDevice()
+                  }
+
+                  PanelToolTip {
+                    visible: switcherMouse.containsMouse
+                    text: "Next mouse"
+                    fontFamily: root.fontFamily
+                  }
+                }
+              }
+
+              Item {
+                visible: backend.battery !== null
+                width: parent.width
+                implicitHeight: percent.implicitHeight
+
+                Text {
+                  id: percent
+                  textFormat: Text.PlainText
+                  anchors.left: parent.left
+                  text: backend.battery ? backend.battery.percent + "%" : ""
+                  color: backend.lowBattery ? root.urgent : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.display
+                  font.bold: true
+                }
+
+                Column {
+                  anchors.left: percent.right
+                  anchors.leftMargin: Style.space(14)
+                  anchors.right: parent.right
+                  anchors.verticalCenter: percent.verticalCenter
+                  spacing: Style.space(6)
+
+                  Rectangle {
+                    width: parent.width
+                    height: Style.space(6)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+
+                    Rectangle {
+                      width: backend.battery ? parent.width * backend.battery.percent / 100 : 0
+                      height: parent.height
+                      radius: parent.radius
+                      color: backend.lowBattery ? root.urgent
+                           : (backend.battery && backend.battery.charging ? root.accent : root.foreground)
+                    }
+                  }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: backend.battery && backend.battery.charging ? "CHARGING" : "BATTERY"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    font.letterSpacing: 1.2
+                  }
+                }
+              }
+            }
+
+            // ---------- why there is nothing to show ----------
+            Column {
+              visible: !root.ready && !root.genericView
+              width: parent.width
+              spacing: Style.space(8)
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: backend.status === "starting" ? "Looking for mice…" : backend.statusMessage
+                color: backend.status === "error" ? root.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: text !== ""
+                text: {
+                  var s = backend.status
+                  if (s === "asleep") return "Move the mouse to wake it; the panel retries on its own."
+                  if (s === "noAccess") return "Setup installs the access rule; it asks for your password once."
+                  if (s === "noProfile") return "Setup reads the mouse, lets you confirm what it found and saves a profile."
+                  if (s === "unsupported") return "Setup keeps it in the panel with what can be read without a driver."
+                  if (s === "noDevice") return "Plug in a mouse or its receiver."
+                  return ""
+                }
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Button {
+                visible: ["noProfile", "noAccess", "unsupported"].indexOf(backend.status) >= 0
+                text: "Set up this mouse"
+                iconText: "󰐕"
+                bordered: true
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                onClicked: root.openWizard(backend.selectedKey)
+              }
+            }
+
+            // ---------- a mouse with no driver: what can be seen anyway ----------
+            Column {
+              visible: root.genericView
+              width: parent.width
+              spacing: 0
+
+              PanelSeparator {
+                foreground: root.foreground
+              }
+
+              PanelSectionHeader {
+                topPadding: Style.space(6)
+                bottomPadding: Style.space(4)
+                text: "READ-ONLY"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Repeater {
+                model: root.genericView ? [
+                  { label: "Connection", text: backend.generic.connection },
+                  { label: "Buttons", text: backend.generic.buttons + " declared" },
+                  { label: "Battery", text: backend.battery ? backend.battery.percent + "%" : "not reported" }
+                ] : []
+                Item {
+                  required property var modelData
+                  width: parent.width
+                  implicitHeight: Style.spacing.controlHeight + Style.space(2)
+                  Text {
+                    textFormat: Text.PlainText
+                    x: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.label
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.text
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+                }
+              }
+
+              Item {
+                width: parent.width
+                implicitHeight: Style.spacing.controlHeight + Style.space(2)
+                Text {
+                  textFormat: Text.PlainText
+                  x: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Polling rate"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Row {
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(10)
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: backend.measuring ? "move the mouse…" : backend.measuredHz > 0 ? "≈ " + backend.measuredHz + " Hz" : "—"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+                  Button {
+                    text: "Measure"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: backend.measure()
+                  }
+                }
+              }
+
+              // ratbagd's own readings, read-only; settings belong to Piper.
+              Column {
+                visible: root.genericView && backend.generic.ratbag !== null
+                width: parent.width
+                spacing: 0
+
+                PanelSectionHeader {
+                  topPadding: Style.space(6)
+                  bottomPadding: Style.space(4)
+                  text: "LIBRATBAG"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Repeater {
+                  model: root.genericView && backend.generic.ratbag ? [
+                    { label: "Profile", text: backend.generic.ratbag.profile + " of " + backend.generic.ratbag.profiles },
+                    { label: "Polling rate", text: backend.generic.ratbag.pollingRate !== null ? backend.generic.ratbag.pollingRate + " Hz" : "—" },
+                    { label: "DPI stages", text: Model.ratbagStagesText(backend.generic.ratbag) },
+                    { label: "Firmware", text: backend.generic.ratbag.firmware }
+                  ] : []
+                  Item {
+                    required property var modelData
+                    width: parent.width
+                    implicitHeight: Style.spacing.controlHeight + Style.space(2)
+                    Text {
+                      textFormat: Text.PlainText
+                      x: Style.space(8)
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.label
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.right: parent.right
+                      anchors.rightMargin: Style.space(8)
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.text
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                  }
+                }
+
+                Item {
+                  width: parent.width
+                  implicitHeight: Style.spacing.controlHeight + Style.space(8)
+                  Text {
+                    textFormat: Text.PlainText
+                    x: Style.space(8)
+                    width: root.labelWidth - Style.space(16)
+                    anchors.verticalCenter: parent.verticalCenter
+                    wrapMode: Text.WordWrap
+                    text: backend.generic && backend.generic.piper ? "Change settings" : "Change settings with Piper (not installed)"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                  Button {
+                    visible: backend.generic !== null && backend.generic.piper
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Open Piper"
+                    iconText: "󰏌"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: Quickshell.execDetached(["/usr/bin/piper"])
+                  }
+                }
+
+                PanelSeparator {
+                  foreground: root.foreground
+                }
+              }
+
+              Item {
+                width: parent.width
+                implicitHeight: Style.spacing.controlHeight + Style.space(8)
+                Text {
+                  textFormat: Text.PlainText
+                  x: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Report"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Row {
+                  id: reportButtons
+                  property bool copied: false
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(6)
+                  Button {
+                    text: reportButtons.copied ? "Copied" : "Copy report"
+                    iconText: "󰆏"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: {
+                      Quickshell.clipboardText = backend.generic.report
+                      reportButtons.copied = true
+                    }
+                  }
+                  Button {
+                    text: "Add support"
+                    iconText: "󰏌"
+                    tooltipText: "How to add a driver for this mouse"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: Qt.openUrlExternally(root.contributeUrl)
+                  }
+                }
+              }
+            }
+
+            // ---------- DPI ----------
+            PanelSeparator {
+              visible: stagesView.visible
+              foreground: root.foreground
+            }
+
+            DpiStages {
+              id: stagesView
+              visible: root.ready && root.stagesCap !== null && backend.values[root.stagesCap.id] !== undefined
+              width: parent.width
+              cap: root.stagesCap || ({ writable: false, switchable: false, hasColors: false, step: 1, minimum: null, maximum: null })
+              value: root.stagesCap ? (backend.values[root.stagesCap.id] || null) : null
+              selectedIndex: root.selectedStage
+              busy: root.stagesCap !== null && backend.pending[root.stagesCap.id] === true
+              cursorRow: root.cursorRow && root.stagesCap && root.cursorRow.capId === root.stagesCap.id ? root.cursorRow.type : ""
+              foreground: root.foreground
+              accent: root.accent
+              fill: root.hoverFill
+              currentFill: root.selectedFill
+              fontFamily: root.fontFamily
+              labelWidth: root.labelWidth
+              unitWidth: root.unitWidth
+              onSelected: function(index) { root.selectStage(index) }
+              onWriteRequested: function(value) { backend.write(root.stagesCap.id, value) }
+              onRowHovered: function(row) { root.hoverRow(row, root.stagesCap.id) }
+              onCursorRowChanged: if (cursorRow !== "") root.ensureVisible(stagesView)
+            }
+
+            // ---------- settings, one titled section each ----------
+            Repeater {
+              model: root.ready ? Model.settingSections(root.caps) : []
+
+              Column {
+                id: section
+                required property var modelData
+                width: column.width
+                spacing: 0
+
+                PanelSeparator {
+                  foreground: root.foreground
+                }
+
+                PanelSectionHeader {
+                  topPadding: Style.space(6)
+                  bottomPadding: Style.space(4)
+                  text: section.modelData.title
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Repeater {
+                  model: section.modelData.caps
+
+                  SettingRow {
+                    required property var modelData
+                    width: section.width
+                    cap: modelData
+                    value: backend.values[modelData.id]
+                    busy: backend.pending[modelData.id] === true
+                    hasCursor: root.rowHasCursor("setting", modelData.id)
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    labelWidth: root.labelWidth
+                    unitWidth: root.unitWidth
+                    onChangeRequested: function(value) { backend.write(modelData.id, value) }
+                    onRowHovered: root.hoverRow("setting", modelData.id)
+                    onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+                  }
+                }
+              }
+            }
+
+            // ---------- footer ----------
+            Text {
+              readonly property string facts: root.ready ? Model.footerText(root.caps, backend.values) : ""
+              textFormat: Text.PlainText
+              visible: facts !== ""
+              width: parent.width
+              topPadding: Style.space(4)
+              wrapMode: Text.WordWrap
+              text: facts
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
 
             Text {
-              id: writingLabel
               textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: "󰏫  Writing to the mouse…"
-              color: root.foreground
+              visible: root.rows.length > 0
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "j/k move  ·  h/l adjust  ·  enter select  ·  r refresh"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: backend.actionMessage !== ""
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: backend.actionMessage
+              color: root.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
             }
-          }
 
-          Text {
-            // hsk.lastError comes from hskctl (a trusted first-party helper
-            // that we ship) but the text itself is not necessarily under our
-            // control -- an exception string can carry a device name or path
-            // that came from the mouse. Pin the format explicitly so an error
-            // that happens to look like markup renders as text, not as a
-            // remote fetch.
-            textFormat: Text.PlainText
-            visible: hsk.actionStatus !== "" || (hsk.lastError !== "" && !root.needsSetup)
-            width: parent.width
-            text: Model.plain(
-              hsk.actionStatus !== "" ? hsk.actionStatus : hsk.lastError, 400
-            )
-            color: root.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
-
-          // --- setup state ----------------------------------------------
-          // The honest first-run view. The protocol is not mapped yet, so
-          // rather than showing dead controls we explain exactly what is
-          // missing and what to run next.
-          CursorSurface {
-            visible: root.needsSetup || root.hasError
-            width: parent.width
-            implicitHeight: setupColumn.implicitHeight + Style.spacing.xl
-            foreground: root.foreground
-            outline: true
-
-            Column {
-              id: setupColumn
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.space(12)
-              anchors.rightMargin: Style.space(12)
-              spacing: Style.space(6)
-
+            Repeater {
+              model: backend.profileProblems
               Text {
+                required property var modelData
                 textFormat: Text.PlainText
-                width: parent.width
-                text: root.needsSetup
-                  ? (hsk.detected ? "Mouse found, protocol not mapped" : "Mouse not detected")
-                  : (root.looksLikePermissions ? "No permission to reach the mouse"
-                                               : "hskctl unavailable")
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
+                width: column.width
                 wrapMode: Text.WordWrap
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                width: parent.width
-                text: {
-                  if (root.looksLikePermissions)
-                    return "Configuring the mouse uses HID feature reports, and those need "
-                         + "read-write access to /dev/hidraw*, which is root-only by default. "
-                         + "Install the udev rule, then unplug and replug the mouse or its dongle."
-                  if (root.hasError) return Model.plain(hsk.lastError, 400)
-                  if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
-                  return "hskctl can see the device but does not know its config protocol yet. "
-                       + "Run a capture to fill in the profile."
-                }
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                width: parent.width
-                visible: root.needsSetup || root.looksLikePermissions
-                text: root.looksLikePermissions
-                  ? "~/.config/omarchy/plugins/keasbeexd.mousectrl/install.sh --udev"
-                  : "hskctl probe"
-                wrapMode: Text.WrapAnywhere
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-          }
-
-          // --- DPI --------------------------------------------------------
-
-          PanelSeparator {
-            visible: root.hasDpi
-            foreground: root.foreground
-          }
-
-          Column {
-            visible: root.hasDpi
-            width: parent.width
-            spacing: Style.space(10)
-
-            PanelSectionHeader {
-              text: "DPI"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            DpiStageRow {
-              id: dpiRow
-              width: parent.width
-            }
-          }
-
-          // --- performance ------------------------------------------------
-
-          PanelSeparator {
-            visible: hsk.canWrite("pollingRate") || hsk.canWrite("liftOffDistance")
-            foreground: root.foreground
-          }
-
-          Column {
-            visible: hsk.canWrite("pollingRate") || hsk.canWrite("liftOffDistance")
-            width: parent.width
-            spacing: Style.space(10)
-
-            PanelSectionHeader {
-              text: "PERFORMANCE"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              visible: hsk.canWrite("pollingRate")
-              width: parent.width
-              spacing: Style.space(6)
-
-              Text {
-                textFormat: Text.PlainText
-                text: "Polling rate"
+                text: "Profile skipped: " + modelData
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
-
-              // ChoiceRow is a Row -- it sizes to its chips, so no explicit
-              // width here or the row stretches past its content.
-              ChoiceRow {
-                options: Model.pollingOptions(hsk.value("pollingRate"), hsk.allowed)
-                value: String(hsk.value("pollingRate"))
-                cursorIndex: root.cursorActive && root.currentRow() && root.currentRow().kind === "pollingRate" ? 0 : -1
-                onChanged: function(v) { hsk.set("pollingRate", parseInt(v, 10)) }
-                onHovered: function(index, on) {
-                  if (on) root.setCursor(root.rowIndexOf("pollingRate", null))
-                }
-              }
             }
-
-            Column {
-              visible: hsk.canWrite("liftOffDistance")
-              width: parent.width
-              spacing: Style.space(6)
-
-              Text {
-                textFormat: Text.PlainText
-                text: "Lift-off distance"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              ChoiceRow {
-                options: [{ value: "1mm", label: "1 mm" }, { value: "2mm", label: "2 mm" }]
-                value: String(hsk.value("liftOffDistance"))
-                onChanged: function(v) { hsk.set("liftOffDistance", v) }
-                onHovered: function(index, on) {
-                  if (on) root.setCursor(root.rowIndexOf("liftOffDistance", null))
-                }
-              }
-            }
-          }
-
-          // --- sensor -----------------------------------------------------
-
-          PanelSeparator {
-            visible: toggleColumn.hasAny
-            foreground: root.foreground
-          }
-
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: toggleColumn.hasAny
-
-            PanelSectionHeader {
-              text: "SENSOR"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              id: toggleColumn
-              width: parent.width
-              spacing: Style.space(6)
-              readonly property bool hasAny: hsk.canWrite("motionSync")
-                || hsk.canWrite("angleSnap")
-                || hsk.canWrite("rippleControl")
-                || hsk.canWrite("turboMode")
-
-              Repeater {
-                // Same fields, same order, as the toggle rows Model.buildRows
-                // makes cursor stops for -- a field missing here is a cursor
-                // stop with nothing drawn under it.
-                model: ["motionSync", "angleSnap", "rippleControl", "turboMode"]
-                Toggle {
-                  required property var modelData
-                  visible: hsk.canWrite(modelData)
-                  width: toggleColumn.width
-                  label: Model.toggleLabel(modelData)
-                  description: Model.toggleDescription(modelData)
-                  checked: hsk.value(modelData) === true
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  hasCursor: {
-                    var row = root.currentRow()
-                    return root.cursorActive && row && row.kind === "toggle" && row.field === modelData
-                  }
-                  onClicked: hsk.toggle(modelData)
-                  onHovered: function(on) {
-                    if (on) root.setCursor(root.rowIndexOf("toggle", modelData))
-                  }
-                }
-              }
-            }
-          }
-
-          // --- footer -----------------------------------------------------
-          // Which build is actually running. hskctl reads it from
-          // manifest.json and reports it in its JSON, so it is by construction
-          // the version that was published -- a hardcoded one drifts, and a
-          // version label you cannot trust is worse than none. Hovering shows
-          // the firmware and the device in use, which is the rest of "what am
-          // I running".
-
-          Item {
-            visible: hsk.pluginVersion !== ""
-            width: parent.width
-            implicitHeight: Math.max(hotkeyLabel.implicitHeight, versionLabel.implicitHeight) + Style.space(6)
-
-            // A standing reminder of the keys README documents -- arrows to
-            // move the cursor and adjust the row under it, 'r' to refresh
-            // (silent-by-design otherwise, see refresh()'s callers). The
-            // panel is the one place someone would actually go looking.
-            Text {
-              id: hotkeyLabel
-              textFormat: Text.PlainText
-              anchors.left: parent.left
-              anchors.bottom: parent.bottom
-              text: "↑↓←→ navigate  ·  r refresh"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              id: versionLabel
-              textFormat: Text.PlainText
-              anchors.right: parent.right
-              anchors.bottom: parent.bottom
-              // Version comes from hskctl (which reads it from manifest.json),
-              // so it is trusted -- but plain() also caps and keeps a rogue
-              // build from painting a novel out of the label.
-              text: "v" + Model.plain(hsk.pluginVersion, 32)
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-
-              MouseArea {
-                id: versionMouse
-                anchors.fill: parent
-                anchors.margins: -Style.space(4)
-                hoverEnabled: true
-              }
-
-              PanelToolTip {
-                visible: versionMouse.containsMouse
-                // The tooltip is rendered by a shared host component, so
-                // sanitize the device-supplied pieces (firmware string, hidraw
-                // path) the same way as the bar tooltip. The literal prefix
-                // and the version stay as-is.
-                text: {
-                  var parts = ["Mouse CTRL v" + Model.plain(hsk.pluginVersion, 32)]
-                  if (hsk.has("firmwareVersion"))
-                    parts.push("firmware " + Model.plain(hsk.value("firmwareVersion"), 40))
-                  if (hsk.devicePath !== "") parts.push(Model.plain(hsk.devicePath, 60))
-                  return parts.join("  ·  ")
-                }
-                fontFamily: root.fontFamily
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // --- components ---------------------------------------------------------
-
-  // A pick-one row of Omarchy's own bordered buttons, drawn like Vigil's
-  // tabs. Not the shell's ButtonGroup: that fills every unselected chip with
-  // the theme background, which in some themes is a block of solid color
-  // against the panel. A plain Button stays transparent until it is selected.
-  component ChoiceRow: Row {
-    id: choiceRow
-    property var options: []
-    property string value: ""
-    property int cursorIndex: -1
-    signal changed(string value)
-    signal hovered(int index, bool on)
-    spacing: Style.spacing.md
-
-    Repeater {
-      model: choiceRow.options
-      Button {
-        required property var modelData
-        required property int index
-        text: modelData.label
-        selected: String(modelData.value) === choiceRow.value
-        hasCursor: choiceRow.cursorIndex === index
-        bordered: true
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        fontSize: Style.font.bodySmall
-        horizontalPadding: Style.space(8)
-        onClicked: choiceRow.changed(String(modelData.value))
-        onHovered: function(on) { choiceRow.hovered(index, on) }
-      }
-    }
-  }
-
-  // The mouse's one DPI stage: a draggable slider plus a color swatch and a
-  // hex field. There is deliberately no stage picker here -- see the
-  // profiles' own notes on why switching which stage is live does not work.
-  component DpiStageRow: CursorSurface {
-    id: stageRow
-
-    // Read straight from the service rather than being handed a snapshot, so
-    // the row survives a refresh instead of being torn down and rebuilt.
-    //
-    // No separate Y axis here. G-Wolves' own write path mirrors X into Y in
-    // the same packet (see the profile's `linkedField`), so every write this
-    // plugin makes keeps them equal -- a mismatch can only be a leftover from
-    // before this mouse was ever set through here, and the next write clears
-    // it. Not worth a UI for.
-    readonly property int dpi: {
-      var v = hsk.value("dpiStage1")
-      return v === undefined || v === null ? Model.DPI_MIN : v
-    }
-    readonly property string swatch: {
-      var v = hsk.value("dpiStage1Color")
-      return v === undefined || v === null ? "" : String(v)
-    }
-    readonly property bool dpiWritable: hsk.canWrite("dpiStage1")
-    readonly property bool colorWritable: hsk.canWrite("dpiStage1Color")
-
-    // The slider bounds this mouse's own profile reports (its `min`/`max`),
-    // not a range baked in for one model -- see Model.dpiBounds.
-    readonly property var bounds: Model.dpiBounds(hsk.allowed)
-
-    readonly property bool rowHasCursor: {
-      var row = root.currentRow()
-      return root.cursorActive && row && row.kind === "dpiStage"
-    }
-
-    hasCursor: rowHasCursor
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: stageInner.implicitHeight + Style.spacing.lg
-
-    Column {
-      id: stageInner
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(6)
-
-      RowLayout {
-        width: parent.width
-        spacing: Style.space(8)
-
-        // Typing a value commits like the slider does -- on
-        // editingFinished, not per keystroke, so a half-typed number is
-        // never sent to the mouse.
-        TextField {
-          id: dpiField
-          Layout.preferredWidth: Style.space(70)
-          enabled: stageRow.dpiWritable
-          selectByMouse: true
-          horizontalAlignment: Text.AlignRight
-          color: root.foreground
-          selectionColor: root.withAlpha(root.accent, 0.4)
-          selectedTextColor: root.foreground
-          placeholderTextColor: root.dim
-          opacity: enabled ? 1.0 : 0.5
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: true
-          maximumLength: 5
-          background: Rectangle {
-            implicitHeight: Style.space(28)
-            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-            color: "transparent"
-            border.width: 1
-            border.color: dpiField.activeFocus ? root.accent : root.dim
-          }
-          validator: IntValidator { bottom: stageRow.bounds.min; top: stageRow.bounds.max }
-
-          // Only follow the device (and the slider) while not focused, or a
-          // refresh mid-edit would overwrite what is being typed.
-          Binding {
-            target: dpiField
-            property: "text"
-            value: String(stageRow.dpi)
-            when: !dpiField.activeFocus
-          }
-
-          onEditingFinished: {
-            var n = parseInt(text, 10)
-            if (!isNaN(n)) hsk.set("dpiStage1", Model.clampDpi(n, stageRow.bounds.min, stageRow.bounds.max, stageRow.bounds.step))
-            focus = false
-          }
-        }
-
-        Item { Layout.fillWidth: true }
-      }
-
-      Slider {
-        id: dpiSlider
-        width: parent.width
-        from: stageRow.bounds.min
-        to: stageRow.bounds.max
-        stepSize: stageRow.bounds.step
-        snapMode: Slider.SnapAlways
-        enabled: stageRow.dpiWritable
-        opacity: enabled ? 1.0 : 0.5
-
-        // Track and handle drawn from the theme rather than left to the
-        // Controls style, whose palette knows nothing about Omarchy themes.
-        background: Rectangle {
-          x: dpiSlider.leftPadding
-          y: dpiSlider.topPadding + dpiSlider.availableHeight / 2 - height / 2
-          implicitWidth: Style.space(200)
-          implicitHeight: Style.space(4)
-          width: dpiSlider.availableWidth
-          height: implicitHeight
-          radius: Style.cornerRadius > 0 ? height / 2 : 0
-          color: root.faint
-
-          Rectangle {
-            width: dpiSlider.visualPosition * parent.width
-            height: parent.height
-            radius: parent.radius
-            color: root.accent
-          }
-        }
-
-        handle: Rectangle {
-          x: dpiSlider.leftPadding + dpiSlider.visualPosition * (dpiSlider.availableWidth - width)
-          y: dpiSlider.topPadding + dpiSlider.availableHeight / 2 - height / 2
-          implicitWidth: Style.space(14)
-          implicitHeight: Style.space(14)
-          radius: Style.cornerRadius > 0 ? width / 2 : 0
-          color: dpiSlider.pressed || dpiSlider.hovered ? root.accent : root.foreground
-          border.width: 1
-          border.color: root.accent
-        }
-
-        // Track the device only while not being dragged -- otherwise a
-        // refresh mid-drag yanks the handle back under the pointer and
-        // `released` never arrives where the user let go.
-        Binding {
-          target: dpiSlider
-          property: "value"
-          value: stageRow.dpi
-          when: !dpiSlider.pressed
-        }
-
-        onMoved: hsk.setSoon("dpiStage1", Model.clampDpi(value, stageRow.bounds.min, stageRow.bounds.max, stageRow.bounds.step))
-        onPressedChanged: root.setCursor(root.rowIndexOf("dpiStage"))
-      }
-
-      RowLayout {
-        width: parent.width
-        spacing: Style.space(8)
-        visible: stageRow.swatch !== ""
-
-        // Three one-click presets, then the current color (click cycles the
-        // eight preset colors, for reaching one that isn't among the three),
-        // then the hex field for an exact color.
-        Repeater {
-          model: Model.DPI_PRESET_COLORS
-
-          Rectangle {
-            id: presetBox
-            required property string modelData
-            visible: stageRow.colorWritable
-            Layout.preferredWidth: Style.space(14)
-            Layout.preferredHeight: Style.space(14)
-            Layout.alignment: Qt.AlignVCenter
-            radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-            color: presetBox.modelData
-            border.width: 1
-            border.color: presetMouse.containsMouse ? root.foreground : root.dim
-
-            MouseArea {
-              id: presetMouse
-              anchors.fill: parent
-              anchors.margins: -Style.space(3)
-              hoverEnabled: true
-              enabled: !hsk.busy
-              cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
-              onEntered: root.setCursor(root.rowIndexOf("dpiStage"))
-              onClicked: hsk.set("dpiStage1Color", presetBox.modelData)
-            }
-          }
-        }
-
-        // Current color. Clicking cycles the eight preset colors above, for
-        // reaching a color that isn't one of the three shown.
-        Rectangle {
-          id: swatchBox
-          visible: stageRow.colorWritable
-          Layout.preferredWidth: Style.space(14)
-          Layout.preferredHeight: Style.space(14)
-          Layout.alignment: Qt.AlignVCenter
-          radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-          // Only a validated #rrggbb reaches a color property; anything else
-          // the device reports shows as an empty outline.
-          color: Model.isValidHexColor(stageRow.swatch) ? stageRow.swatch : "transparent"
-          border.width: 1
-          border.color: swatchMouse.containsMouse ? root.foreground : root.dim
-
-          MouseArea {
-            id: swatchMouse
-            anchors.fill: parent
-            anchors.margins: -Style.space(3)
-            hoverEnabled: true
-            enabled: !hsk.busy
-            cursorShape: hsk.busy ? Qt.BusyCursor : Qt.PointingHandCursor
-            onEntered: root.setCursor(root.rowIndexOf("dpiStage"))
-            onClicked: hsk.set("dpiStage1Color", Model.nextStageColor(stageRow.swatch))
-          }
-
-          PanelToolTip {
-            visible: swatchMouse.containsMouse
-            text: "Current color -- click to cycle"
-            fontFamily: root.fontFamily
-          }
-        }
-
-        TextField {
-          id: hexField
-          Layout.fillWidth: true
-          enabled: stageRow.colorWritable
-          selectByMouse: true
-          color: root.foreground
-          selectionColor: root.withAlpha(root.accent, 0.4)
-          selectedTextColor: root.foreground
-          placeholderTextColor: root.dim
-          opacity: enabled ? 1.0 : 0.5
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          maximumLength: 7
-          background: Rectangle {
-            implicitHeight: Style.space(28)
-            radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-            color: "transparent"
-            border.width: 1
-            border.color: hexField.activeFocus ? root.accent : root.dim
-          }
-          validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
-
-          // Only follow the device while the field is not focused, or a
-          // refresh mid-edit would overwrite what is being typed.
-          Binding {
-            target: hexField
-            property: "text"
-            value: stageRow.swatch
-            when: !hexField.activeFocus
-          }
-
-          onEditingFinished: {
-            var v = text.trim()
-            if (v !== "" && v[0] !== "#") v = "#" + v
-            if (Model.isValidHexColor(v)) hsk.set("dpiStage1Color", v.toLowerCase())
-            focus = false
           }
         }
       }
