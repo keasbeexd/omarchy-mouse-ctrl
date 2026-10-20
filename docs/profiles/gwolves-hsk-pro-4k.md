@@ -4,7 +4,7 @@ Evidence behind `mousectrl/families/gwolves_hts.py` (v4) and every
 verification flag in it. v3's `profiles/gwolves-hsk-pro-4k.json` carried the
 same protocol as data; it is in git history, in the commits before
 `v4 core`.
-For how the protocol was decoded, see docs/contributor/PROTOCOL-DISCOVERY.md.
+For how protocols are decoded, see docs/contributing-a-family.md.
 
 ## Source
 
@@ -33,10 +33,9 @@ The firmware acknowledges a packet carrying the wrong link flag and then
 ignores it, replying with an all-zero payload — identical to a command it
 never received. And that link flag describes *the endpoint you opened*, not
 where the mouse is: plug the cable in while the dongle is still in and the
-two disagree, at which point every setting reads back 0. `hskctl`
-establishes it by probing both flags on every candidate node and keeping
-the one that answers with real data (the `linkProbe` block). `dpi` is the
-probe command because a working mouse cannot have an all-zero DPI block,
+two disagree, at which point every setting reads back 0. The driver
+establishes it by reading DPI on both flags and keeping the one that
+answers with real data (`_detect_link`). DPI is the probe because a working mouse cannot have an all-zero DPI block,
 whereas battery, motion sync and angle snap can all legitimately read 0.
 
 ## The DPI block has a header that changes how it is parsed
@@ -63,18 +62,13 @@ reply is sometimes not ready — an all-zero payload that looks exactly like
 a command the mouse ignored, which is how stage selection failed
 intermittently while smaller commands were fine.
 
-## Why `readOnly` / `_needsVerification` are load-bearing
+## Why debounce is read-only
 
-- `debounceMs`: read returns byte 0 of a 4-byte tuple (observed
-  `03 0a 23 14`, row 1 of the driver's 6-row table) while the write takes
-  a row index — the two are not the same number, so writing stays disabled
-  until the table is modelled.
-- `dpiStageCount`: writing it is untested on hardware. Read it, change the
-  count, and check the mouse cycles that many stages before trusting the
-  write.
-- `_needsVerification` closes the write path outright (see
-  `hskctl/protocol.py` `field_writable`). Verify on hardware and delete
-  the marker; that is the only route.
+The debounce read returns byte 0 of a 4-byte tuple (observed `03 0a 23 14`,
+row 1 of the vendor app's 6-row table), while the write takes a row index —
+the two are not the same number, so the driver offers no write until the
+table is modelled. The stage count, once in the same position, was verified
+in v4 (7 → 6 → 7) and then dropped: the HSK has no DPI button.
 
 ## Battery branch by product id
 
@@ -86,8 +80,8 @@ curve instead: raw/2 up to 40, then `(raw-40)*25/30+20`,
 `(raw-70)*30/20+45` and `(raw-90)*25/10+76`. "The byte is a percentage" is
 a fact about this model, not about the protocol — do not carry it to
 another profile without checking which branch that product id takes.
-hskctl reports the byte unrounded, which is why it can read 97 where the
-vendor app shows 95.
+The driver reports the byte unrounded, which is why it can read 97 where
+the vendor app shows 95.
 
 Battery discharge was confirmed on hardware 2026-08-19: 100 → 81 across a
 night on the dongle, about 2.4 points/hour, implying roughly 40 hours from
@@ -104,9 +98,9 @@ non-monotonic, so an explicit map is the only honest model. Raw 8
 (predicted 125 Hz) and raw 16 are untested. The vendor slider emits
 `1 << position`, so positions 0..6 give raw 1,2,4,8,16,32,64.
 
-`uiOptions` is what the panel renders; `values` is the full set
-`hskctl set pollingRate <n>` accepts. 200/333/167 Hz are real, confirmed,
-settable values — just not rates G-Wolves' own app offers as a selection.
+The driver offers 250/500/1K/2K/4K, the rates G-Wolves' own app offers.
+200/333/167 Hz are real, confirmed codes and still decode on a read
+(`POLLING_HZ`), just not offered as choices.
 
 ## Sleep timer
 

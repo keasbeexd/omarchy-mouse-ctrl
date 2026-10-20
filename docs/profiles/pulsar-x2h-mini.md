@@ -12,10 +12,10 @@ distance, debounce, sleep timer, and DPI stage 1's value and LED color
 have all round-tripped real writes on that exact hardware — the LED color
 write the owner visually confirmed actually changed the mouse's light.
 
-Only the 4K dongle variant is verified. Pulsar sells the X2H mini with
-either a 1K or a 4K dongle; if you have the 1K variant, the polling-rate
-ceiling and possibly the USB ids could differ — report what `hskctl probe`
-and a `hskctl set pollingRate 2000` attempt give.
+Only the 4K receiver and the cable are verified. The 1K receiver
+(`3554:f508`) is identified but untested: with a mouse paired to it, report
+what `mousectrl read 3554:f508` and `mousectrl measure 3554:f508` give
+(rates above 1000 Hz are not offered there).
 
 ## Source — three stages, cheapest first
 
