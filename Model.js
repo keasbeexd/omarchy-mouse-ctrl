@@ -86,6 +86,8 @@ function cleanCapability(c) {
     step: isInt(c.step) && c.step > 0 ? c.step : 1,
     maxStages: isInt(c.maxStages) ? Math.min(c.maxStages, MAX_STAGES) : null,
     group: c.group,
+    verification: c.verification === "verified" ? "verified" : "untested",
+    readOnly: c.readOnly === true,
     hasColors: c.hasColors === true,
     switchable: c.switchable === true,
     writable: c.writable === true,
@@ -304,4 +306,62 @@ function steppedValue(cap, value, delta) {
     return next
   }
   return undefined
+}
+
+// --- setup wizard -------------------------------------------------------------
+
+// The only shape a udev rule line may take before it is handed to root: the
+// same pattern install.sh enforces. A rule grants device access, so text
+// that does not match is refused whole rather than edited into shape.
+var RULE_LINE = /^KERNEL=="hidraw\*", ATTRS\{idVendor\}=="[0-9a-f]{4}"(, ATTRS\{idProduct\}=="[0-9a-f]{4}")?, MODE="0660", TAG\+="uaccess"$/
+var RULE_FILE = "/etc/udev/rules.d/60-mousectrl.rules"
+
+function isValidRuleText(text) {
+  if (typeof text !== "string" || text.length === 0 || text.length > 65536) return false
+  var lines = text.split("\n")
+  var rules = 0
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (line === "" || line.charAt(0) === "#") continue
+    if (!RULE_LINE.test(line)) return false
+    rules++
+  }
+  return rules > 0
+}
+
+// What the confirm step asks about, one group at a time: the readings of
+// each section, with the battery and device facts first.
+function confirmGroups(caps, values) {
+  var order = ["device"].concat(GROUPS.slice(0, GROUPS.length - 1))
+  var out = []
+  for (var g = 0; g < order.length; g++) {
+    var rows = []
+    for (var i = 0; i < caps.length; i++) {
+      var c = caps[i]
+      if (c.group !== order[g] || c.kind === "dpiStages") continue
+      var v = values[c.id]
+      rows.push({ label: c.label, text: c.kind === "battery" && v ? v.percent + "%" + (v.charging ? " charging" : "") : valueText(c, v) })
+    }
+    var stages = order[g] === "dpi" ? firstOfKind(caps, "dpiStages") : null
+    if (rows.length === 0 && !stages) continue
+    out.push({ id: order[g], title: order[g] === "device" ? "BASICS" : GROUP_TITLES[order[g]], rows: rows, stagesId: stages ? stages.id : "" })
+  }
+  return out
+}
+
+// The state each capability is saved with, from the wizard's answers:
+// a group the user said was wrong is rejected; a read-only reading is
+// verified when the driver vouches for it; a writable setting is verified
+// (driver-proven), tested (passed its test here) or left read-only.
+function finalStates(caps, rejectedGroups, testResults, hiddenGroups) {
+  var out = {}
+  for (var i = 0; i < caps.length; i++) {
+    var c = caps[i]
+    var state
+    if (rejectedGroups[c.group] === true) state = "rejected"
+    else if (c.readOnly || c.verification === "verified") state = c.verification === "verified" ? "verified" : "readOnly"
+    else state = testResults[c.id] === "passed" ? "tested" : "readOnly"
+    out[c.id] = { state: state, visible: hiddenGroups[c.group] !== true }
+  }
+  return out
 }

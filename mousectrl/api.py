@@ -270,8 +270,9 @@ class Api:
 
         Server-side checks keep the panel honest: "verified" only for what
         the driver marks verified, "tested" only for what passed a write test
-        in this process. A mouse with an existing profile keeps its id, so a
-        re-run replaces it.
+        in this process or is already "tested" in the mouse's existing
+        profile (a re-run keeps what an earlier run proved). A mouse with an
+        existing profile keeps its id, so a re-run replaces it.
         """
         if not isinstance(name, str):
             raise InvalidValue("name must be a string")
@@ -280,12 +281,16 @@ class Api:
         fp = self._resolve(key)
         family = registry.driver_for(fp, self._families)
         states: dict[str, profiles.CapabilityState] = {}
+        loaded, _problems = profiles.load_all(self._profile_dir)
+        existing = profiles.find(loaded, fp)
         if family is None:
             if capabilities:
                 raise InvalidValue(f"{fp.name} has no capabilities to save")
         else:
             available = self._on_device(fp, lambda d: self._capabilities(fp, d))
-            tested = self._tested.get(fp.key, set())
+            tested = set(self._tested.get(fp.key, set()))
+            if existing:
+                tested |= {k for k, v in existing.capabilities.items() if v.state == "tested"}
             for cap_id, entry in capabilities.items():
                 cap = available.get(cap_id)
                 if cap is None or not isinstance(entry, dict):
@@ -298,8 +303,6 @@ class Api:
                 if state == "tested" and cap_id not in tested:
                     raise InvalidValue(f"{cap_id} has not passed a write test")
                 states[cap_id] = profiles.CapabilityState(state, visible)
-        loaded, _problems = profiles.load_all(self._profile_dir)
-        existing = profiles.find(loaded, fp)
         products = family.profile_products(fp) if family else (fp.product_id,)
         profile = profiles.Profile(
             id=existing.id if existing else profiles.unique_id(name, {p.id for p in loaded}),

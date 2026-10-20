@@ -122,3 +122,45 @@ test("capabilities sort into sections; settings and footer split out", () => {
   assert.deepEqual(Array.from(M.settingSections(caps), (s) => s.title), ["PERFORMANCE", "SENSOR"])
   assert.equal(M.footerText(caps, { firmware: "1.0.7" }), "Firmware 1.0.7")
 })
+
+test("isValidRuleText accepts only the narrow rule shape", () => {
+  const good = '# header\nKERNEL=="hidraw*", ATTRS{idVendor}=="33e4", MODE="0660", TAG+="uaccess"\n'
+  assert.ok(M.isValidRuleText(good))
+  assert.ok(M.isValidRuleText('KERNEL=="hidraw*", ATTRS{idVendor}=="1234", ATTRS{idProduct}=="abcd", MODE="0660", TAG+="uaccess"'))
+  assert.ok(!M.isValidRuleText("# only comments\n"))
+  assert.ok(!M.isValidRuleText(good + 'KERNEL=="*", MODE="0666"\n'))
+  assert.ok(!M.isValidRuleText(good + 'RUN+="/bin/sh -c evil"\n'))
+  assert.ok(!M.isValidRuleText(good.replace("33e4", "33E4")))
+  assert.ok(!M.isValidRuleText(null))
+})
+
+test("confirmGroups puts basics first and skips empty sections", () => {
+  const caps = M.cleanCapabilities({ capabilities: [
+    { id: "battery", kind: "battery", group: "device", label: "Battery" },
+    { id: "dpiStages", kind: "dpiStages", group: "dpi", label: "DPI" },
+    { id: "pollingRate", kind: "enum", group: "performance", label: "Polling rate", options: [1000], unit: "Hz" },
+  ] })
+  const groups = M.confirmGroups(caps, { battery: { percent: 82, charging: true }, pollingRate: 1000 })
+  assert.deepEqual(Array.from(groups, (g) => g.title), ["BASICS", "DPI", "PERFORMANCE"])
+  assert.equal(groups[0].rows[0].text, "82% charging")
+  assert.equal(groups[1].stagesId, "dpiStages")
+  assert.equal(groups[2].rows[0].text, "1000 Hz")
+})
+
+test("finalStates turns answers into honest profile states", () => {
+  const caps = M.cleanCapabilities({ capabilities: [
+    { id: "battery", kind: "battery", group: "device", verification: "verified", readOnly: true },
+    { id: "curved", kind: "battery", group: "device", verification: "untested", readOnly: true },
+    { id: "pollingRate", kind: "enum", group: "performance", options: [1000], verification: "verified" },
+    { id: "motionSync", kind: "toggle", group: "sensor", verification: "untested" },
+    { id: "angleSnap", kind: "toggle", group: "sensor", verification: "untested" },
+    { id: "sleepSeconds", kind: "duration", group: "power", verification: "verified" },
+  ] })
+  const out = M.finalStates(caps, { power: true }, { motionSync: "passed", angleSnap: "failed" }, { performance: true })
+  assert.equal(out.battery.state, "verified")
+  assert.equal(out.curved.state, "readOnly")
+  assert.deepEqual({ ...out.pollingRate }, { state: "verified", visible: false })
+  assert.equal(out.motionSync.state, "tested")
+  assert.equal(out.angleSnap.state, "readOnly")
+  assert.equal(out.sleepSeconds.state, "rejected")
+})
