@@ -95,17 +95,14 @@ CAPABILITIES = (
     # across every stage confirmed by the owner at the end of v3.
     Capability("dpiStages", "dpiStages", "DPI stages", VERIFIED, minimum=DPI_MIN,
                maximum=DPI_MAX, step=DPI_STEP, max_stages=MAX_STAGES, has_colors=True),
-    # 7 -> 6 -> 7 round-tripped on hardware 2026-10-19; the dropped stage's
-    # value and color survived in the mouse's memory.
-    Capability("dpiStageCount", "enum", "DPI stage count", VERIFIED,
-               options=tuple(range(1, MAX_STAGES + 1))),
     Capability("pollingRate", "enum", "Polling rate", VERIFIED,
-               options=(250, 500, 1000, 2000, 4000), unit="Hz"),
-    Capability("liftOff", "enum", "Lift-off distance", VERIFIED, options=LIFT_OFF_MM, unit="mm"),
-    Capability("motionSync", "toggle", "Motion sync", VERIFIED),
-    Capability("angleSnap", "toggle", "Angle snapping", VERIFIED),
+               options=(250, 500, 1000, 2000, 4000), unit="Hz", group="performance"),
+    Capability("liftOff", "enum", "Lift-off distance", VERIFIED, options=LIFT_OFF_MM, unit="mm",
+               group="performance"),
+    Capability("motionSync", "toggle", "Motion sync", VERIFIED, group="sensor"),
+    Capability("angleSnap", "toggle", "Angle snapping", VERIFIED, group="sensor"),
     Capability("sleepSeconds", "duration", "Sleep after", VERIFIED,
-               minimum=30, maximum=3600, step=30, unit="s"),
+               minimum=30, maximum=3600, step=30, unit="s", group="power"),
     Capability("debounce", "info", "Debounce", VERIFIED),
 )
 
@@ -262,7 +259,6 @@ class GWolvesHts(Driver):
             "firmware": lambda: "{}.{}.{}".format(*self._read("version")[5:8]),
             "connection": self._read_connection,
             "dpiStages": self._read_stages,
-            "dpiStageCount": lambda: self._stage_count(self._read("dpi")),
             "pollingRate": self._read_polling,
             "liftOff": lambda: self._read_choice("liftOff", LIFT_OFF_MM),
             "motionSync": lambda: self._read_bool("motion"),
@@ -277,8 +273,6 @@ class GWolvesHts(Driver):
     def write(self, capability_id: str, value: Any) -> Any:
         if capability_id == "dpiStages":
             self._write_stages(value)
-        elif capability_id == "dpiStageCount":
-            self._write_stage_count(value)
         elif capability_id == "pollingRate":
             self._write("polling", bytes([POLLING_RAW[value]]))
         elif capability_id == "liftOff":
@@ -369,18 +363,12 @@ class GWolvesHts(Driver):
         packet = self._block_for_write()
         count = packet[6]
         if len(value["stages"]) != count:
-            raise InvalidValue(
-                f"the mouse has {count} stages; change the count with dpiStageCount first"
-            )
+            # The count is not offered: the HSK has no DPI button, so which
+            # stages exist only matters to G-Wolves' own app.
+            raise InvalidValue(f"the mouse has {count} stages; the panel cannot change that")
         packet[5] = value["active"] + 1
         for i, stage in enumerate(value["stages"]):
             base = STAGE_BASE + i * STAGE_STRIDE
             dpi = stage["dpi"].to_bytes(2, "big")
             packet[base:base + 7] = dpi + dpi + _rgb(stage["color"])
-        self._send(bytes(packet), COMMANDS["dpi"], "dpi")
-
-    def _write_stage_count(self, count: int) -> None:
-        packet = self._block_for_write()
-        packet[6] = count
-        packet[5] = min(packet[5], count)
         self._send(bytes(packet), COMMANDS["dpi"], "dpi")

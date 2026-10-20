@@ -2,8 +2,8 @@
 
 Evidence behind `mousectrl/families/gwolves_hts.py` (v4) and every
 verification flag in it. v3's `profiles/gwolves-hsk-pro-4k.json` carried the
-same protocol as data; it is kept in git history and
-`docs/contributor/families/gwolves-hsk-pro-4k.json` until v3 is removed.
+same protocol as data; it is in git history, in the commits before
+`v4 core`.
 For how the protocol was decoded, see docs/contributor/PROTOCOL-DISCOVERY.md.
 
 ## Source
