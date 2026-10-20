@@ -51,7 +51,7 @@ _USER_PROFILE_DIR = os.path.expanduser("~/.config/hskctl/profiles")
 
 _MAX_FAMILY_BYTES = _MAX_PROFILE_BYTES
 
-_SERVE_FILTER = "hskctl serve"
+_SERVE_PATTERN = r"hskctl.* serve$"
 
 
 def _load_families() -> list[Profile]:
@@ -140,10 +140,16 @@ def create_profile(args, emit, fail) -> int:
             getattr(args, "json", False),
         )
 
+    device_pick = getattr(args, "device", None)
+    target = None
+    if device_pick:
+        target = device_pick if device_pick.startswith("/dev/") else f"/dev/{device_pick}"
+    from_sysfs = False
     best: tuple[Profile, Candidate] | None = None
-    best_reason = ""
     for family in families:
         for candidate in rank_candidates(family):
+            if target and candidate.info.path != target:
+                continue
             if candidate.identified and (best is None or candidate.score > best[1].score):
                 best = (family, candidate)
 
@@ -156,11 +162,14 @@ def create_profile(args, emit, fail) -> int:
         # permission error and take the consent branch below; the profile
         # it writes is what makes the engine's rule-file output name the
         # device, closing the chicken-and-egg in the profile-first order.
+        from_sysfs = False
         for family in families:
             match = family.data.get("match") or {}
             vids = [str(v).lower() for v in (match.get("vendorIds") or [])]
             pids = [str(p).lower() for p in (match.get("productIds") or [])]
             for device in sysfs_hid_devices():
+                if target and device["node"] != target:
+                    continue
                 if device["vid"] not in vids:
                     continue
                 if pids and device["pid"] not in pids:
@@ -179,6 +188,7 @@ def create_profile(args, emit, fail) -> int:
                     unmatched=[],
                 )
                 best = (family, candidate)
+                from_sysfs = True
                 break
             if best is not None:
                 break
@@ -186,10 +196,68 @@ def create_profile(args, emit, fail) -> int:
             # node therefore needs no further ranking -- the udev branch
             # is the whole flow from here.
 
+    if device_pick and best is None:
+        visible = any(i.path == target for i in enumerate_devices()) or any(
+            d["node"] == target for d in sysfs_hid_devices()
+        )
+        why = "" if visible else f" (no hidraw node named {device_pick} is visible)"
+        return fail(
+            f"no config-endpoint candidate at {target} speaks a known "
+            f"transport family{why}; hskctl probe shows the scores",
+            getattr(args, "json", False),
+        )
+
+    if device_pick is None and best is not None and not getattr(args, "yes", False) \
+            and not getattr(args, "json", False):
+        # One panel button, one prompt for identity: probe's score table
+        # decides WHICH node the setup targets, and the user taps the final
+        # pick. Everything after it remains consent-gated as before.
+        from .cli import _print_candidate_scores
+
+        scored: dict[str, dict] = {}
+        for family in families:
+            for candidate in rank_candidates(family):
+                entry = candidate.as_dict()
+                prior = scored.get(entry["path"])
+                if prior is None or entry["score"] > prior["score"]:
+                    if prior:
+                        entry["reasons"] = prior["reasons"] + entry["reasons"]
+                    scored[entry["path"]] = entry
+        _print_candidate_scores(sorted(scored.values(), key=lambda c: -c["score"]))
+        if from_sysfs:
+            info = best[1].info
+            print(f"  {info.path}  [{info.vidpid}]  unopenable -- no udev grant "
+                  "yet; the setup proceeds blind and asks for the rule next")
+        print(f"\ncontinuing sets up {best[1].info.path} as your mouse.")
+        try:
+            answer = input("that one? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\ncancelled.")
+            return 0
+        if answer in ("n", "no"):
+            print("cancelled. Re-run with --device /dev/hidrawN to pick a "
+                  "node yourself, or hskctl probe for the scores again.")
+            return 0
+
     if best is None:
         # Plan Round 0, stated limit: no opcode guessing at unknown
         # transports. The setup ends with what was observed and what to do
         # next, rather than a fix attempt.
+        if not getattr(args, "json", False) and not getattr(args, "yes", False):
+            print("No connected device matches a known transport family.")
+            print("Here is what the machine can see, scores included "
+                  "(read-only diagnostics, nothing is written):\n")
+            from .cli import _print_candidate_scores
+            scored = {}
+            for family in families:
+                for candidate in rank_candidates(family):
+                    entry = candidate.as_dict()
+                    prior = scored.get(entry["path"])
+                    if prior is None or entry["score"] > prior["score"]:
+                        if prior:
+                            entry["reasons"] = prior["reasons"] + entry["reasons"]
+                        scored[entry["path"]] = entry
+            _print_candidate_scores(sorted(scored.values(), key=lambda c: -c["score"]))
         hint = (
             "hskctl probe --json"
             if hasattr(args, "json")
@@ -404,7 +472,7 @@ def create_profile(args, emit, fail) -> int:
     # restarts every killed transport in ~2 s, and the restarted ones see
     # the mouse through the profile this wizard just wrote.
     subprocess.run(
-        ["pkill", "-f", _SERVE_FILTER],
+        ["pkill", "-f", _SERVE_PATTERN],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,

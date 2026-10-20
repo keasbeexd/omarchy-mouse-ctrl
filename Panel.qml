@@ -373,13 +373,6 @@ Panel {
     ])
   }
 
-  function launchProbeTerminal() {
-    Quickshell.execDetached([
-      "/usr/bin/omarchy-launch-floating-terminal-with-presentation",
-      "hskctl probe"
-    ])
-  }
-
   // Opening the panel used to force a refresh too, on top of startup, the
   // link watcher and the explicit triggers below (this button, middle-click,
   // 'r'). Read/write is otherwise more than enough to keep `values` correct,
@@ -797,29 +790,18 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
-              // Act from the card instead of retyping: the setup button is
-              // the guided flow's entry point (two prompts ask inside the
-              // terminal, nothing writes until they pass); probe is the
-              // read-only diagnostic it is worth keeping next to it.
-              Row {
+              // Act from the card instead of retyping: one button is the
+              // whole guided flow's entry point -- inside the terminal the
+              // wizard prints probe's own scores, asks which node is the
+              // user's mouse, then runs its consent-gated steps. Nothing
+              // writes until the prompts pass.
+              Button {
                 visible: root.needsSetup
-                spacing: Style.space(8)
-
-                Button {
-                  text: "Set up this mouse..."
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.caption
-                  onClicked: root.launchSetupTerminal()
-                }
-
-                Button {
-                  text: "Probe"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.caption
-                  onClicked: root.launchProbeTerminal()
-                }
+                text: "Set up this mouse..."
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: root.launchSetupTerminal()
               }
 
               // The engine's survey of this machine, asked when the card

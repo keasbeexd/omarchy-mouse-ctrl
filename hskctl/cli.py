@@ -136,18 +136,7 @@ def cmd_probe(args) -> int:
             print("No likely configuration endpoint found.")
             print("Plug the mouse in (or its 4K dongle) and try again.")
             return
-        print("Ranked candidates for the config endpoint:\n")
-        for c in p["candidates"]:
-            print(f"  {c['path']}  [{c['vidpid']}]  score {c['score']}")
-            print(f"    name       : {_plain(c['name'])}")
-            print(f"    interface  : {c['interface']}")
-            page = c["usagePage"]
-            print(f"    usage page : {f'0x{page:04x}' if page is not None else '-'}")
-            print(f"    feature ids: {c['featureReportIds'] or '-'}")
-            for reason in c["reasons"]:
-                print(f"    · {reason}")
-            print()
-        top = p["candidates"][0]
+        _print_candidate_scores(p["candidates"])
         print("Next step: record this in the profile, then capture traffic.")
         print(f"  vendorIds  : [\"{top['vidpid'].split(':')[0]}\"]")
         print(f"  productIds : [\"{top['vidpid'].split(':')[1]}\"]")
@@ -155,6 +144,23 @@ def cmd_probe(args) -> int:
         print("\nSee docs/contributor/PROTOCOL-DISCOVERY.md for the capture procedure.")
 
     return _emit(payload, args.json, human)
+
+
+def _print_candidate_scores(candidates: list[dict]) -> None:
+    """The ranked candidate table `probe` prints; the guided setup reuses it
+    verbatim for the device-identity confirmation, so one command's scores
+    and one button's flow agree by construction."""
+    print("Ranked candidates for the config endpoint:\n")
+    for c in candidates:
+        print(f"  {c['path']}  [{c['vidpid']}]  score {c['score']}")
+        print(f"    name       : {_plain(c['name'])}")
+        print(f"    interface  : {c['interface']}")
+        page = c["usagePage"]
+        print(f"    usage page : {f'0x{page:04x}' if page is not None else '-'}")
+        print(f"    feature ids: {c['featureReportIds'] or '-'}")
+        for reason in c["reasons"]:
+            print(f"    · {reason}")
+        print()
 
 
 # --- status -----------------------------------------------------------------
@@ -2067,8 +2073,11 @@ def cmd_remove_profile(args) -> int:
 # What the panel spawns for live values; removing a profile must end it too
 # (same rationale as the wizard's kill: a serve started under the deleted
 # profile keeps it in memory until it restarts, and the setup card would
-# never appear).
-_SERVE_FILTER = "hskctl serve"
+# never appear). The engine's serve is spawned as
+#   python3 -I -S -c "... from hskctl.cli import main ..." <plugin_dir> serve
+# or run by a user as `hskctl serve` -- one ERE covers both shapes, and
+# `$`-anchoring keeps it from matching anything else a cmdline contains.
+_SERVE_FILTER = r"hskctl.* serve$"
 
 
 def _kill_panel_transports() -> None:
@@ -2402,6 +2411,12 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument(
         "--yes", action="store_true",
         help="take the flow without prompts (e.g. the panel's terminal)",
+    )
+    setup.add_argument(
+        "--device",
+        help="pick this hidraw node yourself (e.g. /dev/hidraw3 or hidraw3) "
+             "instead of the highest-scoring candidate; skips the "
+             "identity confirmation",
     )
     setup.set_defaults(func=cmd_create_profile)
     sub.add_parser(
