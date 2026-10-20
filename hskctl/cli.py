@@ -26,7 +26,14 @@ from .device import (
     rank_candidates,
 )
 from .hidraw import HidrawError, enumerate_devices, sysfs_hid_devices
-from .protocol import NotDiscovered, ProtocolError, list_profiles, load_profile
+from .protocol import (
+    NotDiscovered,
+    ProtocolError,
+    _MAX_PROFILE_BYTES,
+    _valid_profile_name,
+    list_profiles,
+    load_profile,
+)
 from .safeio import read_bounded_json
 
 FRIENDLY_LABELS = {
@@ -794,12 +801,19 @@ def cmd_serve(args) -> int:
             return _udev_payload()
         with device_lock():
             try:
+                # The payload builders early-return their honest
+                # `undiscovered` shapes for an unmapped profile; only
+                # hand them a session when there is something to talk
+                # to, or building one would throw a raw "will not talk
+                # to it" error at the panel instead of the card it is
+                # ready to render.
+                session = get_session() if profile.discovered else None
                 if cmd == "status":
-                    return _status_payload(args, profile, get_session())
+                    return _status_payload(args, profile, session)
                 if cmd == "battery":
-                    return _battery_payload(args, profile, get_session())
+                    return _battery_payload(args, profile, session)
                 if cmd == "probe-stages":
-                    return _probe_stages_payload(args, profile, get_session())
+                    return _probe_stages_payload(args, profile, session)
                 if cmd == "set":
                     field = req.get("field")
                     if not isinstance(field, str):
@@ -1934,6 +1948,96 @@ def cmd_profiles(args) -> int:
     return _emit(payload, args.json, lambda p: print("\n".join(p["profiles"]) or "(none)"))
 
 
+def cmd_remove_profile(args) -> int:
+    """Delete a user-authored profile from ~/.config/hskctl/profiles.
+
+    Bundled profiles are plugin files -- removing one is plugin-management
+    territory (uninstalling/reinstalling), not this command's. The one place
+    this command may ever delete from is the user profile dir, enforced by
+    both the name rule and a realpath check, so even a name like `../x`
+    cannot walk out of it.
+    """
+    name = (args.name or "").strip()
+    user_dir = os.path.realpath(_USER_PROFILE_DIR)
+    candidate = os.path.realpath(os.path.join(user_dir, f"{name}.json"))
+
+    if (
+        not _valid_profile_name(name)
+        or os.path.dirname(candidate) != user_dir
+    ):
+        return _fail(
+            f"{name!r} is not a profile name, or would escape "
+            f"{_USER_PROFILE_DIR}",
+            args.json,
+        )
+
+    if not os.path.isfile(candidate):
+        try:
+            load_profile(name)
+        except ProtocolError:
+            pass
+        else:
+            return _fail(
+                f"{name!r} is a bundled profile owned by the plugin -- "
+                f"only user profiles in {_USER_PROFILE_DIR} can be removed",
+                args.json,
+            )
+        return _fail(
+            f"no user profile named {name!r} (user profiles live in "
+            f"{_USER_PROFILE_DIR})",
+            args.json,
+        )
+
+    try:
+        data = read_bounded_json(candidate, _MAX_PROFILE_BYTES)
+    except (OSError, ValueError) as exc:
+        return _fail(f"refusing to read for removal, {candidate}: {exc}", args.json)
+    model = str(data.get("model") or "")
+    match = data.get("match") or {}
+    vendors = ",".join(str(v) for v in (match.get("vendorIds") or []))
+
+    if not args.yes:
+        if not sys.stdin.isatty() or args.json:
+            return _fail(
+                "removal without a visible prompt needs --yes", args.json,
+            )
+        print(f"profile: {name}" + (f"  ({model})" if model else ""))
+        print(f"path:   {candidate}")
+        if vendors:
+            print(f"match:  vendorIds {vendors}")
+        try:
+            answer = input("remove this file? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            print("\ncancelled.")
+            return 0
+        if answer.strip().lower() not in ("y", "yes"):
+            print("cancelled.")
+            return 0
+
+    try:
+        os.remove(candidate)
+    except OSError as exc:
+        return _fail(f"could not remove {candidate}: {exc}", args.json)
+
+    payload = {
+        "ok": True,
+        "removed": candidate,
+        "model": model,
+        "vendors": vendors,
+        # The removed profile may have placed VID:PID grant lines in the
+        # rule file. Nothing narrows automatically, and nothing should --
+        # say so, once.
+        "udevNote": f"any grant line it had in {UDEV_RULE_FILE} stays until "
+                    "the file is regenerated (hskctl udev-rule)",
+    }
+
+    def human(p):
+        print(f"removed {p['removed']}")
+        print(f"note: {p['udevNote']}")
+
+    return _emit(payload, args.json, human)
+
+
 # --- udev rule ---------------------------------------------------------------
 
 
@@ -2233,6 +2337,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("profiles", help="list available device profiles").set_defaults(
         func=cmd_profiles
     )
+    remove = sub.add_parser(
+        "remove-profile",
+        help="delete a user-authored profile from ~/.config/hskctl/profiles",
+    )
+    remove.add_argument("name", help="profile name, without the .json suffix")
+    remove.add_argument(
+        "--yes", action="store_true", help="do not ask for confirmation"
+    )
+    remove.set_defaults(func=cmd_remove_profile)
     sub.add_parser(
         "udev-rule",
         help="print the udev rule file this machine needs "

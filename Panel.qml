@@ -753,8 +753,9 @@ Panel {
                   }
                   if (root.hasError) return Model.plain(hsk.lastError, 400)
                   if (!hsk.detected) return "Plug in the mouse or its 2.4 GHz dongle, then refresh."
-                  return "hskctl can see the device but does not know its config protocol yet. "
-                       + "Run a capture to fill in the profile."
+                  return "hskctl can see the device but has no profile for it yet. "
+                       + "Run the guided setup -- a few read-only rounds answer what "
+                       + "your mouse speaks, then it writes a profile of your own."
                 }
                 color: root.dim
                 font.family: root.fontFamily
