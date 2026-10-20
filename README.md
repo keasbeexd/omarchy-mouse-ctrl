@@ -6,11 +6,38 @@ the widget draws comes from your active Omarchy theme.
 
 <img src="docs/logo.svg" width="96" alt="Mouse CTRL's wireless mouse, in 16 EGA colors">
 
+![Mouse CTRL's panel on a G-Wolves HSK and a Pulsar X2H, its setup wizard, and its features](preview.png)
+
 Many of these mice have no libratbag support, and their vendors' Linux story
 is "there isn't one". Mouse CTRL talks to them directly over raw HID, using
 protocols recovered from the vendors' own Windows apps and checked on real
 hardware. A guided setup in the panel identifies your mouse, asks you to
 confirm what it reads, and only then lets you change anything.
+
+## Features
+
+- **Battery in the bar** — percentage beside the icon, in your theme's accent
+  color while charging and its urgent color when low.
+- **DPI stages and LED colors** — every stage's DPI and its LED color, with
+  the live stage highlighted and followed as you press the mouse's button.
+- **Polling rate, lift-off, motion sync, angle snapping, ripple, turbo,
+  sleep timer, debounce** — whatever the mouse supports, nothing it does not.
+- **Guided setup in the panel** — identifies the mouse, installs access with
+  one password prompt, asks you to confirm every reading, and unlocks a
+  setting only once it is proven: by the driver, or by a write test on your
+  own mouse that reads back and restores.
+- **Several mice** — one profile per mouse however it is connected (cable or
+  either receiver), and a switcher when more than one is plugged in.
+- **libratbag mice** (Logitech, SteelSeries, …) — their active profile, DPI
+  stages and polling rate from `ratbagd`, read-only, with an **Open Piper**
+  button for changes.
+- **Any other mouse** — connection, buttons, kernel-reported battery and a
+  polling rate measured from its own reports, plus **Copy report** to start
+  a driver for it.
+- **Theme-native, keyboard-driven** — every color from your Omarchy theme;
+  `j`/`k`/`h`/`l`/`Enter` work throughout.
+- **Careful by design** — every write is read back and logged, blocks of
+  stages are written whole, and factory reset is not bound to anything.
 
 ## Supported mice
 
@@ -42,8 +69,9 @@ and Piper when they are installed; nothing else needs them.
 
 ## Setting up a mouse
 
-The setup runs inside the panel (**+** in its header, or **Set up this
-mouse**):
+The setup runs inside the panel (**+** in its header, **Set up this mouse**,
+or `omarchy-shell keasbeexd.mousectrl setup`, which can sit behind a key
+binding):
 
 1. **Detect** — pick the mouse. Each is labeled with how it will be handled:
    a supported family, already set up, or read-only.
