@@ -15,13 +15,14 @@ Profiles are files the user owns, so every field is validated on load.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
 
 from .errors import MouseCtrlError
 from .fingerprint import Fingerprint
-from .safeio import read_bounded_json, write_private_json
+from .safeio import open_private_dir, read_bounded, write_private_json
 
 PROFILE_DIR = os.path.expanduser("~/.config/mousectrl/profiles")
 SCHEMA_VERSION = 1
@@ -137,40 +138,54 @@ def load_all(directory: str = PROFILE_DIR) -> tuple[list[Profile], list[str]]:
     returned for the panel to show rather than raised.
     """
     try:
-        names = sorted(n for n in os.listdir(directory) if n.endswith(".json"))
+        dir_fd = open_private_dir(directory, create=False)
     except FileNotFoundError:
         return [], []
-    profiles: list[Profile] = []
-    problems: list[str] = []
-    seen: set[str] = set()
-    for name in names[:_MAX_FILES]:
-        path = os.path.join(directory, name)
-        try:
-            profile = from_dict(read_bounded_json(path, _MAX_FILE_BYTES, reject_shared_write=True), path)
-        except ProfileError as exc:
-            problems.append(str(exc))
-            continue
-        except (OSError, ValueError) as exc:
-            problems.append(f"{path}: {exc}")
-            continue
-        if name != f"{profile.id}.json":
-            problems.append(f"{path}: file name must be {profile.id}.json")
-            continue
-        if profile.id in seen:
-            continue
-        seen.add(profile.id)
-        profiles.append(profile)
-    if len(names) > _MAX_FILES:
-        problems.append(f"{directory}: only the first {_MAX_FILES} profiles were read")
-    return profiles, problems
+    except OSError as exc:
+        return [], [f"{directory}: {exc}"]
+    try:
+        names = sorted(n for n in os.listdir(dir_fd) if n.endswith(".json") and not n.startswith("."))
+        profiles: list[Profile] = []
+        problems: list[str] = []
+        seen: set[str] = set()
+        for name in names[:_MAX_FILES]:
+            path = os.path.join(directory, name)
+            try:
+                raw = read_bounded(name, _MAX_FILE_BYTES, reject_shared_write=True,
+                                   single_link=True, dir_fd=dir_fd)
+                doc = json.loads(raw.decode("utf-8"))
+                if not isinstance(doc, dict):
+                    raise ValueError("does not hold a JSON object")
+                profile = from_dict(doc, path)
+            except ProfileError as exc:
+                problems.append(str(exc))
+                continue
+            except (OSError, ValueError) as exc:
+                problems.append(f"{path}: {exc}")
+                continue
+            if name != f"{profile.id}.json":
+                problems.append(f"{path}: file name must be {profile.id}.json")
+                continue
+            if profile.id in seen:
+                continue
+            seen.add(profile.id)
+            profiles.append(profile)
+        if len(names) > _MAX_FILES:
+            problems.append(f"{directory}: only the first {_MAX_FILES} profiles were read")
+        return profiles, problems
+    finally:
+        os.close(dir_fd)
 
 
 def save(profile: Profile, directory: str = PROFILE_DIR) -> str:
     # Round-trip through validation so nothing unloadable is ever written.
     from_dict(profile.as_dict(), f"profile {profile.id}")
-    path = os.path.join(directory, f"{profile.id}.json")
-    write_private_json(path, profile.as_dict())
-    return path
+    dir_fd = open_private_dir(directory)
+    try:
+        write_private_json(dir_fd, f"{profile.id}.json", profile.as_dict())
+    finally:
+        os.close(dir_fd)
+    return os.path.join(directory, f"{profile.id}.json")
 
 
 def delete(profile_id: str, directory: str = PROFILE_DIR) -> bool:
@@ -178,9 +193,15 @@ def delete(profile_id: str, directory: str = PROFILE_DIR) -> bool:
     if not _ID_RE.match(profile_id):
         raise ProfileError(f"{profile_id!r} is not a profile id")
     try:
-        os.remove(os.path.join(directory, f"{profile_id}.json"))
+        dir_fd = open_private_dir(directory, create=False)
     except FileNotFoundError:
         return False
+    try:
+        os.unlink(f"{profile_id}.json", dir_fd=dir_fd)
+    except FileNotFoundError:
+        return False
+    finally:
+        os.close(dir_fd)
     return True
 
 

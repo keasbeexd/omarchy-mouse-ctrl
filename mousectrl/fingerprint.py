@@ -38,7 +38,9 @@ _MAX_TEXT = 128
 
 _NODE_RE = re.compile(r"^hidraw\d{1,4}$")
 _INPUT_SUFFIX_RE = re.compile(r"/input(\d{1,3})$")
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# C0 and C1 controls and bidi overrides: a USB device sets its own product
+# string, and these would reach a terminal (mousectrl devices) as escapes.
+_CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 
 @dataclass(frozen=True)
@@ -222,8 +224,9 @@ class Fingerprint:
         }
 
 
-def _clean(text: str) -> str:
-    return _CONTROL_RE.sub("", text).strip()[:_MAX_TEXT]
+def clean_text(text: str, limit: int = _MAX_TEXT) -> str:
+    """Device-supplied text made safe for a terminal or a log line."""
+    return _CONTROL_RE.sub("", text).strip()[:limit]
 
 
 def _read_uevent(path: str) -> dict[str, str]:
@@ -273,12 +276,12 @@ def _read_node(sysfs_root: str, dev_dir: str, node: str):
     if ids is None:
         return None
     bus, vid, pid = ids
-    phys = _clean(uevent.get("HID_PHYS", ""))
+    phys = clean_text(uevent.get("HID_PHYS", ""))
     match = _INPUT_SUFFIX_RE.search(phys)
     interface = int(match.group(1)) if match else None
     phys_root = phys[:match.start()] if match else phys
-    uniq = _clean(uevent.get("HID_UNIQ", ""))
-    identity = (bus, vid, pid, _clean(uevent.get("HID_NAME", "")), phys_root, uniq)
+    uniq = clean_text(uevent.get("HID_UNIQ", ""))
+    identity = (bus, vid, pid, clean_text(uevent.get("HID_NAME", "")), phys_root, uniq)
     return (
         (bus, vid, pid, phys_root, uniq),
         identity,

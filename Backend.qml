@@ -105,18 +105,25 @@ Item {
   }
 
   // Installs the udev rule as root through polkit. The text arrives on
-  // stdin, so there is no file another process could swap between the check
-  // below and root reading it; every line is re-validated here against the
-  // same pattern install.sh enforces. Tools are absolute paths, and the
-  // target is a constant, never taken from the reply.
+  // stdin, so there is no file another process could swap between a check
+  // and root reading it. It is validated twice: here, and again as root by
+  // the script itself, against a pattern written into the script -- a cap of
+  // 64 KiB, every non-comment line in the one allowed shape, at least one
+  // rule. Tools are absolute paths, and the target is a constant.
   property bool installingRule: false
   property var ruleDone: null
   property string ruleText: ""
 
-  readonly property string ruleScript: "set -eu; umask 022; "
-    + "/usr/bin/install -o root -g root -m 0644 /dev/stdin \"$1\"; "
-    + "/usr/bin/udevadm control --reload-rules; "
-    + "/usr/bin/udevadm trigger --subsystem-match=hidraw --action=change"
+  readonly property string ruleScript: "set -eu; umask 022\n"
+    + "pat='^KERNEL==\"hidraw\\*\", ATTRS\\{idVendor\\}==\"[0-9a-f]{4}\"(, ATTRS\\{idProduct\\}==\"[0-9a-f]{4}\")?, MODE=\"0660\", TAG\\+=\"uaccess\"$'\n"
+    + "text=$(/usr/bin/head -c 65537)\n"
+    + "[ ${#text} -le 65536 ] || exit 3\n"
+    + "rules=$(printf '%s\\n' \"$text\" | /usr/bin/grep -vE '^(#.*)?$' || true)\n"
+    + "[ -n \"$rules\" ] || exit 4\n"
+    + "if printf '%s\\n' \"$rules\" | /usr/bin/grep -qvE \"$pat\"; then exit 4; fi\n"
+    + "printf '%s\\n' \"$text\" | /usr/bin/install -o root -g root -m 0644 /dev/stdin \"$1\"\n"
+    + "/usr/bin/udevadm control --reload-rules\n"
+    + "/usr/bin/udevadm trigger --subsystem-match=hidraw --action=change\n"
 
   function installRule(text, done) {
     if (installingRule) return done({ ok: false, error: "an install is already running" })
@@ -145,8 +152,11 @@ Item {
       root.ruleDone = null
       ruleInstall.stdinEnabled = true
       // pkexec: 126 = the password prompt was dismissed, 127 = not authorized.
+      // The script: 3 = text over the cap, 4 = a line in the wrong shape.
       var message = exitCode === 0 ? "" : exitCode === 126 ? "Cancelled at the password prompt"
-                  : exitCode === 127 ? "Not authorized to install the rule" : "Installing the rule failed (exit " + exitCode + ")"
+                  : exitCode === 127 ? "Not authorized to install the rule"
+                  : exitCode === 3 || exitCode === 4 ? "The rule text was refused by the install script; nothing was installed"
+                  : "Installing the rule failed (exit " + exitCode + ")"
       if (exitCode !== 0) console.warn("mousectrl: rule install: " + message)
       if (done) done({ ok: exitCode === 0, error: message })
       root.refresh()
@@ -448,5 +458,6 @@ Item {
   Component.onDestruction: {
     root.destroyed = true
     if (serve.running) serve.signal(15)
+    if (ruleInstall.running) ruleInstall.signal(15)
   }
 }
