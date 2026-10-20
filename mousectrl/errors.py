@@ -37,5 +37,15 @@ class ProtocolFailure(MouseCtrlError):
     code = "protocol"
 
 
+class NoResponse(MouseCtrlError):
+    """The mouse itself is not answering (asleep, off, out of range).
+
+    Device-level, unlike ProtocolFailure: it ends the whole request instead
+    of being reported once per capability.
+    """
+
+    code = "noResponse"
+
+
 class UnsafePath(MouseCtrlError):
     code = "unsafePath"

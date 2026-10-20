@@ -3,5 +3,6 @@
 from __future__ import annotations
 
 from .base import Driver
+from .gwolves_hts import GWolvesHts
 
-FAMILIES: tuple[type[Driver], ...] = ()
+FAMILIES: tuple[type[Driver], ...] = (GWolvesHts,)
