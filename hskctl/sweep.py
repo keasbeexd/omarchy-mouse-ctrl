@@ -118,6 +118,47 @@ def sweep_node(path: str, progress=None) -> dict:
     return _assess(path, answers, packets_sent, votes)
 
 
+def read_round(path: str, alive: list[dict]) -> dict[str, bytes]:
+    """One re-read of exactly the opcodes the sweep found alive.
+
+    `alive` is the sweep's own answers list (opcode strings with their
+    winning flags); the flags are reused as observed, not re-guessed. A
+    reply that comes back empty/void this time is still recorded as
+    bytes -- the DIFF is the point, and a setting that vanished mid-round
+    is itself an observation the caller should see.
+    """
+    out: dict[str, bytes] = {}
+    with HidrawDevice(path) as dev:
+        for entry in alive:
+            opcode = int(entry["opcode"], 16)
+            packet = _request(opcode, PROBE_LENGTH, entry["flag"])
+            dev.set_feature(packet)
+            time.sleep(SETTLE_SECONDS)
+            out[entry["opcode"]] = dev.get_feature(0, _PACKET_LEN)
+    return out
+
+
+def diff_maps(before: dict[str, bytes], after: dict[str, bytes]) -> list[dict]:
+    """Which (opcode, byte index) pairs moved between two read rounds.
+
+    Pure function on the round payloads so the diff discipline stays
+    testable without hardware: rounds feed maps in, and the caller gets
+    one record per moved byte, values included.
+    """
+    changes = []
+    for opcode in sorted(before):
+        was, now = before[opcode], after.get(opcode, b"")
+        for i in range(min(len(was), len(now))):
+            if was[i] != now[i]:
+                changes.append({
+                    "opcode": opcode,
+                    "index": i,
+                    "from": was[i],
+                    "to": now[i],
+                })
+    return changes
+
+
 def _assess(path: str, answers: list[dict], packets_sent: int,
             votes: list[tuple[bool, bool, bool]]) -> dict:
     """Reduce the raw sweep to the conventions the replies imply."""

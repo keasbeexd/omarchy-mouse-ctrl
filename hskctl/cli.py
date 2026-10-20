@@ -223,7 +223,7 @@ def cmd_sweep(args) -> int:
             return 0
 
     try:
-        payload = sweep.sweep_node(target)
+        p = sweep.sweep_node(target)
     except PermissionError:
         return _fail(
             f"{target} is not openable -- the udev rules do not reach it yet. "
@@ -233,6 +233,52 @@ def cmd_sweep(args) -> int:
         )
     except (DeviceBusy, DeviceNotFound, OSError) as exc:
         return _fail(f"could not sweep {target}: {exc}", args.json)
+
+    if args.diff and not p["answers"]:
+        print("\nno alive opcodes to diff against -- nothing to observe.")
+
+    rounds = []
+    if args.diff and p["answers"]:
+        if not interactive:
+            return _fail(
+                "the diff rounds ask you to act at the mouse -- run it "
+                "interactively (the panel's terminal has a real TTY), or "
+                "re-run without --diff for the machine-readable sweep",
+                args.json,
+            )
+        print(f"\n{len(p['answers'])} live opcodes to watch. The rounds are "
+              "read-only: snapshot, you act, snapshot again, report.")
+        round_specs = [
+            ("dpi-button",
+             "press your mouse's DPI button 3 times, slowly, then press ENTER here"),
+            ("other-button",
+             "press ONE OTHER settings button (polling / LED / profile -- or "
+             "skip) 3 times, then press ENTER here"),
+        ]
+        for label, prompt in round_specs:
+            try:
+                input(f"\n[{label}] {prompt} ")
+            except (EOFError, KeyboardInterrupt):
+                print("\nround skipped.")
+                continue
+            before = sweep.read_round(target, p["answers"])
+            try:
+                input("and once more to be sure it settled -- press ENTER again ")
+            except (EOFError, KeyboardInterrupt):
+                pass
+            after = sweep.read_round(target, p["answers"])
+            changes = sweep.diff_maps(before, after)
+            rounds.append({"label": label, "changes": changes})
+            p["packetsSent"] += 2 * len(p["answers"])
+            if not changes:
+                print("  this round moved no observed byte.")
+            else:
+                print(f"  {len(changes)} byte(s) moved:")
+                for c in changes:
+                    print(f"    {c['opcode']} byte {c['index']:2d}: "
+                          f"{c['from']:#04x} -> {c['to']:#04x}")
+
+    payload = p if not args.diff else {**p, "diffRounds": rounds}
 
     def human(p):
         print(f"node          : {p['node']}")
@@ -2529,6 +2575,11 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_args.add_argument(
         "--yes", action="store_true",
         help="skip the consent prompt (the panel's terminal keeps its TTY)",
+    )
+    sweep_args.add_argument(
+        "--diff", action="store_true",
+        help="after the sweep, run the interactive diff rounds: snapshot, "
+             "you act at the mouse, snapshot, report which bytes moved",
     )
     sweep_args.set_defaults(func=cmd_sweep)
     sub.add_parser(
