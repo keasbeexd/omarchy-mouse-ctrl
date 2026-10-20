@@ -51,53 +51,56 @@ and a `hskctl set pollingRate 2000` attempt give.
 Credit and thanks to both community projects for the original
 reverse-engineering work.
 
-## IDENTITY, cable and dongle
+## Identity, cable and dongle
 
-Cable and the 2.4 GHz dongle present the **identical** `3554:f507`
-identity on the identical hidraw node — the dongle tunnels the mouse's own
-USB identity through transparently. There is no wired/wireless split to
-show for this model. The RF receiver's separate identity (`3554:f509`) has
-never been seen carrying the config protocol; it stays in
-`match.productIds` for lack of positive evidence either way.
+Cable and dongle were seen as `3554:f507` in v3. On 2026-10-19 the 4K
+receiver enumerated as its own identity, `3554:f509` ("Pulsar 4K Wireless
+Receiver"), and **carried the full config protocol**: every read and write
+in the v4 driver was verified through it. The driver claims f507, f508 and
+f509; the 1K receiver's id is still unconfirmed.
 
-Do **not** add `3710:1403` (X2H Wired Medium) to this profile: that model
-speaks a different, 64-byte, register-addressed protocol — it needs its
-own profile.
+Do **not** add `3710:1403` (X2H Wired Medium): a different, 64-byte,
+register-addressed protocol that needs its own driver.
 
-## Stage switching does not work here (yet)
+## DPI stages: values work, switching does not (v4 findings, 2026-10-19)
 
-`activeDpiStage` writes round-trip (the byte stores and reads back) but
-have no observed live effect on the mouse, and the physical DPI button
-does not switch stages either. `dpiStageCount` was tried as the
-explanation — Cfg.ini's factory default is 4 — and setting it reset the
-whole DPI table to factory defaults (overwriting a custom stage 1 that had
-been set moments earlier) without fixing switching, so it was reverted and
-locked read-only. `activeDpiStage` is mapped **read-only** as well: that
-flag is the profile's half of the panel's stage-switcher gate.
+- **Stage values and colors write correctly in every slot.** Stage 2's DPI
+  800 → 850 → 800 and stage 1's color round-tripped through the v4 driver;
+  v3 saw stage 1's DPI and color take effect live.
+- **`0x04` reports the live stage; it is not a control.** A watcher saw it
+  step 0 → 1 → 2 → 3 → 0 with each press of the mouse's DPI button (red →
+  blue → magenta → white → red). Writing it stores and reads back but the
+  mouse does not switch, and the mouse later overwrites it.
+- **The DPI button works.** v3 recorded that it did nothing; it cycles the
+  four stages.
+- **Writing the stage count (`0x02`) is safe but has no live effect.** 4 → 4,
+  4 → 3 → 4 left all eight slots byte-identical (v3's reported reset of the
+  whole table did not reproduce). With 3 stored, the button still cycled
+  four stages.
+- Both community drivers write `0x02`/`0x04` the same way with no commit
+  step, and neither was confirmed on the X2H. pulsar-mouse-linux describes
+  the receiver's memory as a window onto the active profile that
+  `ACTIVE_PROFILE_SET` (`0x0F`) reloads; the mouse may only take the stored
+  count and stage at such a reload or on reconnect. Untested.
+- Unsolicited `0x0A` event reports carry `0x01` for "DPI changed" and
+  `0x04` for "profile changed" (pulsar-mouse-linux); a listener must read
+  the value back, the event carries none.
 
-The real mechanism is most likely a dedicated command distinct from the
-plain memory writes `nordic.py` assumes for other models (compare
-`CMD_ACTIVE_PROFILE_SET`). Finding it needs a live USB capture
-(usbmon/Wireshark) of Pulsar Fusion actually switching stages. Stages
-2–4's storage addresses are known and were confirmed readable/writable
-before stage 1 became the only mapped one:
-`ADDR_DPI_BASE + 4*n` (0x0C + 4n) and `ADDR_LED_COLOR_BASE + 4*n`
-(0x2C + 4n).
+## Wire details confirmed in v4
 
-DPI records are 4 bytes: 3 data bytes (`nordicDpi3`) + 1 valueChecksum;
-LED color is the same shape with `rgb` encoding. Byte 5 is 3 for reads and
-4 for writes (3 value bytes + the checksum byte the device stores).
+- Replies echo report id, opcode and address (bytes 0–4) but not always the
+  length: battery and version requests send 0 at byte 5, replies carry 2.
+- Replies carry the same `0x55 - sum` checksum at byte 16 as requests.
+- The config interface also delivers pointer reports; the driver skips
+  anything that does not echo its request.
+- A sleeping mouse does not answer at all until it is moved (30 s sleep
+  timer on this mouse).
 
 ## Low-risk known gaps
 
-- Autosleep here writes only 0xB7; the real driver mirrors the same value
-  to 0xAD (`ADDR_AUTOSLEEP_ALT`).
-- Unsolicited reports (e.g. opcode `0x0A` after a profile switch) can
-  desync a naive read-once; the real driver retries until `resp[1]`
-  matches the opcode sent, while `check_ack` here only matches a fixed
-  expected byte.
+- Autosleep writes only 0xB7 and the mouse honours it; Pulsar Fusion also
+  writes 0xAD with the same value (pulsar-mouse-linux, from an X2 CrazyLight
+  capture).
 - 8000 Hz is in `values` (register map confirmed on a Nordic-family
   sibling model) but withheld from `uiOptions` until an 8K dongle exists
   to test against.
-- Sleep writes go to a single address where the driver uses two — needs a
-  "write to two addresses" hook if the firmware requires both in sync.
