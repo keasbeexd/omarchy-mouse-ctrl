@@ -77,11 +77,17 @@ register-addressed protocol that needs its own driver.
   4 → 3 → 4 left all eight slots byte-identical (v3's reported reset of the
   whole table did not reproduce). With 3 stored, the button still cycled
   four stages.
+- **A reconnect does not apply them either; the mouse overwrites them.**
+  With count 3 stored, the mouse was power-cycled: on reconnect `0x02` read
+  4 again and the button cycled four stages. The receiver's memory mirrors
+  the mouse and is refreshed from it on connect. Some writes are forwarded
+  to the mouse (v3 saw stage 1's DPI change the cursor speed); count and
+  active stage are not, so changing them needs whatever separate command
+  Pulsar Fusion sends — a capture job.
 - Both community drivers write `0x02`/`0x04` the same way with no commit
   step, and neither was confirmed on the X2H. pulsar-mouse-linux describes
   the receiver's memory as a window onto the active profile that
-  `ACTIVE_PROFILE_SET` (`0x0F`) reloads; the mouse may only take the stored
-  count and stage at such a reload or on reconnect. Untested.
+  `ACTIVE_PROFILE_SET` (`0x0F`) reloads. Untested here.
 - Unsolicited `0x0A` event reports carry `0x01` for "DPI changed" and
   `0x04` for "profile changed" (pulsar-mouse-linux); a listener must read
   the value back, the event carries none.
