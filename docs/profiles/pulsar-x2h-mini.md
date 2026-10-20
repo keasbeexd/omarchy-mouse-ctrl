@@ -63,7 +63,13 @@ with the same config interface (interface 1, output report 8, feature
 report 6) but keyboard on interface 0 and mouse on interface 2. The mouse
 is not paired to it, so nothing has been read through it yet; the driver
 offers only 125–1000 Hz polling there, marked untested. Neither community
-driver implements pairing.
+driver implements pairing, and Pulsar's public pages describe no hardware
+pairing procedure: "Dongle pairing" appears only as a feature of Pulsar's
+PC software (listed for the X2F and Xlite CrazyLight Mini; support.pulsar.gg
+was unreachable). The dongle's name matches Pulsar's
+`Pulsar_1K_dongle_update` firmware package. Adding pairing to Mouse CTRL
+means capturing that software pairing (usbmon under Wine, or USBPcap on
+Windows) — the capture doubles as the re-pair.
 
 Do **not** add `3710:1403` (X2H Wired Medium): a different, 64-byte,
 register-addressed protocol that needs its own driver.
