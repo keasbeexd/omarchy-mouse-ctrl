@@ -203,9 +203,9 @@ driver and nothing else. The decisions behind this design are in
 
 ## Development
 
+From a clone of this repository:
+
 ```bash
-git clone https://github.com/keasbeexd/omarchy-mouse-ctrl.git
-cd omarchy-mouse-ctrl
 ./install.sh --dev          # symlink this checkout into the plugins directory
 omarchy plugin enable keasbeexd.mousectrl
 ```
