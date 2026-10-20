@@ -264,14 +264,17 @@ def cmd_sweep(args) -> int:
              "is wireless -- then press ENTER here"),
         ]
         for label, prompt in round_specs:
-            # Snapshot BEFORE the prompt references any action: the whole
-            # round lives or dies on the ordering. (First version read
-            # "before" after the user had already acted, and the round
-            # then only caught post-action drift -- the live test caught
-            # it, which is exactly what these rounds are for.)
+            # The ask prints before the baseline read (a full pass over
+            # the alive opcodes costs ~len*40 ms): the user finds the
+            # button while it snapshots, and the read still predates any
+            # action. Skipping happens after the transport work, so the
+            # packet ledger owns those reads too.
+            print(f"\n[{label}] {prompt}")
             before = sweep.read_round(target, p["answers"])
+            p["packetsSent"] += len(p["answers"])
             try:
-                acted = input(f"\n[{label}] {prompt} ").strip()
+                acted = input(f"[{label}] snapshot taken -- act now if you "
+                              "are doing this round, then press ENTER: ").strip()
                 if not acted:
                     print("  skipped.")
                     continue
@@ -279,10 +282,10 @@ def cmd_sweep(args) -> int:
                 print("\nround skipped.")
                 continue
             after = sweep.read_round(target, p["answers"])
+            p["packetsSent"] += len(p["answers"])
             changes = sweep.diff_maps(before, after, windows)
             trusted = [c for c in changes if c["trusted"]]
             rounds.append({"label": label, "changes": changes})
-            p["packetsSent"] += 2 * len(p["answers"])
             if not changes:
                 print("  this round moved no observed byte.")
                 continue
