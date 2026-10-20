@@ -310,6 +310,10 @@ def cmd_sweep(args) -> int:
             ("cable-replug",
              "plan: unplug and replug the cable -- or the receiver, if the "
              "mouse is wireless. Nothing to do until the snapshot line!)"),
+            ("ambient",
+             "plan: DO NOTHING -- hands off the mouse, wait a few seconds, "
+             "press ENTER. This round is the control group: whatever moves "
+             "here moves without an action."),
         ]
         for label, prompt in round_specs:
             # The ask prints before the baseline read (a full pass over
@@ -339,7 +343,9 @@ def cmd_sweep(args) -> int:
                 continue
             changes = sweep.diff_maps(before, after, windows)
             trusted = [c for c in changes if c["trusted"]]
-            rounds.append({"label": label, "changes": changes})
+            is_ambient = label == "ambient"
+            rounds.append({"label": label, "changes": changes,
+                           "ambient": is_ambient})
             if not changes:
                 print("  this round moved no observed byte.")
                 continue
@@ -351,17 +357,10 @@ def cmd_sweep(args) -> int:
                 mark = "  " if c["trusted"] else "?(untrusted)"
                 print(f"    {mark} {c['opcode']} byte {c['index']:2d}: "
                       f"{c['from']:#04x} -> {c['to']:#04x}")
-            if not changes:
-                print("  this round moved no observed byte.")
-                continue
-            print(f"  {len(trusted)} in-payload byte(s) moved"
-                  + (f", {len(changes) - len(trusted)} beyond the declared "
-                      "length reported untrusted" if len(trusted) != len(changes)
-                      else "") + ":")
-            for c in changes:
-                mark = "  " if c["trusted"] else "?(untrusted)"
-                print(f"    {mark} {c['opcode']} byte {c['index']:2d}: "
-                      f"{c['from']:#04x} -> {c['to']:#04x}")
+            if is_ambient and trusted:
+                print("  ^ these are ambient moves: the same pair seen "
+                      "moving in an action round is NOT attributed to "
+                      "that action.")
 
     payload = p if not args.diff else {**p, "diffRounds": rounds}
 
