@@ -360,6 +360,27 @@ Panel {
     fixRuleProcess.running = true
   }
 
+  // The probe is read-only, so handing it a terminal button costs the panel
+  // nothing in the no-root rule. The terminal launcher is resolved inside the
+  // child, not here: $TERMINAL wins, then the spec launcher, then the usual
+  // suspects, each one asked via `command -v` where stat calls would need IO
+  // plumbing. execDetached keeps the terminal alive after the panel closes.
+  function runProbeInTerminal() {
+    var inner =
+      "HK=$(command -v hskctl 2>/dev/null) || HK=$HOME/.local/bin/hskctl; "
+      + "\"$HK\" probe; echo; "
+      + "echo \"Read-only: probe writes nothing to the mouse.\"; "
+      + "printf \"Press Enter to close: \"; read _"
+    var launch =
+      "for t in \"$TERMINAL\" xdg-terminal-exec foot kitty alacritty ghostty; do "
+      + "case \"$t\" in \"\"|xdg-terminal-exec) continue ;; esac; "
+      + "if command -v \"$t\" >/dev/null 2>&1; then exec \"$t\" -e /bin/sh -c "
+      + Util.shellQuote(inner) + "; fi; done; "
+      + "if command -v xdg-terminal-exec >/dev/null 2>&1; then exec xdg-terminal-exec "
+      + "/bin/sh -c " + Util.shellQuote(inner) + "; fi; " + inner
+    Util.execDetached(launch)
+  }
+
   // Opening the panel used to force a refresh too, on top of startup, the
   // link watcher and the explicit triggers below (this button, middle-click,
   // 'r'). Read/write is otherwise more than enough to keep `values` correct,
@@ -774,6 +795,22 @@ Panel {
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
+              }
+
+              // Probe from the card instead of retyping it: opens the
+              // machine's terminal on a read-only probe and holds the window
+              // until the user has read the result.
+              Row {
+                visible: root.needsSetup
+                spacing: Style.space(8)
+
+                Button {
+                  text: "Probe in a terminal"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.runProbeInTerminal()
+                }
               }
 
               // The engine's survey of this machine, asked when the card
