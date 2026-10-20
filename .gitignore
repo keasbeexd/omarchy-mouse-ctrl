@@ -1,8 +1,4 @@
 __pycache__/
 *.pyc
-capture.pcapng
-capture.json
-capture.labels
-.hsk-capture.pid
-*.tar.gz
-*.bundle
+# USB captures made while decoding a protocol (docs/contributing-a-family.md)
+*.pcapng
