@@ -231,6 +231,17 @@ dpi, performance, sensor, power, device). Lessons:
 - Tests: `python3 -I -m unittest discover -s tests -t tests` and
   `node --test tests/`.
 
+**Phase 5 (setup wizard) — built; unknown-mouse view awaits a real unknown
+mouse.** The wizard runs in the panel (detect, access, confirm, writes,
+save) and re-saved the owner's HSK profile correctly. Backend:
+`test-write`, `save-profile`, `delete-profile`, `probe`, `measure`, and a
+polkit rule install (rule text on stdin, re-validated, fixed script).
+`measure` read 983 Hz from the HSK at a 1000 Hz setting (2457 reports in
+2.5 s). Not yet exercised on hardware: the access step's password prompt
+(both mice already had access) and the "Run test" button (both mice are
+fully verified). "Add support" links to docs/contributing-a-family.md,
+written in phase 7.
+
 ## Settled after the session
 
 - Plugin id stays `keasbeexd.mousectrl`; v4 replaces v3 in place.

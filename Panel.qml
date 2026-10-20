@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -26,6 +27,8 @@ Panel {
   readonly property var caps: backend.capabilities
   readonly property var stagesCap: Model.firstOfKind(caps, "dpiStages")
   readonly property bool ready: backend.status === "ready"
+  readonly property bool genericView: backend.status === "generic" && backend.generic !== null
+  readonly property string contributeUrl: "https://github.com/keasbeexd/omarchy-mouse-ctrl/blob/master/docs/contributing-a-family.md"
   // The settings grid every row shares: label column, then controls, with a
   // fixed slot for units at the right edge.
   readonly property real labelWidth: column.width * 0.4
@@ -430,7 +433,7 @@ Panel {
 
             // ---------- why there is nothing to show ----------
             Column {
-              visible: !root.ready
+              visible: !root.ready && !root.genericView
               width: parent.width
               spacing: Style.space(8)
 
@@ -473,6 +476,140 @@ Panel {
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 onClicked: root.openWizard(backend.selectedKey)
+              }
+            }
+
+            // ---------- a mouse with no driver: what can be seen anyway ----------
+            Column {
+              visible: root.genericView
+              width: parent.width
+              spacing: 0
+
+              PanelSeparator {
+                foreground: root.foreground
+              }
+
+              PanelSectionHeader {
+                topPadding: Style.space(6)
+                bottomPadding: Style.space(4)
+                text: "READ-ONLY"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Repeater {
+                model: root.genericView ? [
+                  { label: "Connection", text: backend.generic.connection },
+                  { label: "Buttons", text: backend.generic.buttons + " declared" },
+                  { label: "Battery", text: backend.battery ? backend.battery.percent + "%" : "not reported" }
+                ] : []
+                Item {
+                  required property var modelData
+                  width: parent.width
+                  implicitHeight: Style.spacing.controlHeight + Style.space(2)
+                  Text {
+                    textFormat: Text.PlainText
+                    x: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.label
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.text
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+                }
+              }
+
+              Item {
+                width: parent.width
+                implicitHeight: Style.spacing.controlHeight + Style.space(2)
+                Text {
+                  textFormat: Text.PlainText
+                  x: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Polling rate"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Row {
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(10)
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: backend.measuring ? "move the mouse…" : backend.measuredHz > 0 ? "≈ " + backend.measuredHz + " Hz" : "—"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+                  Button {
+                    text: "Measure"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: backend.measure()
+                  }
+                }
+              }
+
+              Item {
+                width: parent.width
+                implicitHeight: Style.spacing.controlHeight + Style.space(8)
+                Text {
+                  textFormat: Text.PlainText
+                  x: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Report"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Row {
+                  id: reportButtons
+                  property bool copied: false
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(6)
+                  Button {
+                    text: reportButtons.copied ? "Copied" : "Copy report"
+                    iconText: "󰆏"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: {
+                      Quickshell.clipboardText = backend.generic.report
+                      reportButtons.copied = true
+                    }
+                  }
+                  Button {
+                    text: "Add support"
+                    iconText: "󰏌"
+                    tooltipText: "How to add a driver for this mouse"
+                    bordered: true
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: Qt.openUrlExternally(root.contributeUrl)
+                  }
+                }
               }
             }
 
