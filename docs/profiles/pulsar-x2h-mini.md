@@ -70,9 +70,12 @@ register-addressed protocol that needs its own driver.
 
 ## DPI stages: values work, switching does not (v4 findings, 2026-10-19)
 
-- **Stage values and colors write correctly in every slot.** Stage 2's DPI
-  800 → 850 → 800 and stage 1's color round-tripped through the v4 driver;
-  v3 saw stage 1's DPI and color take effect live.
+- **Stage values and colors write correctly in every slot, and persist.**
+  Stage 2's DPI 800 → 850 → 800 and stage 1's color round-tripped through
+  the v4 driver; v3 saw stage 1's DPI and color take effect live. With 850
+  written, a power cycle of the mouse still read 850 on reconnect — and
+  since the receiver refreshes from the mouse on connect, that means the
+  write reached the mouse's own storage.
 - **`0x04` reports the live stage; it is not a control.** A watcher saw it
   step 0 → 1 → 2 → 3 → 0 with each press of the mouse's DPI button (red →
   blue → magenta → white → red). Writing it stores and reads back but the
