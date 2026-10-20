@@ -252,3 +252,34 @@ class SaveProfileTest(ApiTestCase):
         self.assertFalse(self.api.delete_profile("hsk")["deleted"])
         with self.assertRaises(profiles.ProfileError):
             self.api.delete_profile("../etc")
+
+
+class ProbeTest(ApiTestCase):
+    def ratbag_api(self, ratbagd):
+        return Api(families=(), scan=self.api._scan, profile_dir=self.profile_dir,
+                   lock=contextlib.nullcontext, ratbagd=ratbagd)
+
+    def test_supported_mouse_never_asks_ratbagd(self):
+        ratbagd = mock.Mock()
+        api = Api(families=(FakeDriver,), scan=self.api._scan, profile_dir=self.profile_dir,
+                  lock=contextlib.nullcontext, ratbagd=ratbagd)
+        self.assertIsNone(api.probe(KEY)["ratbag"])
+        ratbagd.available.assert_not_called()
+
+    def test_unknown_mouse_gets_ratbagd_readings(self):
+        ratbagd = mock.Mock()
+        ratbagd.available.return_value = True
+        ratbagd.device_path.return_value = "/org/freedesktop/ratbag1/device/hidraw2"
+        ratbagd.read.return_value = {"name": "G Pro", "pollingRate": 1000, "stages": []}
+        result = self.ratbag_api(ratbagd).probe(KEY)
+        self.assertEqual(result["ratbag"]["name"], "G Pro")
+        self.assertEqual(ratbagd.device_path.call_args[0][0], {"hidraw0", "hidraw1", "hidraw2"})
+
+    def test_ratbagd_failure_is_reported_not_raised(self):
+        from mousectrl.ratbag import RatbagError
+        ratbagd = mock.Mock()
+        ratbagd.available.return_value = True
+        ratbagd.device_path.side_effect = RatbagError("daemon went away")
+        result = self.ratbag_api(ratbagd).probe(KEY)
+        self.assertIsNone(result["ratbag"])
+        self.assertEqual(result["ratbagError"], "daemon went away")

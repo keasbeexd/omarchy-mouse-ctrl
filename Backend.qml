@@ -192,7 +192,9 @@ Item {
       generic = {
         connection: Model.plain(reply.connection, 20),
         buttons: Model.isInt(reply.buttons) ? reply.buttons : 0,
-        report: typeof reply.report === "string" ? reply.report.substring(0, 65536) : ""
+        report: typeof reply.report === "string" ? reply.report.substring(0, 65536) : "",
+        ratbag: Model.cleanRatbag(reply.ratbag),
+        piper: reply.piper === "/usr/bin/piper"
       }
       setStatus("generic", "")
     })

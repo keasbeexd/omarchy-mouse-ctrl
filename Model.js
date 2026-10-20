@@ -365,3 +365,28 @@ function finalStates(caps, rejectedGroups, testResults, hiddenGroups) {
   }
   return out
 }
+
+// --- libratbag ----------------------------------------------------------------
+
+// ratbagd's readings for a mouse it manages, as probe relays them; shown
+// read-only, its settings belong to Piper.
+function cleanRatbag(r) {
+  if (!isObject(r)) return null
+  var stages = []
+  if (Array.isArray(r.stages))
+    for (var i = 0; i < r.stages.length && stages.length < MAX_STAGES; i++)
+      if (isObject(r.stages[i]) && isInt(r.stages[i].dpi))
+        stages.push({ dpi: r.stages[i].dpi, active: r.stages[i].active === true })
+  return {
+    name: plain(r.name, 80),
+    firmware: plain(r.firmware, 40),
+    profile: isInt(r.profile) ? r.profile : 0,
+    profiles: isInt(r.profiles) ? r.profiles : 0,
+    pollingRate: isInt(r.pollingRate) ? r.pollingRate : null,
+    stages: stages
+  }
+}
+
+function ratbagStagesText(r) {
+  return r.stages.map(function(s) { return s.active ? "[" + s.dpi + "]" : String(s.dpi) }).join("  ")
+}

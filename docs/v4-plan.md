@@ -29,7 +29,7 @@ length oracles) is dropped.
 
 | Topic | Decision | Why |
 |---|---|---|
-| Coverage | Curated families + libratbag as an optional backend | Families cover vendor-only mice; libratbag already covers Logitech/SteelSeries/etc. |
+| Coverage | Curated families + libratbag read-only, settings via Piper | Families cover vendor-only mice; libratbag already covers Logitech/SteelSeries/etc. Its readings are shown but never written through, because nothing here can test ratbagd on hardware |
 | Unknown mice | Generic read-only panel + copyable report + link to the contributor guide | Only the owner has the hardware every write test needs; issue requests would hand that work to a maintainer without the mouse |
 | Family format | One Python driver module per family | Quirks (link-flag probing, DPI-count repair, settle times) are code, not JSON keys a generic engine must grow to interpret — the main cause of v3's sprawl |
 | Profile | One per physical mouse model (dongle + cable = one mouse); user data only | Settings live on the mouse; the profile records identity, family, verified capabilities, display choices |
@@ -243,6 +243,14 @@ without a replug (`udevadm trigger` suffices). Not yet exercised on
 hardware: the "Run test" button (both mice are fully verified) and the
 unknown-mouse view (no driverless mouse at hand). "Add support" links to docs/contributing-a-family.md,
 written in phase 7.
+
+**Phase 6 (libratbag) — done, read-only.** A mouse no family driver
+claims is looked up in ratbagd (D-Bus API 2, read from libratbag master
+source; queried only when its service file is installed, via
+`/usr/bin/busctl --json`). Its active profile, polling rate, DPI stages and
+firmware show in the generic view, with an Open Piper button for changes.
+Tested against a fake daemon only: ratbagd is not installed here and no
+libratbag mouse is at hand.
 
 ## Settled after the session
 
