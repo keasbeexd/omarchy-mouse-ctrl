@@ -175,6 +175,29 @@ is rewritten.
    as optional overrides), README rewrite with a "PRs welcome" line,
    marketplace security review.
 
+## Progress
+
+**Phase 2 (core) — done.** `mousectrl/` lives beside the v3 tree on the
+`v4` branch: the installed plugin is a symlink to this working tree, so v3's
+`hskctl/` and QML stay until the phase 4 panel replaces them. Tests:
+`python3 -I -m unittest discover -s tests -t tests`.
+
+What phase 2 established:
+
+- **Identification needs no permission.** `/sys/class/hidraw/*/device/report_descriptor`
+  is world-readable, so the wizard names the mouse before the udev rule exists.
+- **Mouse vs keyboard is decided by USB boot protocol.** QMK keyboards (the
+  Preonic) expose a mouse collection for mouse keys, and Logitech receivers
+  put a keyboard on interface 0, so collection- or interface-based tests both
+  fail. `bInterfaceProtocol == 2` on any interface is the rule, with a
+  mouse-only-collection fallback for boot-less USB mice and the mouse
+  collection for Bluetooth.
+- **Polling-rate measurement for unknown mice (phase 5) must read hidraw
+  input reports, not evdev:** `/dev/input/event*` is `root:input` and the
+  user is not in `input`. The udev rule already grants the hidraw node.
+- `serve` commands: `devices`, `capabilities`, `read`, `write`, `udev-rule`;
+  events: `devices` (hotplug or permission change), `watcherFailed`.
+
 ## Settled after the session
 
 - Plugin id stays `keasbeexd.mousectrl`; v4 replaces v3 in place.
