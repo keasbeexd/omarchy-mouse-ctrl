@@ -31,6 +31,7 @@ from typing import Any
 
 from . import __version__
 from .device import Candidate, rank_candidates
+from .hidraw import HidrawInfo, enumerate_devices, sysfs_hid_devices
 from .protocol import Profile, ProtocolError, _MAX_PROFILE_BYTES, list_profiles, load_profile
 from .safeio import read_bounded_json
 
@@ -111,6 +112,19 @@ def _existing_cover(profile: Profile, vid: str, pid: str) -> str | None:
     )
 
 
+def _pair_rule_line(vid: str, pid: str) -> str:
+    """The tight grant line for one device pair.
+
+    Same shape `_vidpid_rule_line` in cli.py builds for the rule file
+    engine; reissued here for the setup flow's instructions so the user
+    sees the exact line before the profile that feeds the engine exists.
+    """
+    return (
+        f'KERNEL=="hidraw*", ATTRS{{idVendor}}=="{vid}", '
+        f'ATTRS{{idProduct}}=="{pid}", MODE="0660", TAG+="uaccess"'
+    )
+
+
 def create_profile(args, emit, fail) -> int:
     """The guided flow. `emit`/`fail` are cli._emit/cli._fail.
 
@@ -132,6 +146,45 @@ def create_profile(args, emit, fail) -> int:
         for candidate in rank_candidates(family):
             if candidate.identified and (best is None or candidate.score > best[1].score):
                 best = (family, candidate)
+
+    if best is None:
+        # The ungranted-mouse path. describe()-based enumeration cannot see
+        # a root-only node at all (that is the entire reason the udev rule
+        # exists) -- but the permission-free sysfs survey can, and a family
+        # whose vendor/product pair is listed there means the mouse is
+        # PRESENT, just not yet openable. Its live check will fail with the
+        # permission error and take the consent branch below; the profile
+        # it writes is what makes the engine's rule-file output name the
+        # device, closing the chicken-and-egg in the profile-first order.
+        for family in families:
+            match = family.data.get("match") or {}
+            vids = [str(v).lower() for v in (match.get("vendorIds") or [])]
+            pids = [str(p).lower() for p in (match.get("productIds") or [])]
+            for device in sysfs_hid_devices():
+                if device["vid"] not in vids:
+                    continue
+                if pids and device["pid"] not in pids:
+                    continue
+                info = HidrawInfo(
+                    path=device["node"], bustype=int(device.get("bus", "3"), 16),
+                    vendor_id=int(device["vid"], 16), product_id=int(device["pid"], 16),
+                    name="", phys="",
+                )
+                candidate = Candidate(
+                    info,
+                    score=1,
+                    reasons=["sysfs survey: vendor/product match the family "
+                             "but the node is not openable (no udev grant)"],
+                    identified=True,
+                    unmatched=[],
+                )
+                best = (family, candidate)
+                break
+            if best is not None:
+                break
+            # sysfs cannot report usage page or feature reports; a found
+            # node therefore needs no further ranking -- the udev branch
+            # is the whole flow from here.
 
     if best is None:
         # Plan Round 0, stated limit: no opcode guessing at unknown
@@ -163,14 +216,22 @@ def create_profile(args, emit, fail) -> int:
         except ProtocolError:
             continue
         if _existing_cover(existing, vid, pid):
+            blind = (existing.data.get("provenance") or {}).get(
+                "deviceNotReadAtCreation"
+            )
+            detail = (
+                " It was created without the live check (its udev grant was "
+                "missing then) -- remove it and re-run this setup to get a "
+                "live-verified one." if blind else ""
+            )
             return fail(
                 f"profile {name!r} already maps {vid}:{pid} ({existing.model}). "
-                f"Remove it first: hskctl remove-profile {name}",
+                f"Remove it first: hskctl remove-profile {name}.{detail}",
                 getattr(args, "json", False),
             )
 
     device_line = (
-        f"{info.path} ({vid}:{pid}, {info.name or info.description or 'unnamed device'})"
+        f"{info.path} ({vid}:{pid}, {info.name or 'unnamed device'})"
     )
 
     if not getattr(args, "yes", False):
@@ -196,20 +257,70 @@ def create_profile(args, emit, fail) -> int:
 
     # One real exchange, before anything is written anywhere. Reads only;
     # a mouse that is asleep or a dongle that is wedged ends the setup
-    # with the same honest error every other surface does.
+    # with the same honest error every other surface does. A node the
+    # udev rules do not cover yet is the one predictable non-sleep
+    # failure -- it can actually happen to a family-identified device
+    # (the family knows the protocol, the grant list does not know the
+    # vendor), and it breaks the chicken-and-egg the other way: the
+    # VID:PID pair line the engine can emit only appears once a profile
+    # claims the device, which is the thing this wizard is here to
+    # create. So that case gets its own branch below, not a bare abort.
     from .cli import _session  # imported late: cli imports this module
 
     try:
         session = _session(args, family, info.path)
         read = session.read_some(["batteryPercent", "charging"]) or {}
     except (ProtocolError, OSError) as exc:
-        return fail(
-            "the device could not be read (protocol family fits, but the "
-            "mouse is asleep or the cable is stale): " + str(exc),
-            getattr(args, "json", False),
+        text = str(exc)
+        lowered = text.lower()
+        perm_shape = (
+            isinstance(exc, PermissionError)
+            or "no write access" in lowered
+            or "permission denied" in lowered
+            or "errno 13" in lowered
+            or "eacces" in lowered
+            or "not a readable" in lowered
         )
+        if not perm_shape:
+            return fail(
+                "the device could not be read (protocol family fits, but "
+                "the mouse is asleep or the cable is stale): " + text,
+                getattr(args, "json", False),
+            )
 
-    if not getattr(args, "yes", False):
+        line = _pair_rule_line(vid, pid)
+        if not getattr(args, "yes", False):
+            print()
+            print("The mouse part of the family, but the udev rules do not")
+            print(f"grant {vid}:{pid} read-write hidraw access yet. The grant")
+            print("line it needs:")
+            print(f"    {line}")
+            print()
+            print("The profile itself can be written now -- nothing needs the")
+            print("device before the rule exists, and writing the profile is")
+            print("what brings that line into the engine's rule-file output")
+            print("(then the panel's Fix button installs it).")
+            try:
+                answer = input("Write the profile without the live check? [y/N] ")
+            except (EOFError, KeyboardInterrupt):
+                print("\naborted.")
+                return 1
+            if answer.strip().lower() not in ("y", "yes"):
+                return fail(
+                    "no udev rule grants "
+                    f"{vid}:{pid} read-write hidraw access yet. Install the rule "
+                    f"first -- `hskctl udev-rule` shows what is missing, and the "
+                    "panel's Fix button (or install.sh --udev) installs it -- "
+                    "then re-run this setup after replugging the mouse.",
+                    getattr(args, "json", False),
+                )
+        read_blocked = True
+    else:
+        read_blocked = False
+
+    if read_blocked:
+        read = {}
+    elif not getattr(args, "yes", False):
         battery = read.get("batteryPercent")
         if battery is not None:
             print(f"live:    battery {battery}%, the device answered in the "
@@ -272,6 +383,12 @@ def create_profile(args, emit, fail) -> int:
             "verification run confirms them."
             + (f" Source note: {note}" if note else "")
         )
+    if read_blocked:
+        data["provenance"]["deviceNotReadAtCreation"] = (
+            "the node existed but was not openable -- the udev rules did "
+            "not grant read-write hidraw access to it yet. Verify the "
+            "profile against the live device after the rule is installed."
+        )
     if not os.path.isdir(dest_dir):
         os.makedirs(dest_dir, exist_ok=True)
     try:
@@ -310,5 +427,10 @@ def create_profile(args, emit, fail) -> int:
         print("panel transports are restarting and will pick it up in a moment.")
         print("if the udev rule file needs the new VID:PID line, run "
               "`hskctl udev-rule` and use the panel's Fix button to install")
+        if p.get("deviceNotReadAtCreation"):
+            print("note: the device itself was not readable at creation "
+                  "(missing udev grant) -- the values come from the family "
+                  "snapshot; after the rule is installed, replug the mouse "
+                  "and the panel's own reads take over.")
 
     return emit(payload, getattr(args, "json", False), human)
