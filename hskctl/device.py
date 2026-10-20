@@ -168,6 +168,17 @@ class DeviceBusy(ProtocolError):
     pass
 
 
+class EmptyReply(ProtocolError):
+    """The mouse ACKed but returned no payload -- "heard you, answered nothing".
+
+    Its own subclass so callers that already tolerate failed reads
+    (`read_some`/`read_all`) can skip the command exactly as they skip a
+    dead one, while a caller that demands a real answer (`get`, the
+    stage probe's verification read) sees the honest error instead of
+    zeros it would have believed.
+    """
+
+
 _LOCK_HANDLE = None
 
 
@@ -544,6 +555,20 @@ class Session:
             retry = self._exchange_checked(command, packet)
             if retry and any(retry[5:]):
                 return retry
+            # Still empty after the retry. This is not data: no real payload
+            # is all zeros (the DPI block, for one, always carries a nonzero
+            # stage count -- the profile's own repairOnWrite insists on it),
+            # and decoding it anyway turns "no answer" into lying 0% readings
+            # that a post-suspend panel then trusts for everything. Surface
+            # the truth: the mouse heard us and answered nothing. Recoverable
+            # by moving the mouse (its sleep) -- after a system resume the
+            # dongle's config endpoint can stay wedged until the cable is
+            # cycled, which is exactly what the message should say.
+            raise EmptyReply(
+                "the mouse acknowledges commands but answers with an empty "
+                "payload (asleep, or the dongle wedged after a suspend -- "
+                "move the mouse or replug its cable)"
+            )
         return reply
 
     def trial_read(self, command: str, wireless: bool) -> dict:

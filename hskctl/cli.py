@@ -187,6 +187,25 @@ def _status_payload(args, profile, session=None) -> dict:
             "version": __version__,
         }
 
+    # read_all swallows per-command failures and skips them, so a fully
+    # unanswered session comes back as an empty dict rather than an
+    # exception. Attaching ready: true to that would be the worst kind of
+    # lie -- every field would decode from the firmware's empty-ack payload
+    # into zero, and the panel would show a confident 0% battery and 0 DPI
+    # after a resume instead of an honest error card.
+    if not settings:
+        return {
+            "ok": False,
+            "state": "error",
+            "model": profile.model,
+            "error": "the mouse acknowledges commands but returns no data "
+                     "(asleep, or the dongle wedged after a suspend -- "
+                     "move it or replug its cable, then refresh)",
+            "detected": True,
+            "settings": {},
+            "version": __version__,
+        }
+
     return {
         "ok": True,
         "state": "ready",
@@ -466,6 +485,21 @@ def _battery_payload(args, profile, session=None) -> dict:
         settings = session.read_some(["batteryPercent", "charging"])
     except (DeviceBusy, DeviceNotFound, HidrawError, ProtocolError, OSError) as exc:
         return {"ok": False, "state": "error", "settings": {}, "error": str(exc)}
+
+    # An empty settings dict with a discovered profile means the reads failed
+    # -- read_some swallows per-command errors and skips. Of all the panels'
+    # readings, battery is the one a silent failure hurts most: an unresolved
+    # empty payload decodes as the legal integers 0 / false, and the panel
+    # would spend hours showing a plausible 0% instead of the truth.
+    if not settings:
+        return {
+            "ok": False,
+            "state": "error",
+            "settings": {},
+            "error": "no battery reading -- the mouse answers commands but "
+                     "returns no data (asleep, or wedged after a suspend; "
+                     "move it or replug its cable)",
+        }
 
     return {"ok": True, "state": "ready", "settings": settings}
 
