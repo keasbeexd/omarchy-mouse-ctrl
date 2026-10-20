@@ -210,6 +210,13 @@ class SaveProfileTest(ApiTestCase):
         saved = self.api.save_profile(KEY, "HSK", {"motionSync": {"state": "tested"}})
         self.assertEqual(saved["profile"]["capabilities"]["motionSync"]["state"], "tested")
 
+    def test_rerun_keeps_tested_states_from_the_existing_profile(self):
+        self.save_profile(motionSync="tested")
+        fresh = Api(families=(FakeDriver,), scan=self.api._scan, profile_dir=self.profile_dir,
+                    lock=contextlib.nullcontext)
+        saved = fresh.save_profile(KEY, "HSK", {"motionSync": {"state": "tested"}})
+        self.assertEqual(saved["profile"]["capabilities"]["motionSync"]["state"], "tested")
+
     def test_verified_state_needs_a_verified_driver_capability(self):
         with self.assertRaisesRegex(InvalidValue, "untested in the driver"):
             self.api.save_profile(KEY, "HSK", {"motionSync": {"state": "verified"}})

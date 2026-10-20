@@ -94,8 +94,23 @@ Panel {
 
   onRowsChanged: if (cursorIndex >= rows.length) cursorIndex = Math.max(0, rows.length - 1)
 
+  // The setup wizard replaces the panel's content while open; it is loaded
+  // fresh each time, so a cancelled run leaves nothing behind.
+  property bool wizardOpen: false
+  property string wizardKey: ""
+  // Handed to the wizard by this name: inside `Wizard { backend: backend }`
+  // the right-hand side would resolve to the wizard's own property.
+  readonly property var mouseBackend: backend
+
+  function openWizard(key) {
+    wizardKey = key || ""
+    cursorActive = false
+    wizardOpen = true
+    flick.contentY = 0
+  }
+
   onOpenedChanged: {
-    if (!opened) return
+    if (!opened) { wizardOpen = false; return }
     cursorActive = false
     cursorIndex = 0
     backend.refresh()
@@ -206,14 +221,18 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
+        if (root.wizardOpen) return
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveCursor(dy)
         else if (dx !== 0) root.adjust(dx)
       }
-      onActivateRequested: if (root.cursorActive) root.activate()
-      onCloseRequested: root.close()
+      onActivateRequested: {
+        if (root.wizardOpen) wizardLoader.item.primary()
+        else if (root.cursorActive) root.activate()
+      }
+      onCloseRequested: root.wizardOpen ? root.wizardOpen = false : root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(t) { if (t === "r" || t === "R") backend.refresh() }
+      onTextKey: function(t) { if (!root.wizardOpen && (t === "r" || t === "R")) backend.refresh() }
 
       Flickable {
         id: flick
@@ -232,299 +251,352 @@ Panel {
           width: flick.width
           spacing: Style.space(10)
 
-          // ---------- hero: which mouse, and its battery ----------
+          Loader {
+            id: wizardLoader
+            active: root.wizardOpen
+            visible: active
+            width: parent.width
+            sourceComponent: Component {
+              Wizard {
+                width: column.width
+                backend: root.mouseBackend
+                startKey: root.wizardKey
+                foreground: root.foreground
+                accent: root.accent
+                urgent: root.urgent
+                hoverFill: root.hoverFill
+                selectedFill: root.selectedFill
+                fontFamily: root.fontFamily
+                labelWidth: root.labelWidth
+                onClosed: root.wizardOpen = false
+              }
+            }
+          }
+
           Column {
-            visible: backend.device !== null
+            id: mainView
+            visible: !root.wizardOpen
             width: parent.width
             spacing: Style.space(10)
 
-            Item {
+            // ---------- hero: which mouse, and its battery ----------
+            Column {
+              visible: backend.device !== null
               width: parent.width
-              implicitHeight: Math.max(names.implicitHeight, switcher.implicitHeight)
+              spacing: Style.space(10)
 
-              Column {
-                id: names
-                anchors.left: parent.left
-                anchors.right: switcher.visible ? switcher.left : parent.right
-                anchors.rightMargin: Style.space(10)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(2)
+              Item {
+                width: parent.width
+                implicitHeight: Math.max(names.implicitHeight, switcher.implicitHeight)
 
-                Text {
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: backend.device ? (backend.device.profile ? backend.device.profile.name : backend.device.name) : ""
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                  font.bold: true
-                  elide: Text.ElideRight
-                }
+                Column {
+                  id: names
+                  anchors.left: parent.left
+                  anchors.right: setupButton.left
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(2)
 
-                Text {
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: backend.device ? (backend.device.family ? backend.device.family.title : backend.device.vidpid).toUpperCase() : ""
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 1.2
-                  elide: Text.ElideRight
-                }
-              }
-
-              // Cycles through connected mice; only there when there is a choice.
-              CursorSurface {
-                id: switcher
-                visible: backend.devices.length > 1
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: switcherText.implicitWidth + Style.space(20)
-                implicitHeight: switcherText.implicitHeight + Style.space(12)
-                bordered: true
-                hasCursor: root.rowHasCursor("device", "")
-                foreground: root.foreground
-                fill: root.hoverFill
-
-                Text {
-                  id: switcherText
-                  textFormat: Text.PlainText
-                  anchors.centerIn: parent
-                  text: {
-                    for (var i = 0; i < backend.devices.length; i++)
-                      if (backend.devices[i].key === backend.selectedKey) return (i + 1) + "/" + backend.devices.length + "  󰅀"
-                    return backend.devices.length + "  󰅀"
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    text: backend.device ? (backend.device.profile ? backend.device.profile.name : backend.device.name) : ""
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.bold: true
+                    elide: Text.ElideRight
                   }
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
+
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    text: backend.device ? (backend.device.family ? backend.device.family.title : backend.device.vidpid).toUpperCase() : ""
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    font.letterSpacing: 1.2
+                    elide: Text.ElideRight
+                  }
                 }
 
-                MouseArea {
-                  id: switcherMouse
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onContainsMouseChanged: if (containsMouse) root.hoverRow("device", "")
-                  onClicked: backend.cycleDevice()
-                }
-
-                PanelToolTip {
-                  visible: switcherMouse.containsMouse
-                  text: "Next mouse"
+                PanelActionButton {
+                  id: setupButton
+                  anchors.right: switcher.visible ? switcher.left : parent.right
+                  anchors.rightMargin: switcher.visible ? Style.space(6) : 0
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "󰐕"
+                  tooltipText: "Set up a mouse"
+                  foreground: root.foreground
                   fontFamily: root.fontFamily
+                  onClicked: root.openWizard(backend.selectedKey)
+                }
+
+                // Cycles through connected mice; only there when there is a choice.
+                CursorSurface {
+                  id: switcher
+                  visible: backend.devices.length > 1
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: switcherText.implicitWidth + Style.space(20)
+                  implicitHeight: switcherText.implicitHeight + Style.space(12)
+                  bordered: true
+                  hasCursor: root.rowHasCursor("device", "")
+                  foreground: root.foreground
+                  fill: root.hoverFill
+
+                  Text {
+                    id: switcherText
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: {
+                      for (var i = 0; i < backend.devices.length; i++)
+                        if (backend.devices[i].key === backend.selectedKey) return (i + 1) + "/" + backend.devices.length + "  󰅀"
+                      return backend.devices.length + "  󰅀"
+                    }
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  MouseArea {
+                    id: switcherMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: if (containsMouse) root.hoverRow("device", "")
+                    onClicked: backend.cycleDevice()
+                  }
+
+                  PanelToolTip {
+                    visible: switcherMouse.containsMouse
+                    text: "Next mouse"
+                    fontFamily: root.fontFamily
+                  }
                 }
               }
-            }
 
-            Item {
-              visible: backend.battery !== null
-              width: parent.width
-              implicitHeight: percent.implicitHeight
+              Item {
+                visible: backend.battery !== null
+                width: parent.width
+                implicitHeight: percent.implicitHeight
 
-              Text {
-                id: percent
-                textFormat: Text.PlainText
-                anchors.left: parent.left
-                text: backend.battery ? backend.battery.percent + "%" : ""
-                color: backend.lowBattery ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
-                font.bold: true
-              }
+                Text {
+                  id: percent
+                  textFormat: Text.PlainText
+                  anchors.left: parent.left
+                  text: backend.battery ? backend.battery.percent + "%" : ""
+                  color: backend.lowBattery ? root.urgent : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.display
+                  font.bold: true
+                }
 
-              Column {
-                anchors.left: percent.right
-                anchors.leftMargin: Style.space(14)
-                anchors.right: parent.right
-                anchors.verticalCenter: percent.verticalCenter
-                spacing: Style.space(6)
-
-                Rectangle {
-                  width: parent.width
-                  height: Style.space(6)
-                  radius: Style.cornerRadius > 0 ? height / 2 : 0
-                  color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+                Column {
+                  anchors.left: percent.right
+                  anchors.leftMargin: Style.space(14)
+                  anchors.right: parent.right
+                  anchors.verticalCenter: percent.verticalCenter
+                  spacing: Style.space(6)
 
                   Rectangle {
-                    width: backend.battery ? parent.width * backend.battery.percent / 100 : 0
-                    height: parent.height
-                    radius: parent.radius
-                    color: backend.lowBattery ? root.urgent
-                         : (backend.battery && backend.battery.charging ? root.accent : root.foreground)
+                    width: parent.width
+                    height: Style.space(6)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+
+                    Rectangle {
+                      width: backend.battery ? parent.width * backend.battery.percent / 100 : 0
+                      height: parent.height
+                      radius: parent.radius
+                      color: backend.lowBattery ? root.urgent
+                           : (backend.battery && backend.battery.charging ? root.accent : root.foreground)
+                    }
+                  }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: backend.battery && backend.battery.charging ? "CHARGING" : "BATTERY"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    font.letterSpacing: 1.2
                   }
                 }
-
-                Text {
-                  textFormat: Text.PlainText
-                  text: backend.battery && backend.battery.charging ? "CHARGING" : "BATTERY"
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 1.2
-                }
               }
             }
-          }
 
-          // ---------- why there is nothing to show ----------
-          Column {
-            visible: !root.ready
-            width: parent.width
-            spacing: Style.space(8)
-
-            Text {
-              textFormat: Text.PlainText
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: backend.status === "starting" ? "Looking for mice…" : backend.statusMessage
-              color: backend.status === "error" ? root.urgent : root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-
-            Text {
-              textFormat: Text.PlainText
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: text !== ""
-              text: {
-                var s = backend.status
-                if (s === "asleep") return "Move the mouse to wake it; the panel retries on its own."
-                if (s === "noAccess") return "Run `install.sh --udev` from the plugin folder, then replug the mouse."
-                if (s === "noProfile") return "Setting a mouse up from the panel is coming in the next phase; for now a profile is created with mousectrl."
-                if (s === "unsupported") return "A driver for this mouse can be added; see docs/contributor/PROTOCOL-DISCOVERY.md."
-                if (s === "noDevice") return "Plug in a mouse or its receiver."
-                return ""
-              }
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-          }
-
-          // ---------- DPI ----------
-          PanelSeparator {
-            visible: stagesView.visible
-            foreground: root.foreground
-          }
-
-          DpiStages {
-            id: stagesView
-            visible: root.ready && root.stagesCap !== null && backend.values[root.stagesCap.id] !== undefined
-            width: parent.width
-            cap: root.stagesCap || ({ writable: false, switchable: false, hasColors: false, step: 1, minimum: null, maximum: null })
-            value: root.stagesCap ? (backend.values[root.stagesCap.id] || null) : null
-            selectedIndex: root.selectedStage
-            busy: root.stagesCap !== null && backend.pending[root.stagesCap.id] === true
-            cursorRow: root.cursorRow && root.stagesCap && root.cursorRow.capId === root.stagesCap.id ? root.cursorRow.type : ""
-            foreground: root.foreground
-            accent: root.accent
-            fill: root.hoverFill
-            currentFill: root.selectedFill
-            fontFamily: root.fontFamily
-            labelWidth: root.labelWidth
-            unitWidth: root.unitWidth
-            onSelected: function(index) { root.selectStage(index) }
-            onWriteRequested: function(value) { backend.write(root.stagesCap.id, value) }
-            onRowHovered: function(row) { root.hoverRow(row, root.stagesCap.id) }
-            onCursorRowChanged: if (cursorRow !== "") root.ensureVisible(stagesView)
-          }
-
-          // ---------- settings, one titled section each ----------
-          Repeater {
-            model: root.ready ? Model.settingSections(root.caps) : []
-
+            // ---------- why there is nothing to show ----------
             Column {
-              id: section
-              required property var modelData
-              width: column.width
-              spacing: 0
+              visible: !root.ready
+              width: parent.width
+              spacing: Style.space(8)
 
-              PanelSeparator {
-                foreground: root.foreground
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: backend.status === "starting" ? "Looking for mice…" : backend.statusMessage
+                color: backend.status === "error" ? root.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
               }
 
-              PanelSectionHeader {
-                topPadding: Style.space(6)
-                bottomPadding: Style.space(4)
-                text: section.modelData.title
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: text !== ""
+                text: {
+                  var s = backend.status
+                  if (s === "asleep") return "Move the mouse to wake it; the panel retries on its own."
+                  if (s === "noAccess") return "Setup installs the access rule; it asks for your password once."
+                  if (s === "noProfile") return "Setup reads the mouse, lets you confirm what it found and saves a profile."
+                  if (s === "unsupported") return "Setup keeps it in the panel with what can be read without a driver."
+                  if (s === "noDevice") return "Plug in a mouse or its receiver."
+                  return ""
+                }
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Button {
+                visible: ["noProfile", "noAccess", "unsupported"].indexOf(backend.status) >= 0
+                text: "Set up this mouse"
+                iconText: "󰐕"
+                bordered: true
                 foreground: root.foreground
+                accent: root.accent
                 fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                onClicked: root.openWizard(backend.selectedKey)
               }
+            }
 
-              Repeater {
-                model: section.modelData.caps
+            // ---------- DPI ----------
+            PanelSeparator {
+              visible: stagesView.visible
+              foreground: root.foreground
+            }
 
-                SettingRow {
-                  required property var modelData
-                  width: section.width
-                  cap: modelData
-                  value: backend.values[modelData.id]
-                  busy: backend.pending[modelData.id] === true
-                  hasCursor: root.rowHasCursor("setting", modelData.id)
+            DpiStages {
+              id: stagesView
+              visible: root.ready && root.stagesCap !== null && backend.values[root.stagesCap.id] !== undefined
+              width: parent.width
+              cap: root.stagesCap || ({ writable: false, switchable: false, hasColors: false, step: 1, minimum: null, maximum: null })
+              value: root.stagesCap ? (backend.values[root.stagesCap.id] || null) : null
+              selectedIndex: root.selectedStage
+              busy: root.stagesCap !== null && backend.pending[root.stagesCap.id] === true
+              cursorRow: root.cursorRow && root.stagesCap && root.cursorRow.capId === root.stagesCap.id ? root.cursorRow.type : ""
+              foreground: root.foreground
+              accent: root.accent
+              fill: root.hoverFill
+              currentFill: root.selectedFill
+              fontFamily: root.fontFamily
+              labelWidth: root.labelWidth
+              unitWidth: root.unitWidth
+              onSelected: function(index) { root.selectStage(index) }
+              onWriteRequested: function(value) { backend.write(root.stagesCap.id, value) }
+              onRowHovered: function(row) { root.hoverRow(row, root.stagesCap.id) }
+              onCursorRowChanged: if (cursorRow !== "") root.ensureVisible(stagesView)
+            }
+
+            // ---------- settings, one titled section each ----------
+            Repeater {
+              model: root.ready ? Model.settingSections(root.caps) : []
+
+              Column {
+                id: section
+                required property var modelData
+                width: column.width
+                spacing: 0
+
+                PanelSeparator {
                   foreground: root.foreground
-                  accent: root.accent
+                }
+
+                PanelSectionHeader {
+                  topPadding: Style.space(6)
+                  bottomPadding: Style.space(4)
+                  text: section.modelData.title
+                  foreground: root.foreground
                   fontFamily: root.fontFamily
-                  labelWidth: root.labelWidth
-                  unitWidth: root.unitWidth
-                  onChangeRequested: function(value) { backend.write(modelData.id, value) }
-                  onRowHovered: root.hoverRow("setting", modelData.id)
-                  onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+                }
+
+                Repeater {
+                  model: section.modelData.caps
+
+                  SettingRow {
+                    required property var modelData
+                    width: section.width
+                    cap: modelData
+                    value: backend.values[modelData.id]
+                    busy: backend.pending[modelData.id] === true
+                    hasCursor: root.rowHasCursor("setting", modelData.id)
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    labelWidth: root.labelWidth
+                    unitWidth: root.unitWidth
+                    onChangeRequested: function(value) { backend.write(modelData.id, value) }
+                    onRowHovered: root.hoverRow("setting", modelData.id)
+                    onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+                  }
                 }
               }
             }
-          }
 
-          // ---------- footer ----------
-          Text {
-            readonly property string facts: root.ready ? Model.footerText(root.caps, backend.values) : ""
-            textFormat: Text.PlainText
-            visible: facts !== ""
-            width: parent.width
-            topPadding: Style.space(4)
-            wrapMode: Text.WordWrap
-            text: facts
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            textFormat: Text.PlainText
-            visible: root.rows.length > 0
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: "j/k move  ·  h/l adjust  ·  enter select  ·  r refresh"
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            textFormat: Text.PlainText
-            visible: backend.actionMessage !== ""
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: backend.actionMessage
-            color: root.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Repeater {
-            model: backend.profileProblems
+            // ---------- footer ----------
             Text {
-              required property var modelData
+              readonly property string facts: root.ready ? Model.footerText(root.caps, backend.values) : ""
               textFormat: Text.PlainText
-              width: column.width
+              visible: facts !== ""
+              width: parent.width
+              topPadding: Style.space(4)
               wrapMode: Text.WordWrap
-              text: "Profile skipped: " + modelData
+              text: facts
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.rows.length > 0
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "j/k move  ·  h/l adjust  ·  enter select  ·  r refresh"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: backend.actionMessage !== ""
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: backend.actionMessage
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Repeater {
+              model: backend.profileProblems
+              Text {
+                required property var modelData
+                textFormat: Text.PlainText
+                width: column.width
+                wrapMode: Text.WordWrap
+                text: "Profile skipped: " + modelData
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
           }
         }

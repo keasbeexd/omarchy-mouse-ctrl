@@ -81,6 +81,64 @@ Item {
     })
   }
 
+  // --- setup wizard ----------------------------------------------------------
+
+  // Raw access for the wizard's own requests (capabilities, read,
+  // test-write, save-profile, udev-rule); the reply goes to `done`.
+  function call(payload, done) {
+    if (!serveUp) return done({ ok: false, code: "serve", error: "mousectrl is not running" })
+    request(payload, done)
+  }
+
+  // Installs the udev rule as root through polkit. The text arrives on
+  // stdin, so there is no file another process could swap between the check
+  // below and root reading it; every line is re-validated here against the
+  // same pattern install.sh enforces. Tools are absolute paths, and the
+  // target is a constant, never taken from the reply.
+  property bool installingRule: false
+  property var ruleDone: null
+  property string ruleText: ""
+
+  readonly property string ruleScript: "set -eu; umask 022; "
+    + "/usr/bin/install -o root -g root -m 0644 /dev/stdin \"$1\"; "
+    + "/usr/bin/udevadm control --reload-rules; "
+    + "/usr/bin/udevadm trigger --subsystem-match=hidraw --action=change"
+
+  function installRule(text, done) {
+    if (installingRule) return done({ ok: false, error: "an install is already running" })
+    if (!Model.isValidRuleText(text)) return done({ ok: false, error: "the rule text did not validate; nothing was installed" })
+    console.log("mousectrl: installing " + Model.RULE_FILE + " through pkexec")
+    ruleText = text
+    ruleDone = done
+    installingRule = true
+    ruleInstall.running = true
+  }
+
+  Process {
+    id: ruleInstall
+    command: ["/usr/bin/pkexec", "/usr/bin/bash", "-c", root.ruleScript, "mousectrl-rule", Model.RULE_FILE]
+    clearEnvironment: true
+    environment: root.childEnvironment
+    stdinEnabled: true
+    onStarted: {
+      write(root.ruleText)
+      // install(1) reads /dev/stdin to EOF; closing stdin is the EOF.
+      stdinEnabled = false
+    }
+    onExited: function(exitCode, exitStatus) {
+      var done = root.ruleDone
+      root.installingRule = false
+      root.ruleDone = null
+      ruleInstall.stdinEnabled = true
+      // pkexec: 126 = the password prompt was dismissed, 127 = not authorized.
+      var message = exitCode === 0 ? "" : exitCode === 126 ? "Cancelled at the password prompt"
+                  : exitCode === 127 ? "Not authorized to install the rule" : "Installing the rule failed (exit " + exitCode + ")"
+      if (exitCode !== 0) console.warn("mousectrl: rule install: " + message)
+      if (done) done({ ok: exitCode === 0, error: message })
+      root.refresh()
+    }
+  }
+
   // --- replies -------------------------------------------------------------
 
   function applyDevices(reply) {
