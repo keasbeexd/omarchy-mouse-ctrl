@@ -137,6 +137,14 @@ class PulsarNordicTest(unittest.TestCase):
             self.driver.write("dpiStages", {**value, "stages": value["stages"][:3]})
         self.assertEqual(self.mouse.writes, [])
 
+    def test_one_k_receiver_offers_no_high_rates(self):
+        one_k = mock.Mock(product_id=0xF508)
+        caps = {c.id: c for c in PulsarNordic.capabilities(mock.Mock(fingerprint=one_k))}
+        self.assertEqual(caps["pollingRate"].options, (125, 250, 500, 1000))
+        self.assertEqual(caps["pollingRate"].verification, "untested")
+        four_k = {c.id: c for c in self.driver.capabilities()}
+        self.assertIn(4000, four_k["pollingRate"].options)
+
     def test_dpi_codec(self):
         for dpi in (50, 400, 3200, 12800, 12850, 26000):
             self.assertEqual(decode_dpi(encode_dpi(dpi)), dpi)

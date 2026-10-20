@@ -23,10 +23,13 @@ from typing import Any
 from ..errors import InvalidValue, NoResponse, ProtocolFailure
 from ..fingerprint import Fingerprint, Node
 from ..hidraw import HidrawDevice
-from .base import VERIFIED, Capability, Driver
+from .base import UNTESTED, VERIFIED, Capability, Driver
 
 VENDOR_IDS = {0x3554: "Pulsar", 0x25A7: "Pulsar (Cfg.ini alternate id)"}
 PRODUCT_IDS = frozenset({0xF507, 0xF508, 0xF509, 0xFA7B, 0xFA7C})
+# The 1K receiver (seen 2026-10-19 as "Pulsar 1K dongle update"): same
+# config interface, but rates above 1000 Hz are not reachable through it.
+ONE_K_RECEIVER = 0xF508
 
 REPORT_ID = 0x08
 PACKET_LENGTH = 17
@@ -146,7 +149,11 @@ class PulsarNordic(Driver):
         self._device.close()
 
     def capabilities(self) -> list[Capability]:
-        return list(CAPABILITIES)
+        if self.fingerprint.product_id != ONE_K_RECEIVER:
+            return list(CAPABILITIES)
+        one_k = Capability("pollingRate", "enum", "Polling rate", UNTESTED,
+                           options=(125, 250, 500, 1000), unit="Hz")
+        return [one_k if c.id == "pollingRate" else c for c in CAPABILITIES]
 
     # --- wire -------------------------------------------------------------
 

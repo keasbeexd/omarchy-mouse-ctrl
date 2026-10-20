@@ -56,8 +56,14 @@ reverse-engineering work.
 Cable and dongle were seen as `3554:f507` in v3. On 2026-10-19 the 4K
 receiver enumerated as its own identity, `3554:f509` ("Pulsar 4K Wireless
 Receiver"), and **carried the full config protocol**: every read and write
-in the v4 driver was verified through it. The driver claims f507, f508 and
-f509; the 1K receiver's id is still unconfirmed.
+in the v4 driver was verified through it.
+
+The 1K receiver enumerates as `3554:f508` ("Pulsar 1K dongle update"),
+with the same config interface (interface 1, output report 8, feature
+report 6) but keyboard on interface 0 and mouse on interface 2. The mouse
+is not paired to it, so nothing has been read through it yet; the driver
+offers only 125–1000 Hz polling there, marked untested. Neither community
+driver implements pairing.
 
 Do **not** add `3710:1403` (X2H Wired Medium): a different, 64-byte,
 register-addressed protocol that needs its own driver.
