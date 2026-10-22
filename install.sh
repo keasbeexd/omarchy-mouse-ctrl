@@ -157,10 +157,14 @@ rule_file_text() {
 }
 
 install_udev() {
-  local assume_yes="${1:-}"
+  local assume_yes="${1:-}" text
+  # Generate once: what is shown is exactly what root installs. The generator
+  # reads the user-writable profile directory, so it must not run again after
+  # the prompt.
+  text="$(rule_file_text)" || die "could not generate the udev rule"
   info "Granting your user access to hidraw devices for every mouse vendor this plugin supports:"
   echo
-  rule_file_text | sed 's/^/    /'
+  printf '%s\n' "$text" | sed 's/^/    /'
   echo
   local reply="n"
   if [[ "$assume_yes" == "--yes" ]]; then
@@ -179,7 +183,7 @@ install_udev() {
   # version wrote to a mktemp file first and passed the path to install(1),
   # which is a second pathname resolution the plugin does not need. stdin is
   # one fewer resolution and one fewer file to clean up on error.
-  rule_file_text \
+  printf '%s\n' "$text" \
     | "$SUDO" "$INSTALL_BIN" -o root -g root -m 0644 /dev/stdin "$UDEV_RULE"
   "$SUDO" "$UDEVADM" control --reload-rules
   # Only hidraw nodes -- re-triggering every device on the system is not

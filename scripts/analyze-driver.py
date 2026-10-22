@@ -97,6 +97,11 @@ MAX_UNPACKED = 2 * 1024 ** 3
 EXTRACTORS = (("/usr/bin/7z", ["x", "-y", "-snl-"]), ("/usr/bin/unrar", ["x", "-y", "-ol-"]))
 
 
+def printable(text: str) -> str:
+    """Escape control characters so archive-derived names cannot drive the terminal."""
+    return text.encode("unicode_escape").decode("ascii")
+
+
 def check_zip(zf: zipfile.ZipFile) -> None:
     """Refuse traversal, absolute paths, symlinks and zip bombs before extracting."""
     members = zf.infolist()
@@ -105,6 +110,8 @@ def check_zip(zf: zipfile.ZipFile) -> None:
     total = 0
     for info in members:
         name = info.filename
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in name):
+            raise SystemExit(f"archive member {name!r} has control characters")
         if name.startswith(("/", "\\")) or ".." in name.replace("\\", "/").split("/"):
             raise SystemExit(f"archive member {name!r} escapes the extraction directory")
         if (info.external_attr >> 16) & 0o170000 == 0o120000:
@@ -121,7 +128,7 @@ def check_tree(root: str) -> None:
             path = os.path.join(dirpath, name)
             st = os.lstat(path)
             if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
-                raise SystemExit(f"extracted {path} is not a regular file; refusing the archive")
+                raise SystemExit(f"extracted {path!r} is not a regular file; refusing the archive")
 
 
 def extract(archive: str, dest: str) -> str:
@@ -509,7 +516,7 @@ def main(argv=None) -> int:
 
         for f in ranked[: args.limit]:
             rel = os.path.relpath(f.path, root)
-            print(f"--- {rel}  [{f.kind}, {f.detail.get('size', 0)} bytes]")
+            print(f"--- {printable(rel)}  [{f.kind}, {f.detail.get('size', 0)} bytes]")
             for key in (
                 "runtime", "vidpid", "hidLibraries", "pinvoke", "hidImports",
                 "mentionsNodeHid", "sendFeatureCalls",
