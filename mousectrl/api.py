@@ -15,7 +15,7 @@ import os
 import re
 from typing import Any, Callable
 
-from . import fingerprint, generic, profiles, ratbag, registry, udev
+from . import __version__, fingerprint, generic, profiles, ratbag, registry, udev
 from .errors import (
     DeviceNotFound, InvalidValue, MouseCtrlError, NoAccess, ProtocolFailure, Unsupported,
     WriteRefused,
@@ -164,7 +164,7 @@ class Api:
                 "family": {"id": family.family, "title": family.title} if family else None,
                 "profile": {"id": profile.id, "name": profile.name} if profile else None,
             })
-        return {"ok": True, "devices": out, "profileProblems": problems}
+        return {"ok": True, "devices": out, "profileProblems": problems, "version": __version__}
 
     def capabilities(self, key: str) -> dict:
         fp = self._resolve(key)
