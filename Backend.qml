@@ -31,6 +31,9 @@ Item {
   // Last write failure, shown under the settings for a few seconds.
   property string actionMessage: ""
   property var profileProblems: []
+  // Mouse CTRL's own version, from manifest.json by way of `devices`; shown
+  // in the footer. Bar widgets are not handed the manifest by the shell.
+  property string version: ""
   // For a mouse with a generic profile: what `probe` and `measure` found.
   property var generic: null
   property int measuredHz: 0
@@ -168,6 +171,7 @@ Item {
   function applyDevices(reply) {
     if (!reply.ok) return fail(reply)
     devices = Model.cleanDevices(reply)
+    version = Model.cleanVersion(reply.version)
     profileProblems = Array.isArray(reply.profileProblems) ? reply.profileProblems.slice(0, 8).map(function(p) { return Model.plain(p, 200) }) : []
     var picked = Model.pickDevice(devices, selectedKey)
     var changed = !picked || picked.key !== selectedKey
