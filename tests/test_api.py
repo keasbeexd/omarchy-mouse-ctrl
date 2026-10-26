@@ -55,6 +55,11 @@ class DevicesTest(ApiTestCase):
         self.assertEqual(dev["family"], {"id": "fake", "title": "Fake family"})
         self.assertEqual(dev["profile"], {"id": "hsk", "name": "HSK"})
 
+    def test_reports_the_manifest_version(self):
+        manifest = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manifest.json")
+        with open(manifest, encoding="utf-8") as f:
+            self.assertEqual(self.api.devices()["version"], json.load(f)["version"])
+        
     def test_unknown_mouse_has_no_family(self):
         api = Api(families=(), scan=self.api._scan, profile_dir=self.profile_dir,
                   lock=contextlib.nullcontext)

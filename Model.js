@@ -183,12 +183,19 @@ function settingSections(caps) {
   return out
 }
 
-function footerText(caps, values) {
+function footerText(caps, values, version) {
   var parts = []
   var device = sectionCaps(caps, "device")
   for (var i = 0; i < device.length; i++)
     if (values[device[i].id] !== undefined) parts.push(device[i].label + " " + valueText(device[i], values[device[i].id]))
+  if (version) parts.push("Mouse CTRL v" + version)
   return parts.join("  ·  ")
+}
+
+// Digits and dots only; anything else (the CLI's "0.0.0-unpackaged" fallback
+// included) is not shown.
+function cleanVersion(value) {
+  return typeof value === "string" && /^[0-9]{1,4}(\.[0-9]{1,4}){0,3}$/.test(value) ? value : ""
 }
 
 // --- formatting -------------------------------------------------------------

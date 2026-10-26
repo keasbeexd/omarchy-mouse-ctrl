@@ -788,7 +788,7 @@ Panel {
 
             // ---------- footer ----------
             Text {
-              readonly property string facts: root.ready ? Model.footerText(root.caps, backend.values) : ""
+              readonly property string facts: root.ready ? Model.footerText(root.caps, backend.values, backend.version) : ""
               textFormat: Text.PlainText
               visible: facts !== ""
               width: parent.width
