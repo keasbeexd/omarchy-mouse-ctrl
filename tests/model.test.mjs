@@ -121,6 +121,14 @@ test("capabilities sort into sections; settings and footer split out", () => {
   assert.deepEqual(Array.from(caps, (c) => c.id), ["dpiStages", "pollingRate", "motionSync", "firmware"])
   assert.deepEqual(Array.from(M.settingSections(caps), (s) => s.title), ["PERFORMANCE", "SENSOR"])
   assert.equal(M.footerText(caps, { firmware: "1.0.7" }), "Firmware 1.0.7")
+  assert.equal(M.footerText(caps, { firmware: "1.0.7" }, "4.0.1"), "Firmware 1.0.7  ·  Mouse CTRL v4.0.1")
+})
+
+test("cleanVersion keeps only a plain dotted version", () => {
+  assert.equal(M.cleanVersion("4.0.1"), "4.0.1")
+  assert.equal(M.cleanVersion("0.0.0-unpackaged"), "")
+  assert.equal(M.cleanVersion("<b>4</b>"), "")
+  assert.equal(M.cleanVersion(4), "")
 })
 
 test("isValidRuleText accepts only the narrow rule shape", () => {
