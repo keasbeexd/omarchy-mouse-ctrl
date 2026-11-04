@@ -172,8 +172,17 @@ Panel {
   TextMetrics {
     id: labelMetrics
     font.family: root.fontFamily
-    font.pixelSize: Style.font.bodySmall
+    font.pixelSize: button.drawsLabel ? Style.bar.iconFont : Style.font.bodySmall
     text: root.barLabel
+  }
+
+  // Set only where the property exists; a plain labelText: below would stop
+  // this file loading on Omarchy before 4.5.
+  Binding {
+    target: button
+    property: "labelText"
+    when: button.drawsLabel
+    value: root.barLabel
   }
 
   implicitWidth: button.implicitWidth
@@ -183,16 +192,31 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // BarIconButton draws no `text` once it has an iconComponent, so the
-    // percentage lives inside the icon and the slot is sized to hold both.
-    slotSize: Math.ceil(glyphMetrics.width)
-      + (root.barLabel !== "" ? Style.space(3) + Math.ceil(labelMetrics.width) : 0)
-      + Style.space(2)
+    // Omarchy 4.5 scales everything in an iconComponent down to one icon's
+    // size, which would shrink the percentage with it, so the label has to go
+    // through labelText. Earlier versions have no labelText and keep the
+    // percentage inside the icon, with the slot sized to hold both.
+    readonly property bool drawsLabel: "labelText" in button
+    text: "󰍽"
+    foreground: root.barColor
+    slotSize: drawsLabel
+      ? Style.bar.iconSlot + (root.barLabel !== "" ? Style.space(4) + Math.ceil(labelMetrics.width) : 0)
+      : Math.ceil(glyphMetrics.width)
+        + (root.barLabel !== "" ? Style.space(3) + Math.ceil(labelMetrics.width) : 0)
+        + Style.space(2)
     active: backend.lowBattery
     // Rendered by a host component in AutoText mode; the device name comes
     // from the mouse's firmware, so it goes through Model.plain.
     tooltipText: backend.device ? Model.plain(backend.device.name, 60) : "Mouse CTRL"
-    iconComponent: Component {
+    iconComponent: drawsLabel ? null : legacyIcon
+    onPressed: function(b) {
+      if (b === Qt.MiddleButton) backend.refresh()
+      else root.toggle()
+    }
+
+    Component {
+      id: legacyIcon
+
       Item {
         Row {
           anchors.centerIn: parent
@@ -218,10 +242,6 @@ Panel {
           }
         }
       }
-    }
-    onPressed: function(b) {
-      if (b === Qt.MiddleButton) backend.refresh()
-      else root.toggle()
     }
   }
 
