@@ -6,7 +6,7 @@ the widget draws comes from your active Omarchy theme.
 
 <img src="docs/logo.svg" width="96" alt="Mouse CTRL's wireless mouse, in 16 EGA colors">
 
-![Mouse CTRL's panel on a G-Wolves HSK and a Pulsar X2H, its setup wizard, and its features](preview.png)
+![Mouse CTRL's panel on a Pulsar X2H, with the battery percentage in the Omarchy bar, beside a list of its features](preview.png)
 
 Many of these mice have no libratbag support, and their vendors' Linux story
 is "there isn't one". Mouse CTRL talks to them directly over raw HID, using

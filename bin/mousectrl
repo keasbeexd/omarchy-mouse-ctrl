@@ -10,8 +10,10 @@
 # the environment gets to choose it. `-I` is isolated mode (no PYTHONPATH, no
 # user site-packages) and `-S` skips site-packages entirely -- mousectrl uses
 # only the standard library and imports the bundled package by explicit path.
+# `-B` writes no bytecode: Omarchy reloads a plugin when a file in its folder
+# changes, and a __pycache__ appearing there counts.
 set -euo pipefail
 SELF="$(/usr/bin/readlink -f -- "${BASH_SOURCE[0]}")"
 HERE="${SELF%/bin/mousectrl}"
 
-exec /usr/bin/python3 -I -S -c 'import sys; sys.path.insert(0, sys.argv[1]); from mousectrl.cli import main; sys.exit(main(sys.argv[2:]))' "$HERE" "$@"
+exec /usr/bin/python3 -I -S -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from mousectrl.cli import main; sys.exit(main(sys.argv[2:]))' "$HERE" "$@"
