@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 # USB captures made while decoding a protocol (docs/contributing-a-family.md)
 *.pcapng
+
+# Agent-local permission rules can hold tokens from "don't ask again" prompts
+.claude/settings.local.json
