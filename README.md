@@ -1,5 +1,7 @@
 # Mouse CTRL
 
+[![Support on Ko-fi](https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/keasbeexd) [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor_on-GitHub-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/keasbeexd)
+
 Battery, DPI stages, LED colors, polling rate and sensor settings for gaming
 mice whose vendors only ship a Windows app, in the Omarchy bar. Every color
 the widget draws comes from your active Omarchy theme.
